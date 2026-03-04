@@ -109,12 +109,11 @@ impl HttpClient {
             .cookie_store(true);
 
         // proxy_pool takes precedence; fall back to static proxy_url.
+        // Uses Proxy::custom so each request gets a fresh proxy from the pool.
         if let Some(ref pool) = config.proxy_pool {
-            if let Some(proxy_url) = pool.next() {
-                let proxy = reqwest::Proxy::all(&proxy_url)
-                    .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
-                builder = builder.proxy(proxy);
-            }
+            let pool = Arc::clone(pool);
+            let proxy = reqwest::Proxy::custom(move |_url| -> Option<String> { pool.next() });
+            builder = builder.proxy(proxy);
         } else if let Some(ref proxy_url) = config.proxy_url {
             let proxy = reqwest::Proxy::all(proxy_url)
                 .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;

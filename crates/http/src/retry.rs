@@ -38,8 +38,11 @@ impl Default for RetryConfig {
 /// `wait = initial_wait * multiplier^attempt`, capped at `max_wait`.
 /// Jitter adds `[-jitter_pct, +jitter_pct]` randomness.
 pub fn backoff_duration(config: &RetryConfig, attempt: usize) -> Duration {
-    let base =
-        config.initial_wait.as_secs_f64() * config.multiplier.powi(attempt as i32);
+    // Cap attempt to avoid i32 wrapping (usize > i32::MAX wraps negative,
+    // causing powi to return tiny values instead of huge ones).
+    // 63 is sufficient: 2^63 already far exceeds any sane max_wait.
+    let capped = attempt.min(63) as i32;
+    let base = config.initial_wait.as_secs_f64() * config.multiplier.powi(capped);
     let capped = base.min(config.max_wait.as_secs_f64());
 
     let wait = if config.jitter_pct > 0.0 {

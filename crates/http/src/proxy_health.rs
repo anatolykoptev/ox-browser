@@ -51,7 +51,7 @@ impl ProxyHealth {
         if total == 0 {
             return Duration::ZERO;
         }
-        self.total_latency / total as u32
+        Duration::from_nanos((self.total_latency.as_nanos() / total as u128) as u64)
     }
 
     /// Total number of requests recorded.

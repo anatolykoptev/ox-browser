@@ -62,7 +62,10 @@ fn parse_http_date(value: &str) -> Option<std::time::SystemTime> {
 ///
 /// Uses the algorithm from Howard Hinnant's date library.
 fn days_from_civil(year: u64, month: u64, day: u64) -> Option<u64> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    if !(1970..=9999).contains(&year) {
+        return None;
+    }
+    if !(1..=12).contains(&month) || day == 0 || day > max_day(year, month) {
         return None;
     }
     let (y, m) = if month <= 2 {
@@ -77,6 +80,21 @@ fn days_from_civil(year: u64, month: u64, day: u64) -> Option<u64> {
     let days = era * 146097 + doe;
     // Unix epoch is 1970-01-01 = civil day 719468.
     days.checked_sub(719_468)
+}
+
+fn max_day(year: u64, month: u64) -> u64 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
