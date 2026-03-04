@@ -10,6 +10,9 @@ use async_trait::async_trait;
 use crate::{HttpResponse, Result};
 
 /// An HTTP request flowing through the middleware chain.
+///
+/// Headers use `Vec<(String, String)>` (not `HeaderMap`) to preserve insertion
+/// order — important for header-ordering anti-fingerprinting (Phase 1.5).
 #[derive(Debug, Clone)]
 pub struct Request {
     pub method: String,
@@ -32,6 +35,21 @@ impl Request {
         self.headers
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case(name))
+    }
+
+    /// Set a header, replacing an existing one with the same name (case-insensitive).
+    pub fn set_header(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        let name = name.into();
+        let value = value.into();
+        if let Some(entry) = self
+            .headers
+            .iter_mut()
+            .find(|(k, _)| k.eq_ignore_ascii_case(&name))
+        {
+            entry.1 = value;
+        } else {
+            self.headers.push((name, value));
+        }
     }
 }
 

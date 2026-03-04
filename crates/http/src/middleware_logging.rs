@@ -45,7 +45,7 @@ impl Handler for LoggingHandler {
             }
             Err(err) => {
                 let latency = start.elapsed();
-                tracing::debug!(
+                tracing::warn!(
                     method = %method,
                     url = %url,
                     error = %err,
