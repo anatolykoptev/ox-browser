@@ -54,18 +54,12 @@ fn test_same_origin_different_paths() {
 
 #[test]
 fn test_same_origin_false() {
-    assert!(!is_same_origin(
-        "https://example.com",
-        "https://other.com"
-    ));
+    assert!(!is_same_origin("https://example.com", "https://other.com"));
 }
 
 #[test]
 fn test_same_origin_different_scheme() {
-    assert!(!is_same_origin(
-        "http://example.com",
-        "https://example.com"
-    ));
+    assert!(!is_same_origin("http://example.com", "https://example.com"));
 }
 
 #[test]

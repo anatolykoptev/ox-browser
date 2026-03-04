@@ -16,8 +16,8 @@ impl HttpClient {
             .cookie_store(true);
 
         if let Some(ref proxy_url) = config.proxy_url {
-            let proxy = reqwest::Proxy::all(proxy_url)
-                .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+            let proxy =
+                reqwest::Proxy::all(proxy_url).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
             builder = builder.proxy(proxy);
         }
 
@@ -42,12 +42,7 @@ impl HttpClient {
         })
     }
 
-    pub async fn post(
-        &self,
-        url: &str,
-        body: &str,
-        content_type: &str,
-    ) -> Result<HttpResponse> {
+    pub async fn post(&self, url: &str, body: &str, content_type: &str) -> Result<HttpResponse> {
         let resp = self
             .inner
             .post(url)

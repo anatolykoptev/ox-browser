@@ -74,10 +74,7 @@ impl Page {
             .select("meta")
             .iter()
             .map(|sel| MetaTag {
-                name: sel
-                    .attr("name")
-                    .map(|s| s.to_string())
-                    .unwrap_or_default(),
+                name: sel.attr("name").map(|s| s.to_string()).unwrap_or_default(),
                 property: sel
                     .attr("property")
                     .map(|s| s.to_string())

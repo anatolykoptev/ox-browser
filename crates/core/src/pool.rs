@@ -19,13 +19,13 @@ impl Pool {
 
     pub async fn acquire(&self) -> Result<PoolGuard<'_>> {
         if self.closed.load(Ordering::Relaxed) {
-            return Err(crate::BrowserError::Navigate(
-                "pool closed".into(),
-            ));
+            return Err(crate::BrowserError::Navigate("pool closed".into()));
         }
-        let permit = self.sem.acquire().await.map_err(|_| {
-            crate::BrowserError::Navigate("pool closed".into())
-        })?;
+        let permit = self
+            .sem
+            .acquire()
+            .await
+            .map_err(|_| crate::BrowserError::Navigate("pool closed".into()))?;
         Ok(PoolGuard { _permit: permit })
     }
 

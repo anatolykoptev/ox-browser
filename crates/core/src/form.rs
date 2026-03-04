@@ -53,9 +53,7 @@ impl Form {
         self.fields
             .iter()
             .filter(|f| !f.disabled && !f.name.is_empty())
-            .map(|f| {
-                format!("{}={}", url_encode(&f.name), url_encode(&f.value))
-            })
+            .map(|f| format!("{}={}", url_encode(&f.name), url_encode(&f.value)))
             .collect::<Vec<_>>()
             .join("&")
     }
@@ -63,9 +61,7 @@ impl Form {
 
 /// Extract form fields directly from a Selection using sub-selection,
 /// avoiding re-parsing of inner HTML.
-fn extract_fields_from_selection(
-    form: &Selection<'_>,
-) -> Vec<FormField> {
+fn extract_fields_from_selection(form: &Selection<'_>) -> Vec<FormField> {
     let mut fields = Vec::new();
 
     // Input fields
@@ -97,10 +93,7 @@ fn extract_fields_from_selection(
 
     // Select fields
     for sel in form.select("select").iter() {
-        let name = sel
-            .attr("name")
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+        let name = sel.attr("name").map(|s| s.to_string()).unwrap_or_default();
         if name.is_empty() {
             continue;
         }
@@ -121,10 +114,7 @@ fn extract_fields_from_selection(
 
     // Textarea fields
     for ta in form.select("textarea").iter() {
-        let name = ta
-            .attr("name")
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+        let name = ta.attr("name").map(|s| s.to_string()).unwrap_or_default();
         if name.is_empty() {
             continue;
         }

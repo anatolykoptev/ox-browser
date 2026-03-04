@@ -69,11 +69,7 @@ fn test_page_status() {
 
 #[test]
 fn test_page_url() {
-    let page = Page::new(
-        "https://example.com/page".into(),
-        200,
-        "<html></html>",
-    );
+    let page = Page::new("https://example.com/page".into(), 200, "<html></html>");
     assert_eq!(page.url, "https://example.com/page");
 }
 
@@ -91,22 +87,14 @@ fn test_page_select_single_found() {
 
 #[test]
 fn test_page_select_single_not_found() {
-    let page = Page::new(
-        "https://example.com".into(),
-        200,
-        "<div>No match</div>",
-    );
+    let page = Page::new("https://example.com".into(), 200, "<div>No match</div>");
     let sel = page.select_single("#missing");
     assert!(sel.is_none());
 }
 
 #[test]
 fn test_page_no_links() {
-    let page = Page::new(
-        "https://example.com".into(),
-        200,
-        "<p>No links here</p>",
-    );
+    let page = Page::new("https://example.com".into(), 200, "<p>No links here</p>");
     assert!(page.links().is_empty());
 }
 
