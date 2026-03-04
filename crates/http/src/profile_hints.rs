@@ -1,6 +1,7 @@
 use crate::profile::BrowserProfile;
 
 /// Chrome-like default header order for anti-fingerprint consistency.
+/// Used by HttpClient (Task 6) to reorder outgoing headers.
 pub static DEFAULT_HEADER_ORDER: &[&str] = &[
     "accept",
     "accept-language",
@@ -44,10 +45,16 @@ pub fn client_hints_headers(ua: &str) -> Vec<(String, String)> {
 }
 
 /// Builds common browser headers from a profile (UA + client hints).
+/// Accept header varies by browser to match real fingerprints.
 pub fn browser_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
+    let accept = match profile.browser {
+        "chrome" | "edge" => "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "firefox" => "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8",
+        _ => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", // Safari
+    };
     let mut headers = vec![
         ("user-agent".to_owned(), profile.user_agent.to_owned()),
-        ("accept".to_owned(), "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8".to_owned()),
+        ("accept".to_owned(), accept.to_owned()),
         ("accept-language".to_owned(), "en-US,en;q=0.9".to_owned()),
         ("accept-encoding".to_owned(), "gzip, deflate, br".to_owned()),
     ];
