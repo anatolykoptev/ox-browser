@@ -3,21 +3,42 @@
 Module: `github.com/anatolykoptev/ox-browser`
 Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `go-*` for Go.
 
-## Phase 1: Core MVP (v0.1.0)
+## Phase 1: Core MVP (v0.1.0) ✅
 
 **Goal:** Fetch pages, parse DOM, extract data — no JS, no browser chrome.
 
-- [ ] Workspace setup (Cargo.toml, 6 crates)
-- [ ] `ox-http`: reqwest wrapper with proxy, cookies, interceptor
-- [ ] `ox-core`: Browser, Page, DOM facade over dom_query
-- [ ] Page: navigate, select, title, html, text, forms
-- [ ] Form extraction and filling (extract fields, set values, serialize)
-- [ ] URL resolution (relative → absolute, redirect following)
-- [ ] Concurrency pool (semaphore, context-aware)
-- [ ] CLI: `ox-browser fetch <url>` → stdout
-- [ ] Unit tests (target: 30%+ coverage)
+- [x] Workspace setup (Cargo.toml, 6 crates)
+- [x] `ox-http`: reqwest wrapper with proxy, cookies, redirects
+- [x] `ox-core`: Browser, Page, DOM facade over dom_query
+- [x] Page: select, select_single, title, html, text, forms, links, meta_tags
+- [x] Form extraction and filling (input/select/textarea, set_field, serialize)
+- [x] URL resolution (relative → absolute, same-origin check)
+- [x] Concurrency pool (tokio semaphore)
+- [x] CLI: `ox-browser fetch <url> [--css] [--text]`
+- [x] Unit tests (36 tests: page, form, navigation)
+- [x] Lint setup (clippy, rustfmt, Makefile)
+- [x] GitHub repo + v0.1.0 tag
 
-**Result:** Usable HTML scraper with CSS selectors and form support. ~800 LOC.
+**Result:** HTML scraper with CSS selectors and form support. 950 LOC, 36 tests.
+
+## Phase 1.5: Stealth HTTP (v0.1.5) ✅
+
+**Goal:** Anti-detection HTTP layer ported from go-stealth patterns. Make requests indistinguishable from real browsers.
+
+- [x] Browser profiles: 16 UA strings (Chrome/Firefox/Safari/Edge × Win/Mac/Linux/Mobile)
+- [x] Client Hints: auto-inject `sec-ch-ua-*` headers matching UA
+- [x] Header ordering: realistic browser header order per profile
+- [x] Middleware chain: composable `Middleware` trait (logging, retry, rate limit, client hints)
+- [x] Retry with backoff: exponential backoff + jitter on 429/5xx, retryable error classification
+- [x] Proxy pool: Webshare API integration, round-robin rotation, health tracking (success rate, latency, auto-deactivation)
+- [x] Per-domain rate limiting: sliding window + min delay + random delay, Retry-After parsing
+- [x] Session: persistent browsing context (consistent fingerprint, cookie jar, request counting)
+- [x] CLI: `ox-browser fetch <url> --profile chrome` (profile selection)
+- [x] Unit + integration tests for profiles, retry, rate limiter, proxy pool (139 tests)
+
+**Result:** Stealth HTTP client that passes bot detection. ~2900 LOC, 139 tests.
+**Ported from:** `go-stealth` (Grade A, 6.6K LOC) — concepts adapted to Rust idioms.
+**Depends on:** Phase 1
 
 ## Phase 2: JavaScript (v0.2.0)
 
@@ -103,18 +124,26 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 
 ## Comparison
 
-| Feature | ox-browser | go-browser | kalamari |
-|---------|-----------|------------|----------|
-| Language | Rust | Go | Rust |
-| Chrome needed | No | Yes (Rod) | No |
-| JS engine | Boa + QuickJS | V8 (via Rod) | Boa |
-| DOM | dom_query (mutable) | N/A (Chrome DOM) | Custom |
-| Binary size | ~10MB est. | ~15MB + Chromium | ~8MB |
-| Security scanning | Built-in | No | Built-in |
-| Crawling | Built-in | No | Basic |
-| MCP server | Yes | No (library) | No |
-| SPA support | Limited (Boa) | Full (Chrome) | Limited (Boa) |
+| Feature | ox-browser | go-stealth | go-browser | kalamari |
+|---------|-----------|-----------|------------|----------|
+| Language | Rust | Go | Go | Rust |
+| Purpose | Headless browser | Stealth HTTP client | Chrome automation | Headless browser |
+| Chrome needed | No | No | Yes (Rod) | No |
+| JS engine | Boa + QuickJS | None | V8 (via Rod) | Boa |
+| DOM parsing | dom_query (mutable) | None | Chrome DOM | Custom |
+| TLS fingerprinting | rustls (Phase 1.5) | Yes (tls-client) | Via Chrome | No |
+| Browser profiles | 16 built-in ✅ | 16 built-in | N/A | No |
+| Proxy pool | Webshare + health ✅ | Webshare + health | No | No |
+| Rate limiting | Per-domain ✅ | Per-domain | No | No |
+| Middleware | Chain pattern ✅ | Chain pattern | No | No |
+| Security scanning | Planned (Phase 3) | No | No | Built-in |
+| Crawling | Planned (Phase 4) | No | No | Basic |
+| MCP server | Planned (Phase 5) | No | No | No |
+| Binary size | ~10MB est. | ~15MB | ~15MB + Chromium | ~8MB |
+| Quality | Grade A (v0.1.0) | Grade A | Grade A | Grade D |
 
 **When to use which:**
-- **ox-browser** — lightweight scraping, security scanning, SEO analysis, no Chrome dependency
-- **go-browser** — SPA rendering, full JS compatibility, screenshot/PDF generation
+- **ox-browser** — lightweight scraping + DOM + JS, security scanning, no Chrome dependency
+- **go-stealth** — stealth HTTP requests without DOM/JS (API scraping, anti-bot bypass)
+- **go-browser** — SPA rendering, full JS, screenshot/PDF generation
+- **ox-browser + go-stealth patterns** — Phase 1.5 combines both: DOM parsing + stealth HTTP

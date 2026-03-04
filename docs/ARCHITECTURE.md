@@ -157,6 +157,38 @@ Same pattern as go-browser's `pool.go` — proven in production.
 - Proxy support (Webshare via env vars, same as go-stealth pattern)
 - Request/response interceptor trait for logging, modification
 
+## Stealth HTTP Layer (Phase 1.5)
+
+Anti-detection HTTP layer ported from go-stealth patterns. All modules are in `ox-http`.
+
+**Middleware chain:** Composable request pipeline via `Handler` trait and `chain()` function.
+Each middleware wraps the next handler, forming `logging → hints → ratelimit → retry → reqwest`.
+`MiddlewareFn` type alias enables closure-based middleware without boilerplate.
+
+**Browser profiles (16 UAs):** Chrome, Firefox, Safari, Edge across Windows, macOS, Linux,
+Android, iOS. `random_profile(filter)` selects by browser/os/mobile criteria.
+`platform_matched_profile()` auto-detects the host OS. Client Hints (`sec-ch-ua-*`) are
+auto-injected for Chromium-based UAs; Firefox/Safari correctly omit them.
+
+**Proxy pool:** `ProxyPool` trait with three implementations:
+- `StaticPool` — fixed list with atomic round-robin rotation
+- `WebsharePool` — fetches proxies from Webshare API, periodic refresh
+- `HealthyPool` — wraps any pool, tracks success/failure rates per proxy,
+  auto-deactivates unhealthy proxies (configurable threshold + cooldown)
+
+**Rate limiting:** Two-level system:
+- `Limiter` — sliding-window counter per key with explicit block-until support
+- `DomainLimiter` — matches URLs against ordered domain rules (exact, wildcard, catch-all),
+  enforces per-domain request limits + min delay + random jitter between requests
+
+**Retry:** Exponential backoff with configurable multiplier and jitter.
+`is_retryable_status()` classifies 429/5xx as retryable. `parse_retry_after()` handles
+integer seconds and HTTP-date formats. `retry_do()` is the async retry executor.
+
+**Session:** Persistent browsing context (`ox-core::Session`) that maintains a consistent
+browser fingerprint (profile + UA), cookie jar, request counter, and timing metadata
+across multiple requests. Created via `SessionConfig` with optional explicit profile.
+
 ## Configuration
 
 | Env Var | Default | Purpose |
