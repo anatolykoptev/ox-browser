@@ -969,6 +969,8 @@ dependencies = [
  "cookie_store 0.21.1",
  "rand 0.8.5",
  "reqwest",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tracing",
