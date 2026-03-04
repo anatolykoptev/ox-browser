@@ -15,6 +15,7 @@ impl Browser {
             user_agent: config.user_agent.clone(),
             proxy_url: config.proxy_url.clone(),
             max_redirects: config.max_redirects,
+            ..HttpConfig::default()
         };
         let http = HttpClient::new(http_config)?;
         let pool = Pool::new(config.concurrency);

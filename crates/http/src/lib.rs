@@ -1,6 +1,7 @@
 mod client;
 mod config;
 mod error;
+pub mod handler_reqwest;
 pub mod middleware;
 pub mod middleware_hints;
 pub mod middleware_logging;
@@ -20,6 +21,7 @@ pub mod retry_parse;
 pub use client::HttpClient;
 pub use config::HttpConfig;
 pub use error::{HttpError, Result};
+pub use handler_reqwest::ReqwestHandler;
 pub use middleware::{chain, Handler, MiddlewareFn, Request};
 pub use middleware_hints::client_hints_middleware;
 pub use middleware_logging::logging_middleware;

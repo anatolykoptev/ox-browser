@@ -1,66 +1,129 @@
-use crate::{HttpConfig, HttpError, HttpResponse, Result};
+use std::sync::Arc;
+
 use reqwest::Client;
 
+use crate::handler_reqwest::ReqwestHandler;
+use crate::middleware::{chain, Handler, MiddlewareFn, Request};
+use crate::middleware_hints::client_hints_middleware;
+use crate::middleware_logging::logging_middleware;
+use crate::middleware_ratelimit::rate_limit_middleware;
+use crate::middleware_retry::retry_middleware;
+use crate::profile_hints::browser_headers;
+use crate::{HttpConfig, HttpError, HttpResponse, Result};
+
+/// HTTP client that routes requests through a middleware chain.
+///
+/// When no Phase 1.5 options are set, behavior is identical to v0.1.0:
+/// direct reqwest calls with timeout, user-agent, redirects, and cookies.
 pub struct HttpClient {
-    inner: Client,
-    #[allow(dead_code)]
+    handler: Arc<dyn Handler>,
     config: HttpConfig,
 }
 
 impl HttpClient {
+    /// Build the client and its middleware chain from config.
+    ///
+    /// Chain order (outermost first):
+    /// `[logging?] -> [rate_limit?] -> [retry?] -> [client_hints] -> reqwest`
     pub fn new(config: HttpConfig) -> Result<Self> {
+        let client = Self::build_reqwest_client(&config)?;
+        let base: Arc<dyn Handler> = Arc::new(ReqwestHandler::new(client));
+
+        let mut middlewares: Vec<MiddlewareFn> = Vec::new();
+
+        // Outermost: logging (only when debug enabled).
+        if config.debug {
+            middlewares.push(logging_middleware());
+        }
+
+        // Rate limiting (before retry, so retries also respect limits).
+        if let Some(ref limiter) = config.rate_limiter {
+            middlewares.push(rate_limit_middleware(Arc::clone(limiter)));
+        }
+
+        // Retry with exponential backoff.
+        if let Some(ref retry_cfg) = config.retry {
+            middlewares.push(retry_middleware(retry_cfg.clone()));
+        }
+
+        // Innermost middleware: auto-inject client hints.
+        middlewares.push(client_hints_middleware());
+
+        let handler = chain(middlewares, base);
+        Ok(Self { handler, config })
+    }
+
+    /// Execute a GET request.
+    pub async fn get(&self, url: &str) -> Result<HttpResponse> {
+        let req = self.build_request("GET", url, None, None);
+        self.handler.handle(req).await
+    }
+
+    /// Execute a POST request with a text body and content type.
+    pub async fn post(
+        &self,
+        url: &str,
+        body: &str,
+        content_type: &str,
+    ) -> Result<HttpResponse> {
+        let req = self.build_request(
+            "POST",
+            url,
+            Some(body.as_bytes().to_vec()),
+            Some(content_type),
+        );
+        self.handler.handle(req).await
+    }
+
+    /// Build a [`Request`] with profile-based or fallback headers.
+    fn build_request(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<Vec<u8>>,
+        content_type: Option<&str>,
+    ) -> Request {
+        let mut headers = if let Some(profile) = self.config.profile {
+            browser_headers(profile)
+        } else {
+            vec![("user-agent".to_owned(), self.config.user_agent.clone())]
+        };
+
+        if let Some(ct) = content_type {
+            headers.push(("content-type".to_owned(), ct.to_owned()));
+        }
+
+        Request {
+            method: method.to_owned(),
+            url: url.to_owned(),
+            headers,
+            body,
+        }
+    }
+
+    /// Build the underlying reqwest client from config.
+    fn build_reqwest_client(config: &HttpConfig) -> Result<Client> {
         let mut builder = Client::builder()
             .timeout(config.timeout)
-            .user_agent(&config.user_agent)
             .redirect(reqwest::redirect::Policy::limited(config.max_redirects))
             .cookie_store(true);
 
-        if let Some(ref proxy_url) = config.proxy_url {
-            let proxy =
-                reqwest::Proxy::all(proxy_url).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+        // proxy_pool takes precedence; fall back to static proxy_url.
+        if let Some(ref pool) = config.proxy_pool {
+            if let Some(proxy_url) = pool.next() {
+                let proxy = reqwest::Proxy::all(&proxy_url)
+                    .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+                builder = builder.proxy(proxy);
+            }
+        } else if let Some(ref proxy_url) = config.proxy_url {
+            let proxy = reqwest::Proxy::all(proxy_url)
+                .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
             builder = builder.proxy(proxy);
         }
 
-        Ok(Self {
-            inner: builder.build()?,
-            config,
-        })
-    }
+        // Note: we do NOT set .user_agent() on the builder — headers are
+        // managed by the middleware chain (profile headers or fallback UA).
 
-    pub async fn get(&self, url: &str) -> Result<HttpResponse> {
-        let resp = self.inner.get(url).send().await?;
-        let status = resp.status().as_u16();
-        let final_url = resp.url().to_string();
-        let headers = resp.headers().clone();
-        let body = resp.text().await?;
-
-        Ok(HttpResponse {
-            status,
-            url: final_url,
-            headers,
-            body,
-        })
-    }
-
-    pub async fn post(&self, url: &str, body: &str, content_type: &str) -> Result<HttpResponse> {
-        let resp = self
-            .inner
-            .post(url)
-            .header("Content-Type", content_type)
-            .body(body.to_string())
-            .send()
-            .await?;
-
-        let status = resp.status().as_u16();
-        let final_url = resp.url().to_string();
-        let headers = resp.headers().clone();
-        let body = resp.text().await?;
-
-        Ok(HttpResponse {
-            status,
-            url: final_url,
-            headers,
-            body,
-        })
+        Ok(builder.build()?)
     }
 }
