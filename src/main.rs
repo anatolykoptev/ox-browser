@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
 use ox_core::{Browser, BrowserConfig};
+use ox_http::{random_profile, ProfileFilter, StaticPool};
 
 #[derive(Parser)]
 #[command(name = "ox-browser", version, about = "Lightweight headless browser")]
@@ -20,6 +23,15 @@ enum Commands {
         /// Output plain text instead of HTML
         #[arg(long)]
         text: bool,
+        /// Browser profile: chrome, firefox, safari, edge
+        #[arg(long)]
+        profile: Option<String>,
+        /// Proxy URL (e.g. http://user:pass@host:port)
+        #[arg(long)]
+        proxy: Option<String>,
+        /// Enable debug logging for HTTP requests
+        #[arg(long)]
+        debug: bool,
     },
     /// Show version info
     Version,
@@ -31,8 +43,32 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Fetch { url, css, text } => {
-            let browser = Browser::new(BrowserConfig::default())?;
+        Commands::Fetch {
+            url,
+            css,
+            text,
+            profile,
+            proxy,
+            debug,
+        } => {
+            let mut config = BrowserConfig::default();
+
+            if let Some(browser_name) = &profile {
+                let filter = ProfileFilter {
+                    browser: Some(browser_name.clone()),
+                    ..Default::default()
+                };
+                config.profile = Some(random_profile(&filter));
+            }
+
+            if let Some(proxy_url) = proxy {
+                let pool = StaticPool::new(vec![proxy_url]);
+                config.proxy_pool = Some(Arc::new(pool));
+            }
+
+            config.debug = debug;
+
+            let browser = Browser::new(config)?;
             let page = browser.page(&url).await?;
 
             if let Some(selector) = css {

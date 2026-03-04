@@ -15,6 +15,10 @@ impl Browser {
             user_agent: config.user_agent.clone(),
             proxy_url: config.proxy_url.clone(),
             max_redirects: config.max_redirects,
+            profile: config.profile,
+            proxy_pool: config.proxy_pool.clone(),
+            retry: config.retry.clone(),
+            debug: config.debug,
             ..HttpConfig::default()
         };
         let http = HttpClient::new(http_config)?;
