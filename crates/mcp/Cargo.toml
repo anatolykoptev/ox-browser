@@ -1,0 +1,4 @@
+[package]
+name = "ox-mcp"
+version.workspace = true
+edition.workspace = true

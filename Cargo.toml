@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/http",
+    "crates/js",
+    "crates/security",
+    "crates/crawler",
+    "crates/mcp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/anatolykoptev/ox-browser"
+authors = ["Anatoly Koptev"]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[package]
+name = "ox-browser"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ox-core = { path = "crates/core" }
+ox-http = { path = "crates/http" }
+clap = { version = "4", features = ["derive"] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true

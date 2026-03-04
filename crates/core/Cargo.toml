@@ -1,0 +1,12 @@
+[package]
+name = "ox-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ox-http = { path = "../http" }
+dom_query = "0.25"
+url = "2"
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

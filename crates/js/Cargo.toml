@@ -1,0 +1,4 @@
+[package]
+name = "ox-js"
+version.workspace = true
+edition.workspace = true
