@@ -35,7 +35,12 @@ impl WebsharePool {
     ///
     /// Each proxy is formatted as `http://username:password@host:port`.
     pub async fn new(api_key: &str) -> crate::Result<Self> {
-        let client = reqwest::Client::new();
+        if api_key.is_empty() {
+            return Err(HttpError::ProxyPool("Webshare API key is empty".into()));
+        }
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
         let resp = client
             .get(WEBSHARE_API_URL)
             .header("Authorization", format!("Token {api_key}"))
@@ -44,7 +49,7 @@ impl WebsharePool {
 
         let status = resp.status();
         if !status.is_success() {
-            return Err(HttpError::InvalidUrl(format!(
+            return Err(HttpError::ProxyPool(format!(
                 "Webshare API returned status {status}"
             )));
         }
@@ -53,7 +58,7 @@ impl WebsharePool {
         let proxies = parse_webshare_response(&body)?;
 
         if proxies.is_empty() {
-            return Err(HttpError::InvalidUrl(
+            return Err(HttpError::ProxyPool(
                 "Webshare API returned no proxies".into(),
             ));
         }
@@ -68,7 +73,7 @@ impl WebsharePool {
 /// Parses a Webshare API JSON response into proxy URL strings.
 fn parse_webshare_response(body: &str) -> crate::Result<Vec<String>> {
     let response: WebshareResponse =
-        serde_json::from_str(body).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+        serde_json::from_str(body).map_err(|e| HttpError::ProxyPool(e.to_string()))?;
 
     Ok(response
         .results

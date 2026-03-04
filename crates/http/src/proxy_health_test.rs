@@ -23,8 +23,8 @@ fn healthy_pool_passes_through() {
 #[test]
 fn record_success_tracks_stats() {
     let pool = HealthyPool::new(test_pool(), HealthConfig::default());
-    pool.record_success("http://p1:8080");
-    pool.record_success("http://p1:8080");
+    pool.record_success("http://p1:8080", Duration::from_millis(100));
+    pool.record_success("http://p1:8080", Duration::from_millis(100));
 
     let stats = pool.stats();
     let h = &stats["http://p1:8080"];
@@ -42,9 +42,9 @@ fn deactivation_after_threshold() {
     };
     let pool = HealthyPool::new(test_pool(), config);
 
-    pool.record_failure("http://p1:8080");
-    pool.record_failure("http://p1:8080");
-    pool.record_failure("http://p1:8080");
+    pool.record_failure("http://p1:8080", Duration::from_millis(50));
+    pool.record_failure("http://p1:8080", Duration::from_millis(50));
+    pool.record_failure("http://p1:8080", Duration::from_millis(50));
 
     let stats = pool.stats();
     assert!(stats["http://p1:8080"].deactivated_at.is_some());
@@ -60,9 +60,9 @@ fn no_deactivation_below_min_requests() {
     };
     let pool = HealthyPool::new(test_pool(), config);
 
-    pool.record_failure("http://p1:8080");
-    pool.record_failure("http://p1:8080");
-    pool.record_failure("http://p1:8080");
+    pool.record_failure("http://p1:8080", Duration::from_millis(50));
+    pool.record_failure("http://p1:8080", Duration::from_millis(50));
+    pool.record_failure("http://p1:8080", Duration::from_millis(50));
 
     let stats = pool.stats();
     assert!(stats["http://p1:8080"].deactivated_at.is_none());
@@ -79,7 +79,7 @@ fn cooldown_reactivation() {
     let inner = Arc::new(StaticPool::new(vec!["http://p1:8080".into()]));
     let pool = HealthyPool::new(inner, config);
 
-    pool.record_failure("http://p1:8080");
+    pool.record_failure("http://p1:8080", Duration::from_millis(50));
     let result = pool.next();
     assert_eq!(result.unwrap(), "http://p1:8080");
 
@@ -99,7 +99,7 @@ fn all_unhealthy_fallback() {
     let inner = Arc::new(StaticPool::new(vec!["http://p1:8080".into()]));
     let pool = HealthyPool::new(inner, config);
 
-    pool.record_failure("http://p1:8080");
+    pool.record_failure("http://p1:8080", Duration::from_millis(50));
     let result = pool.next();
     assert!(result.is_some());
 }

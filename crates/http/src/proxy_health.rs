@@ -29,6 +29,7 @@ impl Default for HealthConfig {
 pub struct ProxyHealth {
     pub successes: u64,
     pub failures: u64,
+    pub total_latency: Duration,
     pub last_used: Instant,
     pub deactivated_at: Option<Instant>,
 }
@@ -38,9 +39,19 @@ impl ProxyHealth {
         Self {
             successes: 0,
             failures: 0,
+            total_latency: Duration::ZERO,
             last_used: Instant::now(),
             deactivated_at: None,
         }
+    }
+
+    /// Average request latency.
+    pub fn avg_latency(&self) -> Duration {
+        let total = self.total();
+        if total == 0 {
+            return Duration::ZERO;
+        }
+        self.total_latency / total as u32
     }
 
     /// Total number of requests recorded.
@@ -84,19 +95,21 @@ impl HealthyPool {
     }
 
     /// Records a successful request through the given proxy.
-    pub fn record_success(&self, proxy: &str) {
+    pub fn record_success(&self, proxy: &str, latency: Duration) {
         let mut health = self.health.lock().unwrap();
         let entry = health.entry(proxy.to_string()).or_insert_with(ProxyHealth::new);
         entry.successes += 1;
+        entry.total_latency += latency;
         entry.last_used = Instant::now();
     }
 
     /// Records a failed request. Deactivates the proxy if the failure
     /// rate exceeds the threshold after `min_requests`.
-    pub fn record_failure(&self, proxy: &str) {
+    pub fn record_failure(&self, proxy: &str, latency: Duration) {
         let mut health = self.health.lock().unwrap();
         let entry = health.entry(proxy.to_string()).or_insert_with(ProxyHealth::new);
         entry.failures += 1;
+        entry.total_latency += latency;
         entry.last_used = Instant::now();
 
         if entry.total() >= self.config.min_requests
@@ -129,6 +142,7 @@ impl HealthyPool {
             if deactivated_at.elapsed() >= self.config.cooldown {
                 entry.successes = 0;
                 entry.failures = 0;
+                entry.total_latency = Duration::ZERO;
                 entry.deactivated_at = None;
                 return true;
             }

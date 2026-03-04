@@ -13,6 +13,9 @@ pub enum HttpError {
 
     #[error("retryable HTTP status: {0}")]
     RetryableStatus(u16),
+
+    #[error("proxy pool error: {0}")]
+    ProxyPool(String),
 }
 
 impl HttpError {
@@ -22,7 +25,7 @@ impl HttpError {
             Self::RetryableStatus(_) => true,
             Self::Timeout(_) => true,
             Self::Request(e) => e.is_timeout() || e.is_connect(),
-            Self::InvalidUrl(_) => false,
+            Self::InvalidUrl(_) | Self::ProxyPool(_) => false,
         }
     }
 }
