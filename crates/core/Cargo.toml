@@ -7,6 +7,7 @@ edition.workspace = true
 ox-http = { path = "../http" }
 dom_query = "0.25"
 url = "2"
+rand = "0.8"
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

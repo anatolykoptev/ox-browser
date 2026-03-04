@@ -951,6 +951,7 @@ version = "0.1.0"
 dependencies = [
  "dom_query",
  "ox-http",
+ "rand 0.8.5",
  "thiserror",
  "tokio",
  "tracing",
