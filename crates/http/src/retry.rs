@@ -71,10 +71,18 @@ where
                 if !err.is_retryable() {
                     return Err(err);
                 }
-                last_err = Some(err);
                 if attempt < config.max_retries {
                     let wait = backoff_duration(config, attempt);
+                    tracing::debug!(
+                        attempt = attempt + 1,
+                        wait_ms = wait.as_millis() as u64,
+                        error = %err,
+                        "retrying"
+                    );
+                    last_err = Some(err);
                     tokio::time::sleep(wait).await;
+                } else {
+                    last_err = Some(err);
                 }
             }
         }
