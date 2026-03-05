@@ -23,37 +23,56 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 
 ## Phase 1.5: Stealth HTTP (v0.1.5) ✅
 
-**Goal:** Anti-detection HTTP layer ported from go-stealth patterns. Make requests indistinguishable from real browsers.
+**Goal:** Anti-detection HTTP layer ported from go-stealth patterns.
 
 - [x] Browser profiles: 16 UA strings (Chrome/Firefox/Safari/Edge × Win/Mac/Linux/Mobile)
 - [x] Client Hints: auto-inject `sec-ch-ua-*` headers matching UA
 - [x] Header ordering: realistic browser header order per profile
-- [x] Middleware chain: composable `Middleware` trait (logging, retry, rate limit, client hints)
+- [x] Middleware chain: composable `Handler` trait (logging, retry, rate limit, client hints)
 - [x] Retry with backoff: exponential backoff + jitter on 429/5xx, retryable error classification
-- [x] Proxy pool: Webshare API integration, round-robin rotation, health tracking (success rate, latency, auto-deactivation)
-- [x] Per-domain rate limiting: sliding window + min delay + random delay, Retry-After parsing
-- [x] Session: persistent browsing context (consistent fingerprint, cookie jar, request counting)
-- [x] CLI: `ox-browser fetch <url> --profile chrome` (profile selection)
-- [x] Unit + integration tests for profiles, retry, rate limiter, proxy pool (139 tests)
+- [x] Proxy pool: Webshare API integration, round-robin rotation, health tracking
+- [x] Per-domain rate limiting: sliding window + min delay, Retry-After parsing
+- [x] Session: persistent browsing context (consistent fingerprint, cookie jar)
+- [x] Cloudflare detection: `detect_cloudflare()` + `cloudflare_detect_middleware`
+- [x] CF challenge types: JsChallenge, Turnstile, Block → retryable `HttpError::Cloudflare`
+- [x] CF + retry integration: auto-retry with different proxy on CF block
+- [x] Hard red tests: 34 edge case tests (retry, proxy, CF detection + middleware)
 
-**Result:** Stealth HTTP client that passes bot detection. ~2900 LOC, 139 tests.
+**Result:** Stealth HTTP client with Cloudflare detection. ~5100 LOC, 187 tests.
 **Ported from:** `go-stealth` (Grade A, 6.6K LOC) — concepts adapted to Rust idioms.
-**Depends on:** Phase 1
 
-## Phase 2: JavaScript (v0.2.0)
+## Phase 2: Cloudflare Bypass (v0.2.0)
 
-**Goal:** Execute JS on pages, expose DOM to scripts.
+**Goal:** Solve Cloudflare JS challenges natively, provide cookies to go-stealth.
 
-- [ ] `JsEngine` trait with pluggable backends
-- [ ] Boa backend (default): `boa_engine` 0.21+
-- [ ] DOM bindings: document, window, element → dom_query
-- [ ] addEventListener support (click, submit, load)
-- [ ] Inline `<script>` execution on page load
-- [ ] Feature flag `quickjs`: rquickjs backend
-- [ ] CLI: `ox-browser fetch --js <url>`
+### Phase 2a: TLS Fingerprinting
 
-**Result:** Pages with inline JS render correctly. DOM mutations from JS visible. ~500-800 LOC bindings.
-**Depends on:** Phase 1
+- [ ] Replace rustls with `boring` (BoringSSL) or `rustls` with JA3 customization
+- [ ] Chrome TLS fingerprint mimicry (cipher suites, extensions, ALPN order)
+- [ ] HTTP/2 fingerprint: SETTINGS frame, WINDOW_UPDATE, priority matching Chrome
+- [ ] `TlsProfile` struct tied to `BrowserProfile`
+- [ ] Middleware: `tls_fingerprint_middleware` (or configure at client level)
+
+### Phase 2b: JS Challenge Solver
+
+- [ ] `ox-js` crate: Boa engine with minimal DOM shim
+- [ ] DOM shim: `document.createElement`, `document.getElementById`, cookie access
+- [ ] `window.setTimeout`/`setInterval` via tokio timers
+- [ ] Extract + execute CF challenge-platform scripts
+- [ ] Return `cf_clearance` cookie on success
+- [ ] Timeout + fallback (max 30s per challenge attempt)
+
+### Phase 2c: CookieProvider Integration
+
+- [ ] `CookieProvider` trait: `async fn solve(url, challenge) -> CookieJar`
+- [ ] HTTP endpoint: `POST /solve` — accepts URL, returns cookies
+- [ ] go-stealth integration: call ox-browser on `HttpError::Cloudflare`
+- [ ] Cookie caching: per-domain, TTL-based (cf_clearance ~30min)
+- [ ] Metrics: solve success rate, avg solve time
+
+**Result:** CF JS challenges solved in ~5s without Chromium. go-stealth gets cookies.
+**Not solving:** Turnstile/CAPTCHA (requires visual solver — out of scope).
+**Depends on:** Phase 1.5
 
 ## Phase 3: Security Scanner (v0.3.0)
 
@@ -91,23 +110,21 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 **Goal:** Expose ox-browser as MCP service for AI agents.
 
 - [ ] `ox-mcp` crate with HTTP+SSE transport
-- [ ] Tools: browse, select, run_script, fill_form, crawl, security_scan, extract_links, extract_meta
+- [ ] Tools: browse, select, fill_form, crawl, security_scan, solve_cf
 - [ ] Docker container with multi-stage build
 - [ ] docker-compose.yml entry (port 8901)
 - [ ] Integration with krolik-agent (skill + mcp_call)
 - [ ] Health endpoint
 
-**Result:** AI agents can browse, scrape, and scan via MCP. ~400 LOC.
+**Result:** AI agents can browse, scrape, scan, and solve CF via MCP. ~400 LOC.
 **Depends on:** Phases 1-4
 
 ## Phase 6: Polish (v1.0.0)
 
 **Goal:** Production-ready quality.
 
-- [ ] Clippy config (strict, deny warnings)
 - [ ] CI/CD: GitHub Actions (test, lint, build, release)
-- [ ] Benchmarks (parsing, JS execution, crawl throughput)
-- [ ] README.md with examples
+- [ ] Benchmarks (parsing, JS execution, CF solve time)
 - [ ] Crate documentation (rustdoc, 60%+ coverage)
 - [ ] GoReleaser-style binary releases
 
@@ -119,31 +136,28 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 - **CSS layout/rendering** — no visual rendering, no computed styles
 - **Full browser compatibility** — not trying to replace Chrome/Firefox
 - **WebDriver/CDP protocol** — MCP is the integration protocol
+- **Turnstile/CAPTCHA solving** — requires visual solver, out of scope
 - **Image/media processing** — text and HTML only
-- **WebSocket connections** — HTTP request/response only in MVP
 
 ## Comparison
 
-| Feature | ox-browser | go-stealth | go-browser | kalamari |
-|---------|-----------|-----------|------------|----------|
-| Language | Rust | Go | Go | Rust |
-| Purpose | Headless browser | Stealth HTTP client | Chrome automation | Headless browser |
-| Chrome needed | No | No | Yes (Rod) | No |
-| JS engine | Boa + QuickJS | None | V8 (via Rod) | Boa |
-| DOM parsing | dom_query (mutable) | None | Chrome DOM | Custom |
-| TLS fingerprinting | rustls (Phase 1.5) | Yes (tls-client) | Via Chrome | No |
-| Browser profiles | 16 built-in ✅ | 16 built-in | N/A | No |
-| Proxy pool | Webshare + health ✅ | Webshare + health | No | No |
-| Rate limiting | Per-domain ✅ | Per-domain | No | No |
-| Middleware | Chain pattern ✅ | Chain pattern | No | No |
-| Security scanning | Planned (Phase 3) | No | No | Built-in |
-| Crawling | Planned (Phase 4) | No | No | Basic |
-| MCP server | Planned (Phase 5) | No | No | No |
-| Binary size | ~10MB est. | ~15MB | ~15MB + Chromium | ~8MB |
-| Quality | Grade A (v0.1.0) | Grade A | Grade A | Grade D |
+| Feature | ox-browser | go-stealth | go-browser |
+|---------|-----------|-----------|------------|
+| Language | Rust | Go | Go |
+| Purpose | Headless browser + CF bypass | Stealth HTTP client | Chrome automation |
+| Chrome needed | No | No | Yes (Rod) |
+| JS engine | Boa (Phase 2) | None | V8 (via Rod) |
+| DOM parsing | dom_query (mutable) | None | Chrome DOM |
+| TLS fingerprinting | Phase 2a | Yes (tls-client) | Via Chrome |
+| Browser profiles | 16 built-in ✅ | 16 built-in | N/A |
+| CF detection | ✅ (Phase 1.5) | ✅ | N/A |
+| CF JS solving | Phase 2b | No (delegates) | Via Chrome |
+| Proxy pool | Webshare + health ✅ | Webshare + health | No |
+| Rate limiting | Per-domain ✅ | Per-domain | No |
+| Middleware | Chain pattern ✅ | Chain pattern | No |
+| MCP server | Phase 5 | No | No |
 
 **When to use which:**
-- **ox-browser** — lightweight scraping + DOM + JS, security scanning, no Chrome dependency
-- **go-stealth** — stealth HTTP requests without DOM/JS (API scraping, anti-bot bypass)
-- **go-browser** — SPA rendering, full JS, screenshot/PDF generation
-- **ox-browser + go-stealth patterns** — Phase 1.5 combines both: DOM parsing + stealth HTTP
+- **ox-browser** — lightweight scraping + DOM + CF bypass, no Chrome dependency
+- **go-stealth** — stealth HTTP requests without DOM/JS, delegates CF to ox-browser
+- **go-browser** — SPA rendering, full JS, screenshot/PDF (needs Chromium)
