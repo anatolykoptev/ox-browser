@@ -57,7 +57,7 @@ impl Handler for RetryHandler {
 mod tests {
     use super::*;
     use crate::middleware::chain;
-    use reqwest::header::HeaderMap;
+    use wreq::header::HeaderMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 

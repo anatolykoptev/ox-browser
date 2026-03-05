@@ -47,7 +47,7 @@ impl Handler for ClientHintsHandler {
 mod tests {
     use super::*;
     use crate::middleware::chain;
-    use reqwest::header::HeaderMap;
+    use wreq::header::HeaderMap;
 
     /// Captures the final request headers so tests can inspect them.
     struct CaptureHandler {

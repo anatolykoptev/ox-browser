@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::header::HeaderMap;
+use wreq::header::HeaderMap;
 
 use ox_http::{
     chain, cloudflare_detect_middleware, detect_cloudflare, retry_middleware, ChallengeType,

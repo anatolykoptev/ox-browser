@@ -5,7 +5,7 @@ use crate::cloudflare::ChallengeType;
 #[derive(Error, Debug)]
 pub enum HttpError {
     #[error("request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[from] wreq::Error),
 
     #[error("invalid URL: {0}")]
     InvalidUrl(String),

@@ -81,7 +81,7 @@ pub fn chain(middlewares: Vec<MiddlewareFn>, base: Arc<dyn Handler>) -> Arc<dyn 
 mod tests {
     use super::*;
     use crate::HttpResponse;
-    use reqwest::header::HeaderMap;
+    use wreq::header::HeaderMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Simple echo handler that returns 200 with the request URL as body.

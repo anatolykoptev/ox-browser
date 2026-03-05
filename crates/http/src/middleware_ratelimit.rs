@@ -59,7 +59,7 @@ impl Handler for RateLimitHandler {
 mod tests {
     use super::*;
     use crate::middleware::chain;
-    use reqwest::header::{HeaderMap, HeaderValue};
+    use wreq::header::{HeaderMap, HeaderValue};
 
     struct FixedHandler {
         status: u16,

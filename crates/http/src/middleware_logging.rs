@@ -62,7 +62,7 @@ impl Handler for LoggingHandler {
 mod tests {
     use super::*;
     use crate::middleware::chain;
-    use reqwest::header::HeaderMap;
+    use wreq::header::HeaderMap;
 
     struct StubHandler {
         status: u16,

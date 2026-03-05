@@ -32,6 +32,8 @@ pub struct HttpConfig {
     pub cloudflare_detect: bool,
     /// Enable debug logging middleware.
     pub debug: bool,
+    /// Browser emulation for TLS/HTTP2 fingerprinting (wreq BoringSSL).
+    pub emulation: Option<wreq_util::Emulation>,
 }
 
 impl Default for HttpConfig {
@@ -47,6 +49,7 @@ impl Default for HttpConfig {
             rate_limiter: None,
             cloudflare_detect: false,
             debug: false,
+            emulation: None,
         }
     }
 }

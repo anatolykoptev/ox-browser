@@ -79,7 +79,7 @@ fn avg_latency_large_count_no_truncation() {
 
 // ── Bug 4: proxy pool sampled once during construction ───────────────
 //
-// build_reqwest_client calls pool.next() once and configures the reqwest
+// build_wreq_client calls pool.next() once and configures the wreq
 // Client with a single static proxy. All requests go through the SAME
 // proxy — the pool's round-robin rotation is completely useless.
 

@@ -38,7 +38,7 @@ impl WebsharePool {
         if api_key.is_empty() {
             return Err(HttpError::ProxyPool("Webshare API key is empty".into()));
         }
-        let client = reqwest::Client::builder()
+        let client = wreq::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()?;
         let resp = client

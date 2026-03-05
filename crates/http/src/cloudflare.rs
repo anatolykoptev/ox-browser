@@ -86,7 +86,7 @@ pub fn detect_cloudflare(resp: &HttpResponse) -> Option<CloudflareChallenge> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest::header::HeaderMap;
+    use wreq::header::HeaderMap;
 
     fn cf_response(status: u16, body: &str, server: &str) -> HttpResponse {
         let mut headers = HeaderMap::new();

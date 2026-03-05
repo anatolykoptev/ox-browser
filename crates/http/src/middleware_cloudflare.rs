@@ -19,7 +19,7 @@ use crate::{HttpResponse, Result};
 /// place cloudflare detection *inside* retry so retries happen
 /// automatically with a different proxy.
 ///
-/// Chain order: `retry -> cloudflare_detect -> client_hints -> reqwest`
+/// Chain order: `retry -> cloudflare_detect -> client_hints -> wreq`
 pub fn cloudflare_detect_middleware() -> MiddlewareFn {
     Arc::new(|next: Arc<dyn Handler>| -> Arc<dyn Handler> {
         Arc::new(CloudflareDetectHandler { next })
@@ -50,7 +50,7 @@ mod tests {
     use super::*;
     use crate::cloudflare::ChallengeType;
     use crate::middleware::chain;
-    use reqwest::header::HeaderMap;
+    use wreq::header::HeaderMap;
 
     struct MockHandler {
         status: u16,
