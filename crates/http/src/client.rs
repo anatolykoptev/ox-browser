@@ -4,6 +4,7 @@ use reqwest::Client;
 
 use crate::handler_reqwest::ReqwestHandler;
 use crate::middleware::{chain, Handler, MiddlewareFn, Request};
+use crate::middleware_cloudflare::cloudflare_detect_middleware;
 use crate::middleware_hints::client_hints_middleware;
 use crate::middleware_logging::logging_middleware;
 use crate::middleware_ratelimit::rate_limit_middleware;
@@ -24,7 +25,7 @@ impl HttpClient {
     /// Build the client and its middleware chain from config.
     ///
     /// Chain order (outermost first):
-    /// `[logging?] -> [rate_limit?] -> [retry?] -> [client_hints] -> reqwest`
+    /// `[logging?] -> [rate_limit?] -> [retry?] -> [cloudflare?] -> [client_hints] -> reqwest`
     pub fn new(config: HttpConfig) -> Result<Self> {
         let client = Self::build_reqwest_client(&config)?;
         let base: Arc<dyn Handler> = Arc::new(ReqwestHandler::new(client));
@@ -44,6 +45,11 @@ impl HttpClient {
         // Retry with exponential backoff.
         if let Some(ref retry_cfg) = config.retry {
             middlewares.push(retry_middleware(retry_cfg.clone()));
+        }
+
+        // Cloudflare detection (inside retry so CF triggers auto-retry).
+        if config.cloudflare_detect {
+            middlewares.push(cloudflare_detect_middleware());
         }
 
         // Innermost middleware: auto-inject client hints.

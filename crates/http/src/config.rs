@@ -27,6 +27,9 @@ pub struct HttpConfig {
     pub retry: Option<RetryConfig>,
     /// Per-domain rate limiter.
     pub rate_limiter: Option<Arc<DomainLimiter>>,
+    /// Enable Cloudflare challenge detection (converts CF responses to errors).
+    /// Works best with retry middleware — retries use a different proxy.
+    pub cloudflare_detect: bool,
     /// Enable debug logging middleware.
     pub debug: bool,
 }
@@ -42,6 +45,7 @@ impl Default for HttpConfig {
             proxy_pool: None,
             retry: None,
             rate_limiter: None,
+            cloudflare_detect: false,
             debug: false,
         }
     }
