@@ -8,7 +8,7 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 **Goal:** Fetch pages, parse DOM, extract data — no JS, no browser chrome.
 
 - [x] Workspace setup (Cargo.toml, 6 crates)
-- [x] `ox-http`: reqwest wrapper with proxy, cookies, redirects
+- [x] `ox-http`: HTTP wrapper with proxy, cookies, redirects
 - [x] `ox-core`: Browser, Page, DOM facade over dom_query
 - [x] Page: select, select_single, title, html, text, forms, links, meta_tags
 - [x] Form extraction and filling (input/select/textarea, set_field, serialize)
@@ -41,19 +41,26 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 **Result:** Stealth HTTP client with Cloudflare detection. ~5100 LOC, 187 tests.
 **Ported from:** `go-stealth` (Grade A, 6.6K LOC) — concepts adapted to Rust idioms.
 
+## Phase 1.6: TLS Fingerprinting (v0.1.6) ✅
+
+**Goal:** Chrome-identical TLS/HTTP2 fingerprints via BoringSSL.
+
+- [x] Replace `reqwest+rustls` with `wreq+BoringSSL` (wreq = reqwest hard fork)
+- [x] Chrome-identical TLS fingerprint (JA4 match via BoringSSL)
+- [x] HTTP/2 fingerprint: SETTINGS, WINDOW_UPDATE, priority matching Chrome
+- [x] `wreq_util::Emulation` support in `HttpConfig` (Chrome131, etc.)
+- [x] Per-request proxy rotation via `RequestBuilder::proxy()` (replaces `Proxy::custom()`)
+- [x] Re-export `Emulation` from `ox-http` for downstream use
+- [x] All 140 tests pass, clippy clean
+
+**Result:** Undetectable TLS fingerprint. ~5085 LOC, 140 tests.
+**Key change:** `reqwest` → `wreq` (near-identical API, BoringSSL backend).
+
 ## Phase 2: Cloudflare Bypass (v0.2.0)
 
 **Goal:** Solve Cloudflare JS challenges natively, provide cookies to go-stealth.
 
-### Phase 2a: TLS Fingerprinting
-
-- [ ] Replace rustls with `boring` (BoringSSL) or `rustls` with JA3 customization
-- [ ] Chrome TLS fingerprint mimicry (cipher suites, extensions, ALPN order)
-- [ ] HTTP/2 fingerprint: SETTINGS frame, WINDOW_UPDATE, priority matching Chrome
-- [ ] `TlsProfile` struct tied to `BrowserProfile`
-- [ ] Middleware: `tls_fingerprint_middleware` (or configure at client level)
-
-### Phase 2b: JS Challenge Solver
+### Phase 2a: JS Challenge Solver
 
 - [ ] `ox-js` crate: Boa engine with minimal DOM shim
 - [ ] DOM shim: `document.createElement`, `document.getElementById`, cookie access
@@ -62,7 +69,7 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 - [ ] Return `cf_clearance` cookie on success
 - [ ] Timeout + fallback (max 30s per challenge attempt)
 
-### Phase 2c: CookieProvider Integration
+### Phase 2b: CookieProvider Integration
 
 - [ ] `CookieProvider` trait: `async fn solve(url, challenge) -> CookieJar`
 - [ ] HTTP endpoint: `POST /solve` — accepts URL, returns cookies
@@ -148,7 +155,7 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 | Chrome needed | No | No | Yes (Rod) |
 | JS engine | Boa (Phase 2) | None | V8 (via Rod) |
 | DOM parsing | dom_query (mutable) | None | Chrome DOM |
-| TLS fingerprinting | Phase 2a | Yes (tls-client) | Via Chrome |
+| TLS fingerprinting | ✅ wreq+BoringSSL | Yes (tls-client) | Via Chrome |
 | Browser profiles | 16 built-in ✅ | 16 built-in | N/A |
 | CF detection | ✅ (Phase 1.5) | ✅ | N/A |
 | CF JS solving | Phase 2b | No (delegates) | Via Chrome |
