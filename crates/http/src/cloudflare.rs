@@ -1,7 +1,4 @@
-//! Cloudflare challenge detection.
-//!
-//! Port of go-stealth's `DetectCloudflare`. Inspects HTTP responses for
-//! Cloudflare challenge pages (JS challenge, Turnstile, IP block).
+//! Cloudflare challenge detection — port of go-stealth's `DetectCloudflare`.
 
 use crate::HttpResponse;
 
@@ -26,7 +23,6 @@ impl std::fmt::Display for ChallengeType {
     }
 }
 
-/// Cloudflare challenge details extracted from a response.
 #[derive(Debug, Clone)]
 pub struct CloudflareChallenge {
     pub challenge_type: ChallengeType,
@@ -35,8 +31,6 @@ pub struct CloudflareChallenge {
 }
 
 /// Inspect an HTTP response for Cloudflare challenge markers.
-///
-/// Returns `None` if the response is not a Cloudflare challenge.
 pub fn detect_cloudflare(resp: &HttpResponse) -> Option<CloudflareChallenge> {
     if resp.status != 403 && resp.status != 503 {
         return None;
