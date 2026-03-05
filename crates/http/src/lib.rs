@@ -1,3 +1,4 @@
+pub mod cloudflare;
 mod client;
 mod config;
 mod error;
@@ -18,6 +19,7 @@ mod response;
 pub mod retry;
 pub mod retry_parse;
 
+pub use cloudflare::{detect_cloudflare, ChallengeType, CloudflareChallenge};
 pub use client::HttpClient;
 pub use config::HttpConfig;
 pub use error::{HttpError, Result};

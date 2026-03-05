@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::cloudflare::ChallengeType;
+
 #[derive(Error, Debug)]
 pub enum HttpError {
     #[error("request failed: {0}")]
@@ -16,6 +18,9 @@ pub enum HttpError {
 
     #[error("proxy pool error: {0}")]
     ProxyPool(String),
+
+    #[error("cloudflare {0} (HTTP {1}, ray {2})")]
+    Cloudflare(ChallengeType, u16, String),
 }
 
 impl HttpError {
@@ -25,6 +30,7 @@ impl HttpError {
             Self::RetryableStatus(_) => true,
             Self::Timeout(_) => true,
             Self::Request(e) => e.is_timeout() || e.is_connect(),
+            Self::Cloudflare(_, _, _) => true,
             Self::InvalidUrl(_) | Self::ProxyPool(_) => false,
         }
     }
