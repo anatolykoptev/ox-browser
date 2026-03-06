@@ -1164,7 +1164,7 @@ dependencies = [
 
 [[package]]
 name = "ox-browser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1182,7 +1182,7 @@ dependencies = [
 
 [[package]]
 name = "ox-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dom_query",
  "ox-http",
@@ -1195,11 +1195,11 @@ dependencies = [
 
 [[package]]
 name = "ox-crawler"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "ox-http"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "cookie_store",
@@ -1216,7 +1216,7 @@ dependencies = [
 
 [[package]]
 name = "ox-js"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1232,11 +1232,11 @@ dependencies = [
 
 [[package]]
 name = "ox-mcp"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "ox-security"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "regex",
  "serde",
