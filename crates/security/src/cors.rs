@@ -45,6 +45,15 @@ pub fn analyze_cors(headers: &HashMap<String, String>) -> CorsReport {
                     severity: Severity::Critical,
                 });
             }
+        } else if acac {
+            // Specific origin with credentials — possible origin reflection.
+            score_modifier = score_modifier.min(-20);
+            findings.push(CorsFinding {
+                description: format!(
+                    "ACAO reflects specific origin ({origin}) with credentials enabled — possible origin reflection"
+                ),
+                severity: Severity::High,
+            });
         }
     }
 
@@ -89,5 +98,25 @@ mod tests {
         ]));
         assert_eq!(r.findings.len(), 2);
         assert!(r.findings.iter().all(|f| f.severity == Severity::Critical));
+    }
+
+    #[test]
+    fn test_cors_reflected_origin_with_credentials() {
+        let r = analyze_cors(&headers(&[
+            ("access-control-allow-origin", "https://evil.com"),
+            ("access-control-allow-credentials", "true"),
+        ]));
+        assert_eq!(r.findings.len(), 1);
+        assert_eq!(r.findings[0].severity, Severity::High);
+        assert!(r.score_modifier <= -20);
+    }
+
+    #[test]
+    fn test_cors_specific_origin_without_credentials() {
+        let r = analyze_cors(&headers(&[
+            ("access-control-allow-origin", "https://example.com"),
+        ]));
+        assert!(r.findings.is_empty());
+        assert_eq!(r.score_modifier, 0);
     }
 }

@@ -1,4 +1,4 @@
-//! Security headers analyzer — checks 15 HTTP security headers.
+//! Security headers analyzer — checks 16+ HTTP security headers.
 
 mod checks;
 
@@ -57,6 +57,10 @@ pub fn analyze_headers(headers: &HashMap<String, String>) -> HeadersReport {
     checks::check_cross_domain_policies(headers, &mut findings);
     checks::check_dns_prefetch(headers, &mut findings);
     checks::check_cache_control(headers, &mut findings);
+    checks::check_clear_site_data(headers, &mut findings);
+    if let Some(f) = checks::check_content_type_charset(headers) {
+        findings.push(f);
+    }
 
     let present_count = findings
         .iter()

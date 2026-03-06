@@ -190,3 +190,30 @@ pub(super) fn check_cache_control(h: &HashMap<String, String>, out: &mut Vec<Hea
         Some(v) => out.push(present(name, &v, Severity::Info, &format!("Cache-Control: {v}"))),
     }
 }
+
+pub(super) fn check_clear_site_data(h: &HashMap<String, String>, out: &mut Vec<HeaderFinding>) {
+    let name = "clear-site-data";
+    match get(h, name) {
+        None => out.push(present(name, "", Severity::Info, "Clear-Site-Data absent (optional)")),
+        Some(v) => out.push(present(name, &v, Severity::Info, "Clear-Site-Data header present")),
+    }
+}
+
+pub(super) fn check_content_type_charset(
+    h: &HashMap<String, String>,
+) -> Option<HeaderFinding> {
+    let ct = get(h, "content-type")?;
+    let lower = ct.to_lowercase();
+    if lower.contains("text/html") && !lower.contains("charset") {
+        Some(HeaderFinding {
+            header: "content-type".to_string(),
+            status: HeaderStatus::Present,
+            value: Some(ct),
+            description: "Content-Type text/html without charset declaration".into(),
+            severity: Severity::Low,
+            recommendation: Some("Add charset=utf-8 to Content-Type".into()),
+        })
+    } else {
+        None
+    }
+}

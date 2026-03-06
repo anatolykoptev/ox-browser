@@ -88,7 +88,7 @@ fn test_referrer_policy_good() {
 #[test]
 fn test_all_missing() {
     let report = analyze_headers(&HashMap::new());
-    assert_eq!(report.total_checked, 15);
+    assert_eq!(report.total_checked, 16);
     assert!(report.missing_count >= 10, "missing_count={}", report.missing_count);
 }
 
@@ -110,10 +110,35 @@ fn test_full_secure_headers() {
         ("x-permitted-cross-domain-policies", "none"),
         ("x-dns-prefetch-control", "off"),
         ("cache-control", "no-store"),
+        ("clear-site-data", "\"cache\", \"cookies\""),
     ]);
     let report = analyze_headers(&headers);
     assert_eq!(report.present_count + report.missing_count, report.total_checked);
     for f in &report.findings {
         assert_eq!(f.severity, Severity::Info, "unexpected severity for {}: {:?}", f.header, f.severity);
     }
+}
+
+#[test]
+fn test_clear_site_data_present() {
+    let headers = h(&[("clear-site-data", "\"cache\"")]);
+    let report = analyze_headers(&headers);
+    let f = report.findings.iter().find(|f| f.header == "clear-site-data").unwrap();
+    assert_eq!(f.status, HeaderStatus::Present);
+    assert_eq!(f.severity, Severity::Info);
+}
+
+#[test]
+fn test_content_type_missing_charset() {
+    let headers = h(&[("content-type", "text/html")]);
+    let report = analyze_headers(&headers);
+    let f = report.findings.iter().find(|f| f.header == "content-type").unwrap();
+    assert_eq!(f.severity, Severity::Low);
+}
+
+#[test]
+fn test_content_type_with_charset() {
+    let headers = h(&[("content-type", "text/html; charset=utf-8")]);
+    let report = analyze_headers(&headers);
+    assert!(report.findings.iter().find(|f| f.header == "content-type").is_none());
 }
