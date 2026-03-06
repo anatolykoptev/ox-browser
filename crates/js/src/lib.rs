@@ -1,6 +1,7 @@
 //! HTTP API server exposing CF solver via POST /solve for go-stealth.
 
 mod analyze;
+pub mod analyze_types;
 mod fetch;
 mod fetch_smart;
 
