@@ -12,6 +12,7 @@ use url::Url;
 use crate::AppState;
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct FetchSmartRequest {
     pub url: String,
     #[serde(default = "default_timeout")]

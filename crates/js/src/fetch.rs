@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::AppState;
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct FetchRequest {
     pub url: String,
     #[serde(default)]
