@@ -9,6 +9,8 @@ pub enum ChallengeType {
     JsChallenge,
     /// Turnstile/managed CAPTCHA (403 + turnstile widget)
     Turnstile,
+    /// Managed challenge at HTTP 200 (interstitial page with JS or Turnstile)
+    ManagedChallenge,
     /// IP or country block (403 + "you have been blocked")
     Block,
 }
@@ -18,6 +20,7 @@ impl std::fmt::Display for ChallengeType {
         match self {
             Self::JsChallenge => write!(f, "js_challenge"),
             Self::Turnstile => write!(f, "managed_challenge"),
+            Self::ManagedChallenge => write!(f, "managed_challenge_200"),
             Self::Block => write!(f, "block"),
         }
     }
@@ -32,10 +35,6 @@ pub struct CloudflareChallenge {
 
 /// Inspect an HTTP response for Cloudflare challenge markers.
 pub fn detect_cloudflare(resp: &HttpResponse) -> Option<CloudflareChallenge> {
-    if resp.status != 403 && resp.status != 503 {
-        return None;
-    }
-
     let server = resp
         .headers
         .get("server")
@@ -53,31 +52,60 @@ pub fn detect_cloudflare(resp: &HttpResponse) -> Option<CloudflareChallenge> {
         .unwrap_or("")
         .to_owned();
 
-    // JS challenge: 503 + challenge-platform scripts
-    if resp.status == 503 && body.contains("challenge-platform") {
-        return Some(CloudflareChallenge {
-            challenge_type: ChallengeType::JsChallenge,
-            status: resp.status,
-            ray_id,
-        });
+    // --- HTTP 403/503 detection (existing logic) ---
+    if resp.status == 403 || resp.status == 503 {
+        if resp.status == 503 && body.contains("challenge-platform") {
+            return Some(CloudflareChallenge {
+                challenge_type: ChallengeType::JsChallenge,
+                status: resp.status,
+                ray_id,
+            });
+        }
+        if body.contains("turnstile-wrapper") || body.contains("cf-turnstile") {
+            return Some(CloudflareChallenge {
+                challenge_type: ChallengeType::Turnstile,
+                status: resp.status,
+                ray_id,
+            });
+        }
+        if body.contains("you have been blocked") || body.contains("cf-error-details") {
+            return Some(CloudflareChallenge {
+                challenge_type: ChallengeType::Block,
+                status: resp.status,
+                ray_id,
+            });
+        }
+        return None;
     }
 
-    // Turnstile managed challenge
-    if body.contains("turnstile-wrapper") || body.contains("cf-turnstile") {
-        return Some(CloudflareChallenge {
-            challenge_type: ChallengeType::Turnstile,
-            status: resp.status,
-            ray_id,
-        });
-    }
-
-    // Block page
-    if body.contains("you have been blocked") || body.contains("cf-error-details") {
-        return Some(CloudflareChallenge {
-            challenge_type: ChallengeType::Block,
-            status: resp.status,
-            ray_id,
-        });
+    // --- HTTP 200 detection (new: interstitial challenges) ---
+    if resp.status == 200 {
+        let cf_mitigated = resp
+            .headers
+            .get("cf-mitigated")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if cf_mitigated.contains("challenge") {
+            return Some(CloudflareChallenge {
+                challenge_type: ChallengeType::ManagedChallenge,
+                status: resp.status,
+                ray_id,
+            });
+        }
+        if body.contains("cf-turnstile") || body.contains("turnstile-wrapper") {
+            return Some(CloudflareChallenge {
+                challenge_type: ChallengeType::Turnstile,
+                status: resp.status,
+                ray_id,
+            });
+        }
+        if body.contains("_cf_chl_opt") || body.contains("challenge-platform") {
+            return Some(CloudflareChallenge {
+                challenge_type: ChallengeType::ManagedChallenge,
+                status: resp.status,
+                ray_id,
+            });
+        }
     }
 
     None
@@ -142,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_200() {
+    fn ignores_clean_200() {
         let resp = cf_response(200, "<html>ok</html>", "cloudflare");
         assert!(detect_cloudflare(&resp).is_none());
     }
@@ -176,6 +204,7 @@ mod tests {
     fn challenge_type_display() {
         assert_eq!(ChallengeType::JsChallenge.to_string(), "js_challenge");
         assert_eq!(ChallengeType::Turnstile.to_string(), "managed_challenge");
+        assert_eq!(ChallengeType::ManagedChallenge.to_string(), "managed_challenge_200");
         assert_eq!(ChallengeType::Block.to_string(), "block");
     }
 
@@ -195,5 +224,74 @@ mod tests {
             "cloudflare",
         );
         assert!(detect_cloudflare(&resp).is_none());
+    }
+
+    #[test]
+    fn detects_cf_mitigated_header_at_200() {
+        let mut headers = HeaderMap::new();
+        headers.insert("server", "cloudflare".parse().unwrap());
+        headers.insert("cf-mitigated", "challenge".parse().unwrap());
+        let resp = HttpResponse {
+            status: 200,
+            url: "https://example.com".into(),
+            headers,
+            body: "<html>Just a moment...</html>".into(),
+        };
+        let cf = detect_cloudflare(&resp).unwrap();
+        assert_eq!(cf.challenge_type, ChallengeType::ManagedChallenge);
+        assert_eq!(cf.status, 200);
+    }
+
+    #[test]
+    fn detects_cf_chl_opt_at_200() {
+        let mut headers = HeaderMap::new();
+        headers.insert("server", "cloudflare".parse().unwrap());
+        let resp = HttpResponse {
+            status: 200,
+            url: "https://example.com".into(),
+            headers,
+            body: "<html><script>window._cf_chl_opt={}</script></html>".into(),
+        };
+        let cf = detect_cloudflare(&resp).unwrap();
+        assert_eq!(cf.challenge_type, ChallengeType::ManagedChallenge);
+    }
+
+    #[test]
+    fn detects_challenge_platform_at_200() {
+        let mut headers = HeaderMap::new();
+        headers.insert("server", "cloudflare".parse().unwrap());
+        let resp = HttpResponse {
+            status: 200,
+            url: "https://example.com".into(),
+            headers,
+            body: "<html><script src=\"/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1\"></script></html>".into(),
+        };
+        let cf = detect_cloudflare(&resp).unwrap();
+        assert_eq!(cf.challenge_type, ChallengeType::ManagedChallenge);
+    }
+
+    #[test]
+    fn ignores_normal_200_from_cloudflare() {
+        let resp = cf_response(200, "<html><body>Normal page content</body></html>", "cloudflare");
+        assert!(detect_cloudflare(&resp).is_none());
+    }
+
+    #[test]
+    fn detects_turnstile_at_200() {
+        let mut headers = HeaderMap::new();
+        headers.insert("server", "cloudflare".parse().unwrap());
+        let resp = HttpResponse {
+            status: 200,
+            url: "https://example.com".into(),
+            headers,
+            body: "<html><div class=\"cf-turnstile\"></div></html>".into(),
+        };
+        let cf = detect_cloudflare(&resp).unwrap();
+        assert_eq!(cf.challenge_type, ChallengeType::Turnstile);
+    }
+
+    #[test]
+    fn managed_challenge_display() {
+        assert_eq!(ChallengeType::ManagedChallenge.to_string(), "managed_challenge_200");
     }
 }

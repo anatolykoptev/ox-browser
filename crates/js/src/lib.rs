@@ -61,6 +61,7 @@ async fn solve(
     let challenge_type = match req.challenge_type.as_str() {
         "js_challenge" => ChallengeType::JsChallenge,
         "managed_challenge" | "turnstile" => ChallengeType::Turnstile,
+        "managed_challenge_200" => ChallengeType::ManagedChallenge,
         "block" => {
             return (
                 StatusCode::BAD_REQUEST,
