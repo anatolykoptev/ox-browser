@@ -1,5 +1,6 @@
 # Stage 1: Chef — compute recipe
 FROM rust:1.88-bookworm AS chef
+RUN apt-get update && apt-get install -y --no-install-recommends cmake make g++ perl && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
