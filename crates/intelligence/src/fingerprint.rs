@@ -75,17 +75,36 @@ pub fn detect(
     result
         .technologies
         .into_iter()
+        .filter(|t| !is_false_positive(t))
         .map(|t| Detection {
             name: t.name,
             categories: t.categories,
             confidence: t.confidence,
-            version: t.version,
+            version: sanitize_version(t.version),
         })
         .collect()
 }
 
 fn build_detector() -> Result<TechDetector, rswappalyzer::RswError> {
     TechDetector::with_embedded_rules(RuleConfig::embedded())
+}
+
+/// Filter out known rswappalyzer false positives.
+fn is_false_positive(t: &rswappalyzer::detector::Technology) -> bool {
+    // Onsen UI triggers on wp-consent-api and similar unrelated scripts.
+    if t.name == "Onsen UI" {
+        if let Some(ref v) = t.version {
+            if v.contains('/') || v.contains("wp-") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Drop version strings that are clearly garbage (URLs, paths).
+fn sanitize_version(version: Option<String>) -> Option<String> {
+    version.filter(|v| !v.contains('/') && v.len() < 32)
 }
 
 #[cfg(test)]
@@ -246,5 +265,35 @@ mod tests {
         if let Some(v) = &nginx.unwrap().version {
             assert!(v.contains("1.25"), "unexpected version: {v}");
         }
+    }
+
+    #[test]
+    fn garbage_version_sanitized() {
+        // Versions containing paths/URLs should be stripped.
+        let v = sanitize_version(Some("//example.com/wp-content/foo.js".into()));
+        assert!(v.is_none(), "path-like version should be sanitized");
+        let v2 = sanitize_version(Some("1.25.3".into()));
+        assert_eq!(v2.as_deref(), Some("1.25.3"));
+    }
+
+    #[test]
+    fn onsen_ui_false_positive_filtered() {
+        let fake = rswappalyzer::detector::Technology {
+            name: "Onsen UI".into(),
+            categories: vec!["Mobile frameworks".into()],
+            confidence: 100,
+            version: Some("//piter.now/wp-content/plugins/wp-consent-api/assets/js/foo.js".into()),
+            implied_by: None,
+        };
+        assert!(is_false_positive(&fake));
+
+        let legit = rswappalyzer::detector::Technology {
+            name: "Onsen UI".into(),
+            categories: vec!["Mobile frameworks".into()],
+            confidence: 100,
+            version: Some("2.12.0".into()),
+            implied_by: None,
+        };
+        assert!(!is_false_positive(&legit));
     }
 }
