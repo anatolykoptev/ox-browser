@@ -1176,6 +1176,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wreq",
  "wreq-util",
 ]
 
@@ -1236,6 +1237,12 @@ version = "0.1.0"
 [[package]]
 name = "ox-security"
 version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "tracing",
+]
 
 [[package]]
 name = "parking_lot"
