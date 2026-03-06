@@ -56,9 +56,10 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 **Result:** Undetectable TLS fingerprint. ~5085 LOC, 140 tests.
 **Key change:** `reqwest` → `wreq` (near-identical API, BoringSSL backend).
 
-## Phase 2: Cloudflare Bypass (v0.2.0) ✅
+## Phase 2: Cloudflare Bypass + HTTP API (v0.2.0) ✅
 
-**Goal:** Solve Cloudflare challenges via external solver, provide cookies to go-stealth.
+**Goal:** Solve Cloudflare challenges via external solver, provide cookies to go-stealth,
+expose fetch/analyze API for the ecosystem.
 
 **Architecture revision (March 2026):** Research showed embedded JS engines (Boa/QuickJS)
 cannot solve modern CF challenges — they require Canvas, WebGL, Audio Context (full browser
@@ -74,15 +75,35 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 - [x] `solver_middleware`: intercepts HttpError::Cloudflare, solves, injects cookies, retries
 - [x] Block challenges correctly passed through (not solvable)
 
-### Phase 2b: HTTP API for go-stealth
+### Phase 2b: CF Detection at HTTP 200
+
+- [x] Detect Cloudflare challenges hidden behind HTTP 200 responses
+- [x] `cf-mitigated` header detection (managed challenge)
+- [x] Body markers: `_cf_chl_opt`, `challenge-platform`, `cf-turnstile`
+- [x] Updated `detect_cloudflare()` to check both status codes and response body/headers
+- [x] 35 hard red tests covering edge cases (CF 200 detection, retry, proxy, middleware)
+
+### Phase 2c: HTTP API
 
 - [x] `POST /solve` endpoint (accepts URL + challenge_type, returns cookies)
+- [x] `POST /fetch` endpoint (stealth fetch with proxy + CF bypass)
+- [x] `POST /fetch-smart` endpoint (three-tier chain: proxy → ox-browser → Byparr fallback)
+- [x] `POST /analyze` endpoint (fetch page + detect tech stack from HTML/headers)
 - [x] `/health` endpoint
 - [x] Cache-aware (returns cached cookies on repeat requests)
 - [x] Block challenge rejection (400 Bad Request)
 
-**Result:** CF challenges solved via external solver. ~5800 LOC, 218 tests.
+### Phase 2d: Docker Deployment
+
+- [x] Multi-stage Dockerfile: cargo-chef (dep caching) + BoringSSL build (cmake, libclang-dev)
+- [x] `.dockerignore` (excludes target/, .git/ — context from ~10GB to ~30MB)
+- [x] docker-compose.yml entry (port 8901, backend network)
+- [x] Integration with go-code `site_analyze` MCP tool (tech detection + source map extraction)
+- [x] Integration with go-search `web_url_read` via `/fetch-smart`
+
+**Result:** CF bypass + stealth fetch API + tech analysis. ~5800 LOC, 218 tests.
 **Architecture:** ox-browser → Byparr/FlareSolverr → stealth browser → cf_clearance → cache.
+**Three-tier fetch:** go-stealth proxy → ox-browser /fetch-smart → Byparr (escalating bypass).
 **Not solving:** Turnstile/CAPTCHA directly (delegates to external solver).
 **Depends on:** Phase 1.5
 
@@ -119,14 +140,15 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 
 ## Phase 5: MCP Server (v0.5.0)
 
-**Goal:** Expose ox-browser as MCP service for AI agents.
+**Goal:** Expose ox-browser as native MCP service for AI agents.
 
-- [ ] `ox-mcp` crate with HTTP+SSE transport
+- [x] Docker container with multi-stage build *(done in Phase 2d)*
+- [x] docker-compose.yml entry, port 8901 *(done in Phase 2d)*
+- [x] Health endpoint *(done in Phase 2c)*
+- [x] Integration with go-code (`site_analyze` tool) *(done in Phase 2d)*
+- [ ] `ox-mcp` crate with HTTP+SSE transport (native MCP protocol)
 - [ ] Tools: browse, select, fill_form, crawl, security_scan, solve_cf
-- [ ] Docker container with multi-stage build
-- [ ] docker-compose.yml entry (port 8901)
 - [ ] Integration with krolik-agent (skill + mcp_call)
-- [ ] Health endpoint
 
 **Result:** AI agents can browse, scrape, scan, and solve CF via MCP. ~400 LOC.
 **Depends on:** Phases 1-4
@@ -164,6 +186,9 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 | Browser profiles | 16 built-in ✅ | 16 built-in | N/A |
 | CF detection | ✅ (Phase 1.5) | ✅ | N/A |
 | CF JS solving | ✅ via Byparr/FlareSolverr | No (delegates) | Via Chrome |
+| CF 200 detection | ✅ (cf-mitigated, body markers) | No | N/A |
+| HTTP API | ✅ /fetch, /fetch-smart, /analyze | No | No |
+| Tech detection | ✅ /analyze (CMS, frameworks, CDN) | No | No |
 | Proxy pool | Webshare + health ✅ | Webshare + health | No |
 | Rate limiting | Per-domain ✅ | Per-domain | No |
 | Middleware | Chain pattern ✅ | Chain pattern | No |
