@@ -4,6 +4,7 @@ pub mod body_scan;
 pub mod cookies;
 pub mod cors;
 pub mod csp;
+pub mod dangerous_js;
 pub mod fingerprint;
 pub mod headers;
 pub mod info_disclosure;

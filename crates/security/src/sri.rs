@@ -1,7 +1,9 @@
 //! Subresource Integrity (SRI) analyzer.
 
+use psl;
 use regex::Regex;
 use serde::Serialize;
+use url::Url;
 
 use super::types::Severity;
 
@@ -23,12 +25,53 @@ pub struct SriFinding {
     pub severity: Severity,
 }
 
-fn is_external(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://") || url.starts_with("//")
+/// Get the registrable domain for a host string via PSL.
+fn registrable_domain(host: &str) -> Option<String> {
+    let domain = psl::domain(host.as_bytes())?;
+    Some(std::str::from_utf8(domain.as_bytes()).ok()?.to_lowercase())
+}
+
+/// Check if a resource URL is cross-origin relative to the page URL
+/// using PSL-based registrable domain comparison.
+fn is_cross_origin(resource_url: &str, page_url: &str) -> bool {
+    // Protocol-relative URLs need a scheme for parsing.
+    let resource = if resource_url.starts_with("//") {
+        format!("https:{resource_url}")
+    } else {
+        resource_url.to_string()
+    };
+
+    let res_parsed = match Url::parse(&resource) {
+        Ok(u) => u,
+        Err(_) => return false, // relative URL, not external
+    };
+
+    let page_parsed = match Url::parse(page_url) {
+        Ok(u) => u,
+        Err(_) => return true, // cannot determine, treat as external
+    };
+
+    let res_host = match res_parsed.host_str() {
+        Some(h) => h.to_lowercase(),
+        None => return false,
+    };
+    let page_host = match page_parsed.host_str() {
+        Some(h) => h.to_lowercase(),
+        None => return true,
+    };
+
+    if res_host == page_host {
+        return false;
+    }
+
+    match (registrable_domain(&res_host), registrable_domain(&page_host)) {
+        (Some(r), Some(p)) => r != p,
+        _ => true,
+    }
 }
 
 /// Analyze SRI from HTML body.
-pub fn analyze_sri(html: &str) -> SriReport {
+pub fn analyze_sri(html: &str, page_url: &str) -> SriReport {
     let script_re = Regex::new(r#"<script\b([^>]*)>"#).unwrap();
     let style_re = Regex::new(r#"<link\b([^>]*)>"#).unwrap();
     let src_re = Regex::new(r#"src=["']([^"']+)["']"#).unwrap();
@@ -44,7 +87,7 @@ pub fn analyze_sri(html: &str) -> SriReport {
         let attrs = &cap[1];
         if let Some(src_cap) = src_re.captures(attrs) {
             let url = &src_cap[1];
-            if is_external(url) {
+            if is_cross_origin(url, page_url) {
                 ext_scripts += 1;
                 if integrity_re.is_match(attrs) {
                     sri_scripts += 1;
@@ -66,7 +109,7 @@ pub fn analyze_sri(html: &str) -> SriReport {
         }
         if let Some(href_cap) = href_re.captures(attrs) {
             let url = &href_cap[1];
-            if is_external(url) {
+            if is_cross_origin(url, page_url) {
                 ext_styles += 1;
                 if integrity_re.is_match(attrs) {
                     sri_styles += 1;
@@ -118,10 +161,12 @@ pub fn analyze_sri(html: &str) -> SriReport {
 mod tests {
     use super::*;
 
+    const PAGE: &str = "https://www.example.com/page";
+
     #[test]
     fn test_all_scripts_have_sri() {
-        let html = r#"<script src="https://cdn.example.com/app.js" integrity="sha256-abc"></script>"#;
-        let r = analyze_sri(html);
+        let html = r#"<script src="https://cdn.otherdomain.com/app.js" integrity="sha256-abc"></script>"#;
+        let r = analyze_sri(html, PAGE);
         assert_eq!(r.total_external_scripts, 1);
         assert_eq!(r.scripts_with_integrity, 1);
         assert!((r.coverage_percent - 100.0).abs() < f32::EPSILON);
@@ -131,15 +176,15 @@ mod tests {
     #[test]
     fn test_no_external_scripts() {
         let html = r#"<script>console.log("inline")</script>"#;
-        let r = analyze_sri(html);
+        let r = analyze_sri(html, PAGE);
         assert_eq!(r.total_external_scripts, 0);
         assert_eq!(r.score_modifier, 0);
     }
 
     #[test]
     fn test_missing_sri_on_cdn() {
-        let html = r#"<script src="https://cdn.example.com/app.js"></script>"#;
-        let r = analyze_sri(html);
+        let html = r#"<script src="https://cdn.otherdomain.com/app.js"></script>"#;
+        let r = analyze_sri(html, PAGE);
         assert_eq!(r.coverage_percent, 0.0);
         assert!(r.findings.iter().any(|f| f.severity == Severity::Critical));
     }
@@ -147,10 +192,10 @@ mod tests {
     #[test]
     fn test_mixed_sri_coverage() {
         let html = concat!(
-            r#"<script src="https://cdn.example.com/a.js" integrity="sha256-abc"></script>"#,
-            r#"<script src="https://cdn.example.com/b.js"></script>"#,
+            r#"<script src="https://cdn.otherdomain.com/a.js" integrity="sha256-abc"></script>"#,
+            r#"<script src="https://cdn.otherdomain.com/b.js"></script>"#,
         );
-        let r = analyze_sri(html);
+        let r = analyze_sri(html, PAGE);
         assert_eq!(r.total_external_scripts, 2);
         assert!((r.coverage_percent - 50.0).abs() < f32::EPSILON);
         assert!(r.findings.iter().any(|f| f.severity == Severity::Medium));
@@ -158,9 +203,29 @@ mod tests {
 
     #[test]
     fn test_styles_sri() {
-        let html = r#"<link rel="stylesheet" href="https://cdn.example.com/style.css" integrity="sha256-xyz">"#;
-        let r = analyze_sri(html);
+        let html = r#"<link rel="stylesheet" href="https://cdn.otherdomain.com/style.css" integrity="sha256-xyz">"#;
+        let r = analyze_sri(html, PAGE);
         assert_eq!(r.total_external_styles, 1);
         assert_eq!(r.styles_with_integrity, 1);
+    }
+
+    #[test]
+    fn test_same_registrable_domain_not_external() {
+        let html = r#"<script src="https://cdn.example.com/app.js"></script>"#;
+        let r = analyze_sri(html, PAGE);
+        assert_eq!(
+            r.total_external_scripts, 0,
+            "same registrable domain should not count as external"
+        );
+    }
+
+    #[test]
+    fn test_different_registrable_domain_is_external() {
+        let html = r#"<script src="https://cdn.otherdomain.com/app.js"></script>"#;
+        let r = analyze_sri(html, PAGE);
+        assert_eq!(
+            r.total_external_scripts, 1,
+            "different registrable domain should count as external"
+        );
     }
 }

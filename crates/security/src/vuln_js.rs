@@ -3,6 +3,7 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
+use semver::Version;
 use serde::Serialize;
 
 use crate::types::Severity;
@@ -107,14 +108,10 @@ const LIBRARY_DEFS: &[LibraryDef] = &[
 ];
 
 fn version_below(version: &str, threshold: &str) -> bool {
-    let parse = |s: &str| -> (u32, u32, u32) {
-        let mut parts = s.splitn(3, '.');
-        let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
-        let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
-        let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
-        (major, minor, patch)
-    };
-    parse(version) < parse(threshold)
+    match (Version::parse(version), Version::parse(threshold)) {
+        (Ok(v), Ok(t)) => v < t,
+        _ => false, // if parsing fails, don't flag as vulnerable
+    }
 }
 
 pub fn detect_vulnerable_js(html: &str) -> VulnJsReport {

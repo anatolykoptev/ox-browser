@@ -1,5 +1,6 @@
 //! Cookie security analyzer.
 
+use psl;
 use serde::Serialize;
 
 use super::types::Severity;
@@ -111,12 +112,75 @@ fn compute_score(cookies: &[CookieInfo]) -> i32 {
     0
 }
 
+/// Extract the `domain=` attribute value from a Set-Cookie string.
+fn extract_domain_attr(cookie_str: &str) -> Option<String> {
+    cookie_str
+        .split(';')
+        .skip(1)
+        .map(|s| s.trim())
+        .find_map(|attr| {
+            let lower = attr.to_lowercase();
+            if lower.starts_with("domain=") {
+                Some(attr[7..].trim_start_matches('.').to_lowercase())
+            } else {
+                None
+            }
+        })
+}
+
+/// Extract host (no port) from a URL string.
+fn extract_host(url: &str) -> Option<String> {
+    let without_scheme = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let host = without_scheme.split('/').next()?;
+    Some(host.split(':').next().unwrap_or("").to_lowercase())
+}
+
+/// Check cookie domain scope using the Public Suffix List.
+fn check_domain_scope(cookie_str: &str, page_host: &str) -> Option<CookieFinding> {
+    let domain_val = extract_domain_attr(cookie_str)?;
+    let name = cookie_str
+        .split(';')
+        .next()
+        .and_then(|p| p.split_once('='))
+        .map(|(n, _)| n.trim().to_string())
+        .unwrap_or_default();
+
+    // If the domain attribute is a public suffix itself -> Critical
+    if psl::domain(domain_val.as_bytes()).is_none() {
+        return Some(CookieFinding {
+            cookie: name,
+            description: format!(
+                "Cookie domain '.{domain_val}' is a public suffix \
+                 -- could be shared across unrelated sites"
+            ),
+            severity: Severity::Critical,
+        });
+    }
+
+    // Cookie domain broader than page host -> loosely scoped
+    let page = extract_host(&format!("http://{page_host}"))?;
+    if domain_val != page && page.ends_with(&format!(".{domain_val}")) {
+        return Some(CookieFinding {
+            cookie: name,
+            description: format!(
+                "Loosely scoped cookie: domain '.{domain_val}' set from '{page}'"
+            ),
+            severity: Severity::Medium,
+        });
+    }
+
+    None
+}
+
 /// Analyze cookies from Set-Cookie header values.
-pub fn analyze_cookies(set_cookie_headers: &[String]) -> CookieReport {
+pub fn analyze_cookies(set_cookie_headers: &[String], page_url: &str) -> CookieReport {
     let cookies: Vec<CookieInfo> = set_cookie_headers.iter().map(|h| parse_cookie(h)).collect();
     let mut findings = Vec::new();
+    let page_host = extract_host(page_url).unwrap_or_default();
 
-    for c in &cookies {
+    for (i, c) in cookies.iter().enumerate() {
         if c.is_session && !c.secure {
             findings.push(CookieFinding {
                 cookie: c.name.clone(),
@@ -131,6 +195,9 @@ pub fn analyze_cookies(set_cookie_headers: &[String]) -> CookieReport {
                 severity: Severity::High,
             });
         }
+        if let Some(finding) = check_domain_scope(&set_cookie_headers[i], &page_host) {
+            findings.push(finding);
+        }
     }
 
     let score_modifier = compute_score(&cookies);
@@ -141,41 +208,80 @@ pub fn analyze_cookies(set_cookie_headers: &[String]) -> CookieReport {
 mod tests {
     use super::*;
 
+    const PAGE: &str = "https://app.example.com/path";
+
     #[test]
     fn test_secure_httponly_samesite() {
-        let r = analyze_cookies(&["session=abc; Secure; HttpOnly; SameSite=Strict".into()]);
+        let r = analyze_cookies(&["session=abc; Secure; HttpOnly; SameSite=Strict".into()], PAGE);
         assert_eq!(r.score_modifier, 5);
     }
 
     #[test]
     fn test_session_without_httponly() {
-        let r = analyze_cookies(&["PHPSESSID=abc; Secure".into()]);
+        let r = analyze_cookies(&["PHPSESSID=abc; Secure".into()], PAGE);
         assert_eq!(r.score_modifier, -30);
         assert!(r.findings.iter().any(|f| f.severity == Severity::High));
     }
 
     #[test]
     fn test_session_without_secure() {
-        let r = analyze_cookies(&["JSESSIONID=abc; HttpOnly".into()]);
+        let r = analyze_cookies(&["JSESSIONID=abc; HttpOnly".into()], PAGE);
         assert_eq!(r.score_modifier, -40);
         assert!(r.findings.iter().any(|f| f.severity == Severity::Critical));
     }
 
     #[test]
     fn test_tracker_cookies_detected() {
-        let r = analyze_cookies(&["_ga=GA1.2.xxx; Path=/".into()]);
+        let r = analyze_cookies(&["_ga=GA1.2.xxx; Path=/".into()], PAGE);
         assert!(r.cookies[0].is_tracker);
     }
 
     #[test]
     fn test_host_prefix() {
-        let r = analyze_cookies(&["__Host-session=abc; Secure; Path=/".into()]);
+        let r = analyze_cookies(&["__Host-session=abc; Secure; Path=/".into()], PAGE);
         assert!(r.cookies[0].host_prefix);
     }
 
     #[test]
     fn test_no_cookies() {
-        let r = analyze_cookies(&[]);
+        let r = analyze_cookies(&[], PAGE);
         assert_eq!(r.score_modifier, 0);
+    }
+
+    #[test]
+    fn test_public_suffix_domain_critical() {
+        let r = analyze_cookies(
+            &["track=1; Domain=.co.uk".into()],
+            "https://example.co.uk/",
+        );
+        let finding = r.findings.iter().find(|f| f.severity == Severity::Critical);
+        assert!(finding.is_some(), "expected Critical for public suffix domain");
+        assert!(finding.unwrap().description.contains("public suffix"));
+    }
+
+    #[test]
+    fn test_loosely_scoped_domain_medium() {
+        let r = analyze_cookies(
+            &["id=abc; Domain=.example.com".into()],
+            "https://app.example.com/page",
+        );
+        let finding = r.findings.iter().find(|f| f.severity == Severity::Medium);
+        assert!(finding.is_some(), "expected Medium for loosely scoped cookie");
+        assert!(finding.unwrap().description.contains("Loosely scoped"));
+    }
+
+    #[test]
+    fn test_no_domain_attr_no_finding() {
+        let r = analyze_cookies(
+            &["id=abc; Secure; HttpOnly".into()],
+            "https://app.example.com/",
+        );
+        let domain_findings: Vec<_> = r.findings.iter()
+            .filter(|f| {
+                f.description.contains("public suffix")
+                    || f.description.contains("Loosely")
+            })
+            .collect();
+        assert!(domain_findings.is_empty());
     }
 }

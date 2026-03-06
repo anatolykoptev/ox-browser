@@ -32,9 +32,9 @@ pub fn analyze_security(
     } else {
         Some(csp::evaluate_csp(&csp_header))
     };
-    let cookies_report = cookies::analyze_cookies(set_cookie_headers);
+    let cookies_report = cookies::analyze_cookies(set_cookie_headers, url);
     let cors_report = cors::analyze_cors(resp_headers);
-    let sri_report = sri::analyze_sri(html);
+    let sri_report = sri::analyze_sri(html, url);
 
     let page_domain = extract_domain(url);
     let supply_chain_report = supply_chain::analyze_supply_chain(html, &page_domain);

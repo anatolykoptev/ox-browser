@@ -1,7 +1,9 @@
 //! Body scanner — regex-based detection of security issues in HTML body content.
 
+use std::net::Ipv4Addr;
 use std::sync::LazyLock;
 
+use ipnet::Ipv4Net;
 use regex::Regex;
 use serde::Serialize;
 
@@ -26,7 +28,7 @@ macro_rules! lazy_re {
     };
 }
 
-lazy_re!(RE_PRIVATE_IP, r"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b");
+lazy_re!(RE_IPV4, r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b");
 lazy_re!(RE_STACK_JAVA, r"at\s+[\w.]+\.\w+\(\w+\.java:\d+\)");
 lazy_re!(RE_STACK_PYTHON, r"Traceback \(most recent call last\)");
 lazy_re!(RE_STACK_PHP, r"Fatal error.*in /.*:\d+");
@@ -50,9 +52,9 @@ fn severity_penalty(sev: Severity) -> i32 {
 /// Scan HTML body and page URL for security-sensitive patterns.
 pub fn scan_body(html: &str, page_url: &str) -> BodyScanReport {
     let mut f = Vec::new();
-    // 1. Private IP disclosure
-    if let Some(m) = RE_PRIVATE_IP.find(html) {
-        f.push(finding("private_ip", &format!("Private IP found: {}", m.as_str()), Severity::Medium));
+    // 1. Private IP disclosure (CIDR-based via ipnet)
+    if let Some(ip_str) = find_private_ip(html) {
+        f.push(finding("private_ip", &format!("Private IP found: {ip_str}"), Severity::Medium));
     }
     // 2. Stack trace detection
     let traces: &[(&LazyLock<Regex>, &str)] = &[
@@ -95,6 +97,26 @@ pub fn scan_body(html: &str, page_url: &str) -> BodyScanReport {
     }
     let raw: i32 = f.iter().map(|x| severity_penalty(x.severity)).sum();
     BodyScanReport { findings: f, score_modifier: raw.max(-30) }
+}
+
+/// Private/reserved CIDR ranges to detect in HTML bodies.
+static PRIVATE_NETS: LazyLock<Vec<Ipv4Net>> = LazyLock::new(|| {
+    ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"]
+        .iter()
+        .map(|s| s.parse().unwrap())
+        .collect()
+});
+
+/// Find the first private/reserved IPv4 address in the text.
+fn find_private_ip(text: &str) -> Option<String> {
+    for m in RE_IPV4.find_iter(text) {
+        if let Ok(addr) = m.as_str().parse::<Ipv4Addr>() {
+            if PRIVATE_NETS.iter().any(|net: &Ipv4Net| net.contains(&addr)) {
+                return Some(m.as_str().to_string());
+            }
+        }
+    }
+    None
 }
 
 fn finding(check: &str, detail: &str, severity: Severity) -> BodyScanFinding {
@@ -168,6 +190,18 @@ mod tests {
         let html = r#"<form action="http://evil.com/login" method="post">"#;
         let r = scan_body(html, URL);
         assert!(r.findings.iter().any(|f| f.check == "insecure_form_action"));
+    }
+    #[test]
+    fn test_loopback_ip_detected() {
+        let r = scan_body("Connected to 127.0.0.1 on port 8080", URL);
+        assert_eq!(r.findings.len(), 1);
+        assert_eq!(r.findings[0].check, "private_ip");
+        assert!(r.findings[0].detail.contains("127.0.0.1"));
+    }
+    #[test]
+    fn test_no_false_positive_near_private_ip() {
+        let r = scan_body("Upstream server 11.0.0.1 responded OK", URL);
+        assert!(r.findings.iter().all(|f| f.check != "private_ip"));
     }
     #[test]
     fn test_clean_page() {
