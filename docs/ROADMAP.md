@@ -253,37 +253,118 @@ require real browser; ox-browser is headless HTTP with stealth TLS fingerprintin
 - [ ] `performance_audit` — performance metrics (after Phase 2.5c)
 - [ ] `accessibility_audit` — a11y report (after Phase 2.5d)
 - [ ] `site_intelligence` — full Phase 2.5 report (after Phase 2.5g)
-- [ ] `security_scan` — security audit (after Phase 4)
+- [x] `security_scan` — security audit ✅ (Phase 4)
 - [ ] `crawl` — site crawling (after Phase 5)
 
-## Phase 4: Security Scanner (v0.4.0)
+## Phase 4: Security Scanner (v0.4.0) ✅
 
-**Goal:** Vulnerability scanning and security posture assessment.
+**Goal:** Passive security posture assessment from a single HTTP response — Observatory-compatible scoring.
 
 `ox-security` crate — focused on security analysis only (fingerprinting moved to `ox-intelligence`).
 
 ```
 ox-security/src/
-├── headers.rs   — HSTS, CSP, X-Content-Type-Options, Permissions-Policy, CORS, Referrer-Policy
-├── cookies.rs   — Secure/HttpOnly/SameSite flags, known tracker cookies
-├── xss.rs       — DOM sinks, event handlers, reflected patterns
-├── csp.rs       — CSP parser + scorer (A-F grade)
-├── sri.rs       — missing integrity attributes on scripts/styles
+├── types.rs          — Shared Severity enum (Info/Low/Medium/High/Critical)
+├── headers/
+│   ├── mod.rs        — HeaderFinding, HeaderStatus, HeadersReport, analyze_headers()
+│   ├── checks.rs     — 15 individual header checks (HSTS, CSP, XCTO, XFO, COOP, COEP, CORP, etc.)
+│   └── tests.rs      — 11 tests
+├── csp/
+│   ├── mod.rs        — CspReport, evaluate_csp(), scoring + grading
+│   ├── parser.rs     — CSP string parser
+│   ├── checks.rs     — 8 bypass detection checks (unsafe-inline, unsafe-eval, broad sources, etc.)
+│   └── tests.rs      — 11 tests
+├── cookies.rs        — Cookie security audit, session/tracker detection, __Host-/__Secure- prefixes (6 tests)
+├── cors.rs           — CORS misconfiguration detection (4 tests)
+├── sri.rs            — SRI coverage for external scripts/styles (5 tests)
+├── supply_chain.rs   — Known risky CDN domains (polyfill.io, bootcss, bootcdn) (4 tests)
+├── mixed_content.rs  — HTTP resources on HTTPS pages (4 tests)
+├── scoring/
+│   ├── mod.rs        — SecurityReport, analyze_security() entry point, score_to_grade()
+│   └── aggregate.rs  — Aggregation logic combining all 7 analyzers
 └── lib.rs
 ```
 
-- [ ] Security headers analysis with severity grading
-- [ ] Cookie security flags audit (Secure, HttpOnly, SameSite)
-- [ ] Known tracker cookies detection (ga_, _fbp, _gid, etc.)
-- [ ] XSS detector: DOM sinks, event handlers, reflected patterns
-- [ ] CSP parser and scorer (A-F grade)
-- [ ] SRI checker (missing integrity attributes)
-- [ ] `SecurityReport` struct with findings + severity + recommendations
-- [ ] `POST /security` endpoint (or `?security=true` param on `/analyze`)
-- [ ] CLI: `ox-browser scan <url>`
+- [x] Security headers analysis (15 headers) with severity grading
+- [x] Cookie security flags audit (Secure, HttpOnly, SameSite, Path)
+- [x] Known tracker cookies detection (ga_, _fbp, _gid, etc.)
+- [x] Session cookie detection (PHPSESSID, JSESSIONID, etc.)
+- [x] __Host-/__Secure- cookie prefix validation
+- [x] CSP parser and scorer (A-F grade, Observatory-compatible)
+- [x] CSP bypass detection (unsafe-inline, unsafe-eval, broad sources, missing directives)
+- [x] SRI checker (missing integrity attributes on external scripts/styles)
+- [x] CORS misconfiguration detection (wildcard ACAO, credentials misuse)
+- [x] Supply chain risk analysis (known compromised CDN domains)
+- [x] Mixed content detection (HTTP resources on HTTPS pages)
+- [x] Observatory-compatible scoring (base 100, modifiers, grades F→A+)
+- [x] `SecurityReport` struct with findings + severity + score + grade
+- [x] `POST /security` REST endpoint
+- [x] MCP tool `security_scan` (5th tool, total 5 MCP tools)
 
-**Result:** One-command security audit for any URL. ~800 LOC.
+**Result:** Passive security audit from single HTTP response. 8 modules, ~1200 LOC, 58 tests.
+**Scoring:** Mozilla Observatory-compatible (base 100, modifiers -50 to +10, grades F→A+).
+**Novel:** Supply chain risk analysis (Polyfill.io case), __Host-/__Secure- prefix checks.
 **Depends on:** Phase 2.5 (uses intelligence modules for context)
+
+## Phase 4.5: Deep Security Scanner (v0.4.5) ✅ (passive), 4.5e pending
+
+**Goal:** Close all gaps vs ZAP passive rules, Mozilla Observatory, SecurityHeaders.com.
+Elevate ox-security from "header checker" to "full passive security scanner".
+
+### Phase 4.5a: Information Disclosure Detection ✅
+
+New `info_disclosure` module — detect headers/body content that leaks internal info.
+
+- [x] `Server` header version extraction (`nginx/1.18.0` → severity Medium)
+- [x] `X-Powered-By` presence (any value = finding)
+- [x] `X-AspNet-Version`, `X-AspNetMvc-Version`, `X-Generator` detection
+- [x] `X-Backend-Server` (internal hostname exposure = High)
+- [x] `X-Debug-Token`, `X-ChromeLogger-Data` (debug headers = High)
+- [x] `X-Runtime` (Rails timing disclosure)
+- [x] Deprecated header warnings: `Public-Key-Pins` (HPKP), `Expect-CT`
+
+### Phase 4.5b: Body Scanner ✅
+
+New `body_scan` module — regex-based scanning of HTML body for security issues.
+
+- [x] Private IP disclosure (RFC 1918: 10.x, 172.16-31.x, 192.168.x in body)
+- [x] Stack trace detection (Java, Python, PHP, .NET exception patterns)
+- [x] HTML comment scanner (`<!-- TODO`, `FIXME`, `password=`, `secret=`)
+- [x] `<meta name="generator">` version exposure
+- [x] Directory listing patterns (`Index of /`, `Directory listing for`)
+- [x] Session ID in URL (`?jsessionid=`, `?PHPSESSID=`)
+- [x] Sensitive params in URL (`?password=`, `?token=`, `?api_key=`)
+- [x] Insecure form post (`<form action="http://...">` on HTTPS page)
+
+### Phase 4.5c: Vulnerable JS Library Detection ✅
+
+New `vuln_js` module — detect known-vulnerable JavaScript libraries from `<script src>` URLs.
+
+- [x] Bundled database (jQuery, Angular, React, Bootstrap, Lodash, Vue, Moment, Handlebars, DOMPurify)
+- [x] URL pattern matching (`jquery-3.3.1.min.js` → CVE list)
+- [x] Version extraction from script URLs
+- [x] Severity mapping (CVE CVSS → our severity levels)
+
+### Phase 4.5d: Enhanced Existing Modules ✅
+
+- [x] CORS: origin reflection detection (reflected origin + `ACAC: true` → High)
+- [x] Headers: `Clear-Site-Data` check (Info severity)
+- [x] Headers: `Content-Type` charset completeness (Low severity)
+
+### Phase 4.5e: go-probe Integration
+
+- [ ] `POST /security` gains `deep: true` parameter
+- [ ] When deep=true, calls go-probe for TLS + DNS analysis
+- [ ] Merge TLS + DNS findings into SecurityReport
+- [ ] Combined weighted scoring (passive 60%, TLS 25%, DNS 15%)
+- [ ] `security_scan` MCP tool gains `deep` parameter
+
+**Result:** 11 passive security modules, ~2000 LOC, 95 tests. Observatory-compatible scoring.
+**Parity with:** ZAP passive rules, Mozilla Observatory, SecurityHeaders.com.
+**Novel additions:** Vulnerable JS detection, body scanning, supply chain risk.
+**Pending:** go-probe integration (4.5e) for active TLS/DNS probing.
+**Depends on:** Phase 4, go-probe v0.2.0
+**Depends on:** Phase 4, go-probe v0.2.0
 
 ## Phase 5: Crawler (v0.5.0)
 
@@ -320,9 +401,9 @@ ox-browser/crates/
 ├── core/           — Page, DOM (dom_query), forms, navigation, URL resolution
 ├── http/           — HTTP client (wreq+BoringSSL), proxy, cookies, CF detection, middleware
 ├── intelligence/   — Web intelligence: fingerprint, SEO, perf, a11y, content, media, fonts, PWA, API
-├── security/       — Security scanning (Phase 4: headers, CSP, cookies, XSS, SRI)
+├── security/       — Security scanning: 11 modules, Observatory scoring, body scan, vuln JS
 ├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze
-├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 4 tools)
+├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 5 tools)
 ├── crawler/        — Site crawler (BFS/DFS, robots.txt, rate limiting)
 └── src/            — Binary: CLI + server startup (serve.rs merges REST + MCP)
 ```
@@ -352,13 +433,14 @@ ox-browser/crates/
 | Tech detection | ✅ 7,000+ technologies (rswappalyzer) | No | No |
 | SEO analysis | ✅ OG, Twitter, JSON-LD, hreflang, score | No | No |
 | Web intelligence | ✅ SEO + perf + a11y + content + media + fonts + PWA + API | No | No |
-| Security audit | Phase 4 (headers, CSP, XSS) | No | No |
+| Security audit | ✅ 11 modules, Observatory scoring (v0.4.5) | No | No |
 | Proxy pool | Webshare + health ✅ | Webshare + health | No |
 | Rate limiting | Per-domain ✅ | Per-domain | No |
 | Middleware | Chain pattern ✅ | Chain pattern | No |
-| MCP server | ✅ 4 tools, Streamable HTTP (v0.3.0) | No | No |
+| MCP server | ✅ 5 tools, Streamable HTTP (v0.3.0+) | No | No |
 
-**When to use which:**
-- **ox-browser** — web intelligence, security audit, CF bypass, no Chrome dependency
+**Ecosystem:**
+- **ox-browser** — web intelligence, passive security audit, CF bypass, no Chrome dependency
+- **go-probe** — active TLS + DNS security probing (complements ox-browser)
 - **go-stealth** — stealth HTTP requests without DOM/JS, delegates CF to ox-browser
 - **go-browser** — SPA rendering, full JS, screenshot/PDF (needs Chromium)
