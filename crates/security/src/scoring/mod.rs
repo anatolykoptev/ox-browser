@@ -13,6 +13,7 @@ use super::info_disclosure::InfoDisclosureReport;
 use super::mixed_content::MixedContentReport;
 use super::sri::SriReport;
 use super::supply_chain::SupplyChainReport;
+use super::vuln_js::VulnJsReport;
 
 pub use aggregate::analyze_security;
 
@@ -30,6 +31,7 @@ pub struct SecurityReport {
     pub mixed_content: MixedContentReport,
     pub info_disclosure: InfoDisclosureReport,
     pub body_scan: BodyScanReport,
+    pub vuln_js: VulnJsReport,
     pub findings_summary: FindingsSummary,
 }
 

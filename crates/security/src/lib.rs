@@ -12,6 +12,7 @@ pub mod scoring;
 pub mod sri;
 pub mod supply_chain;
 pub mod types;
+pub mod vuln_js;
 
 // Re-export main entry point.
 pub use scoring::{analyze_security, SecurityReport};
