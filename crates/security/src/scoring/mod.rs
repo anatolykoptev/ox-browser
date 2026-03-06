@@ -123,6 +123,37 @@ mod tests {
     }
 
     #[test]
+    fn test_full_scan_with_all_modules() {
+        let hdrs = h(&[
+            ("server", "Apache/2.4.41"),
+            ("x-powered-by", "PHP/7.4"),
+            ("access-control-allow-origin", "https://evil.com"),
+            ("access-control-allow-credentials", "true"),
+            ("content-type", "text/html"),
+        ]);
+        let html = r#"
+            <script src="https://cdn.example.com/jquery-1.12.4.min.js"></script>
+            <form action="http://insecure.example.com/login"></form>
+            <!-- TODO: remove debug endpoint -->
+        "#;
+        let cookies = vec!["session=abc".to_string()];
+        let r = analyze_security("https://example.com", &hdrs, &cookies, html);
+
+        // Info disclosure: server version + x-powered-by
+        assert!(!r.info_disclosure.findings.is_empty(), "info_disclosure should have findings");
+        // Vuln JS: jQuery 1.12.4
+        assert!(!r.vuln_js.findings.is_empty(), "vuln_js should have findings");
+        assert_eq!(r.vuln_js.libraries[0].name, "jQuery");
+        // Body scan: insecure form + suspicious comment
+        assert!(!r.body_scan.findings.is_empty(), "body_scan should have findings");
+        // CORS: reflected origin with credentials
+        assert!(!r.cors.findings.is_empty(), "cors should have findings");
+        // All modules populated
+        assert!(r.findings_summary.total > 5);
+        assert!(r.score < 50, "score={} should be low with many issues", r.score);
+    }
+
+    #[test]
     fn test_moderate_security() {
         let hdrs = h(&[
             ("strict-transport-security", "max-age=63072000"),
