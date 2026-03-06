@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::cookie_cache::CookieCache;
+use crate::cookie_provider::CookieProvider;
 use crate::profile::BrowserProfile;
 use crate::proxy_pool::ProxyPool;
 use crate::ratelimit_domain::DomainLimiter;
@@ -34,6 +36,10 @@ pub struct HttpConfig {
     pub debug: bool,
     /// Browser emulation for TLS/HTTP2 fingerprinting (wreq BoringSSL).
     pub emulation: Option<wreq_util::Emulation>,
+    /// External CF challenge solver. When set with `cloudflare_detect`, solver middleware auto-solves challenges.
+    pub cookie_provider: Option<Arc<dyn CookieProvider>>,
+    /// Cookie cache for solved CF challenges. Shared across sessions.
+    pub cookie_cache: Option<Arc<CookieCache>>,
 }
 
 impl Default for HttpConfig {
@@ -50,6 +56,8 @@ impl Default for HttpConfig {
             cloudflare_detect: false,
             debug: false,
             emulation: None,
+            cookie_provider: None,
+            cookie_cache: None,
         }
     }
 }

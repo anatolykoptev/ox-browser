@@ -9,6 +9,7 @@ use crate::middleware_hints::client_hints_middleware;
 use crate::middleware_logging::logging_middleware;
 use crate::middleware_ratelimit::rate_limit_middleware;
 use crate::middleware_retry::retry_middleware;
+use crate::middleware_solver::solver_middleware;
 use crate::profile_hints::browser_headers;
 use crate::{HttpConfig, HttpError, HttpResponse, Result};
 
@@ -49,6 +50,11 @@ impl HttpClient {
         // Retry with exponential backoff.
         if let Some(ref retry_cfg) = config.retry {
             middlewares.push(retry_middleware(retry_cfg.clone()));
+        }
+
+        // CF solver (between retry and cloudflare_detect).
+        if let (Some(ref provider), Some(ref cache)) = (&config.cookie_provider, &config.cookie_cache) {
+            middlewares.push(solver_middleware(Arc::clone(provider), Arc::clone(cache)));
         }
 
         // Cloudflare detection (inside retry so CF triggers auto-retry).
