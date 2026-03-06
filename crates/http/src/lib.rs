@@ -1,4 +1,5 @@
 pub mod cloudflare;
+pub mod cookie_provider;
 mod client;
 mod config;
 mod error;
@@ -21,6 +22,7 @@ pub mod retry;
 pub mod retry_parse;
 
 pub use cloudflare::{detect_cloudflare, ChallengeType, CloudflareChallenge};
+pub use cookie_provider::{CookieProvider, SolvedChallenge};
 pub use client::HttpClient;
 pub use config::HttpConfig;
 pub use error::{HttpError, Result};
