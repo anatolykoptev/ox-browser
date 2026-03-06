@@ -214,7 +214,50 @@ ox-intelligence/src/
 **Result:** Complete website intelligence from a single HTTP request. ~2000 LOC, ~100 tests.
 **Depends on:** Phase 2
 
-## Phase 3: Security Scanner (v0.3.0)
+## Phase 3: MCP Server (v0.3.0) ✅
+
+**Goal:** Expose ox-browser as native MCP service for AI agents via Streamable HTTP.
+
+**Architecture:** rmcp v1.1.0 SDK with `#[tool_handler]` proc-macro registration,
+Streamable HTTP transport (SSE deprecated), mounted alongside REST API at `/mcp`.
+
+### Phase 3a: Core MCP Infrastructure ✅
+
+- [x] `ox-mcp` crate with rmcp v1.1.0 (Streamable HTTP transport)
+- [x] `OxMcpServer` struct with `#[tool_router]` proc-macro registration
+- [x] `ServerHandler` impl with `get_info()` (name, version, capabilities)
+- [x] `StreamableHttpService` with `LocalSessionManager` for session management
+- [x] MCP router merged with REST API via `axum::Router::merge()`
+
+### Phase 3b: MCP Tools (REST Mirror) ✅
+
+- [x] `fetch` — stealth HTTP fetch via wreq+BoringSSL (mirrors `/fetch`)
+- [x] `fetch_smart` — three-tier CF bypass chain (mirrors `/fetch-smart`)
+- [x] `analyze` — tech stack detection via Fingerprinter (mirrors `/analyze`)
+- [x] `solve_cf` — Cloudflare challenge solver with cache (mirrors `/solve`)
+
+### Phase 3c: Deploy + Integration ✅
+
+- [x] Docker rebuild with MCP support (same port 8901, `/mcp` endpoint)
+- [x] MCP initialize/tools/list smoke tests pass (4 tools registered)
+- [x] `claude mcp add -s user -t http ox-browser http://127.0.0.1:8901/mcp`
+
+**Result:** 4 MCP tools over Streamable HTTP, AI agents can fetch/analyze/bypass CF. ~400 LOC.
+**Key tech:** rmcp v1.1.0, Streamable HTTP (not SSE), proc-macro tool registration.
+**Competitive edge:** No browser needed — Chrome MCP (29 tools) and Playwright MCP (35+ tools)
+require real browser; ox-browser is headless HTTP with stealth TLS fingerprinting.
+**Depends on:** Phase 2
+
+### Future MCP Tools (incremental)
+
+- [ ] `seo_audit` — SEO analysis report (after Phase 2.5b)
+- [ ] `performance_audit` — performance metrics (after Phase 2.5c)
+- [ ] `accessibility_audit` — a11y report (after Phase 2.5d)
+- [ ] `site_intelligence` — full Phase 2.5 report (after Phase 2.5g)
+- [ ] `security_scan` — security audit (after Phase 4)
+- [ ] `crawl` — site crawling (after Phase 5)
+
+## Phase 4: Security Scanner (v0.4.0)
 
 **Goal:** Vulnerability scanning and security posture assessment.
 
@@ -243,7 +286,7 @@ ox-security/src/
 **Result:** One-command security audit for any URL. ~800 LOC.
 **Depends on:** Phase 2.5 (uses intelligence modules for context)
 
-## Phase 4: Crawler (v0.4.0)
+## Phase 5: Crawler (v0.5.0)
 
 **Goal:** Crawl websites with configurable depth, filters, rate limiting.
 
@@ -258,24 +301,6 @@ ox-security/src/
 
 **Result:** Full site crawling with polite behavior. ~500 LOC.
 **Depends on:** Phase 1 (Phase 2.5 optional for per-page intelligence)
-
-## Phase 5: MCP Server (v0.5.0)
-
-**Goal:** Expose ox-browser as native MCP service for AI agents.
-
-- [x] Docker container with multi-stage build *(done in Phase 2d)*
-- [x] docker-compose.yml entry, port 8901 *(done in Phase 2d)*
-- [x] Health endpoint *(done in Phase 2c)*
-- [x] Integration with go-code (`site_analyze` tool) *(done in Phase 2d)*
-- [ ] `ox-mcp` crate with HTTP+SSE transport (native MCP protocol)
-- [ ] Tools: browse, select, fill_form, crawl, solve_cf
-- [ ] Tools: site_intelligence (full Phase 2.5 report)
-- [ ] Tools: security_scan (Phase 3 report)
-- [ ] Tools: seo_audit, performance_audit, accessibility_audit (focused reports)
-- [ ] Integration with krolik-agent (skill + mcp_call)
-
-**Result:** AI agents can browse, scrape, analyze, and audit via MCP. ~400 LOC.
-**Depends on:** Phases 1-4
 
 ## Phase 6: Polish (v1.0.0)
 
@@ -296,10 +321,11 @@ ox-browser/crates/
 ├── core/           — Page, DOM (dom_query), forms, navigation, URL resolution
 ├── http/           — HTTP client (wreq+BoringSSL), proxy, cookies, CF detection, middleware
 ├── intelligence/   — Web intelligence: fingerprint, SEO, perf, a11y, content, media, fonts, PWA, API
-├── security/       — Security scanning: headers, cookies, XSS, CSP, SRI
-├── js/             — HTTP API: /health, /solve, /fetch, /fetch-smart, /analyze
-├── solver/         — CF challenge solver (Byparr/FlareSolverr)
-└── cli/            — CLI binary (fetch, scan, crawl subcommands)
+├── security/       — Technology fingerprinting (Fingerprinter + JSON DB) + security scanning
+├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze
+├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 4 tools)
+├── crawler/        — Site crawler (BFS/DFS, robots.txt, rate limiting)
+└── src/            — Binary: CLI + server startup (serve.rs merges REST + MCP)
 ```
 
 ## Non-Goals
@@ -324,13 +350,13 @@ ox-browser/crates/
 | CF JS solving | ✅ via Byparr/FlareSolverr | No (delegates) | Via Chrome |
 | CF 200 detection | ✅ (cf-mitigated, body markers) | No | N/A |
 | HTTP API | ✅ /fetch, /fetch-smart, /analyze | No | No |
-| Tech detection | ✅ 100+ technologies (Phase 2.5) | No | No |
-| SEO analysis | ✅ OG, JSON-LD, canonical (Phase 2.5) | No | No |
-| Security audit | ✅ headers, CSP, XSS (Phase 3) | No | No |
+| Tech detection | ✅ 30+ technologies (Fingerprinter) | No | No |
+| SEO analysis | Phase 2.5 (OG, JSON-LD, canonical) | No | No |
+| Security audit | Phase 4 (headers, CSP, XSS) | No | No |
 | Proxy pool | Webshare + health ✅ | Webshare + health | No |
 | Rate limiting | Per-domain ✅ | Per-domain | No |
 | Middleware | Chain pattern ✅ | Chain pattern | No |
-| MCP server | Phase 5 | No | No |
+| MCP server | ✅ 4 tools, Streamable HTTP (v0.3.0) | No | No |
 
 **When to use which:**
 - **ox-browser** — web intelligence, security audit, CF bypass, no Chrome dependency
