@@ -4,6 +4,7 @@ mod analyze;
 pub mod analyze_types;
 mod fetch;
 mod fetch_smart;
+mod security;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -56,6 +57,7 @@ pub fn router(state: AppState) -> Router {
         .route("/fetch", post(fetch::fetch))
         .route("/fetch-smart", post(fetch_smart::fetch_smart))
         .route("/analyze", post(analyze::analyze))
+        .route("/security", post(security::security_scan))
         .with_state(state)
 }
 

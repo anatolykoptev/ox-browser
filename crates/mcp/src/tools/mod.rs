@@ -2,6 +2,7 @@
 
 mod analyze;
 mod fetch;
+mod security;
 mod solve;
 
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use rmcp::{tool, tool_router};
 
 pub use analyze::AnalyzeInput;
 pub use fetch::{FetchInput, FetchSmartInput};
+pub use security::SecurityScanInput;
 pub use solve::SolveCfInput;
 
 /// MCP server exposing ox-browser capabilities as tools.
@@ -85,5 +87,16 @@ impl OxMcpServer {
         Parameters(input): Parameters<SolveCfInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_solve_cf(input).await
+    }
+
+    #[tool(
+        name = "security_scan",
+        description = "Passive security audit of a URL. Checks 15+ HTTP security headers, CSP (with bypass detection and A-F grading), cookies (flags, session, tracker detection), CORS, SRI coverage, third-party supply chain risk, and mixed content. Returns Mozilla Observatory-compatible score (0-135) and grade (F to A+) with detailed findings and severity levels."
+    )]
+    async fn security_scan(
+        &self,
+        Parameters(input): Parameters<SecurityScanInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_security_scan(input).await
     }
 }
