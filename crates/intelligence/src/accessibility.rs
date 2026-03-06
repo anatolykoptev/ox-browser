@@ -1,0 +1,190 @@
+//! Accessibility analysis: lang, alt text, headings, ARIA landmarks, form labels.
+
+use dom_query::Document;
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HeadingInfo {
+    pub level: u8,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct AccessibilityReport {
+    pub lang: String,
+    pub images_with_alt: u32,
+    pub images_empty_alt: u32,
+    pub images_no_alt: u32,
+    pub h1_count: u32,
+    pub headings: Vec<HeadingInfo>,
+    pub heading_skip: bool,
+    pub landmarks: u32,
+    pub inputs_total: u32,
+    pub inputs_with_label: u32,
+    pub score: u8,
+}
+
+/// Analyze HTML for accessibility attributes and compute a 0–100 score.
+pub fn analyze(html: &str) -> AccessibilityReport {
+    let doc = Document::from(html);
+    let mut r = AccessibilityReport::default();
+    r.lang = extract_lang(&doc);
+    (r.images_with_alt, r.images_empty_alt, r.images_no_alt) = count_images(&doc);
+    (r.headings, r.h1_count, r.heading_skip) = analyze_headings(&doc);
+    r.landmarks = count_landmarks(&doc);
+    (r.inputs_total, r.inputs_with_label) = count_labeled_inputs(&doc);
+    r.score = compute_score(&r);
+    r
+}
+
+fn extract_lang(doc: &Document) -> String {
+    doc.select("html").iter().next()
+        .and_then(|el| {
+            let v = el.attr("lang").unwrap_or_default();
+            if v.trim().is_empty() { None } else { Some(v.trim().to_string()) }
+        })
+        .unwrap_or_default()
+}
+
+fn count_images(doc: &Document) -> (u32, u32, u32) {
+    let (mut with_alt, mut empty_alt, mut no_alt) = (0u32, 0u32, 0u32);
+    for img in doc.select("img").iter() {
+        match img.attr("alt") {
+            None => no_alt += 1,
+            Some(v) if v.trim().is_empty() => empty_alt += 1,
+            Some(_) => with_alt += 1,
+        }
+    }
+    (with_alt, empty_alt, no_alt)
+}
+
+fn analyze_headings(doc: &Document) -> (Vec<HeadingInfo>, u32, bool) {
+    let mut headings = Vec::new();
+    for level in 1u8..=6 {
+        for el in doc.select(&format!("h{level}")).iter() {
+            headings.push(HeadingInfo { level, text: el.text().trim().to_string() });
+        }
+    }
+    headings.sort_by_key(|h| h.level);
+
+    let h1_count = headings.iter().filter(|h| h.level == 1).count() as u32;
+
+    let mut levels: Vec<u8> = headings.iter().map(|h| h.level).collect();
+    levels.sort_unstable();
+    levels.dedup();
+    let heading_skip = levels.windows(2).any(|w| w[1] > w[0] + 1);
+
+    (headings, h1_count, heading_skip)
+}
+
+fn count_landmarks(doc: &Document) -> u32 {
+    const SEMANTIC: &[&str] = &["main", "nav", "header", "footer", "aside"];
+    const ARIA_ROLES: &[&str] =
+        &["main", "navigation", "banner", "contentinfo", "complementary", "search"];
+
+    let mut count: u32 = SEMANTIC.iter().map(|t| doc.select(t).length() as u32).sum();
+    for el in doc.select("[role]").iter() {
+        if let Some(role) = el.attr("role") {
+            if ARIA_ROLES.contains(&role.trim()) { count += 1; }
+        }
+    }
+    count
+}
+
+fn count_labeled_inputs(doc: &Document) -> (u32, u32) {
+    let (mut total, mut labeled) = (0u32, 0u32);
+    for input in doc.select("input, textarea, select").iter() {
+        let t = input.attr("type").unwrap_or_default().trim().to_lowercase();
+        if matches!(t.as_str(), "hidden" | "submit" | "button" | "reset") { continue; }
+        total += 1;
+
+        let id = input.attr("id").unwrap_or_default();
+        let has_for = !id.is_empty() && doc.select(&format!("label[for=\"{id}\"]")).length() > 0;
+        let has_aria = input.attr("aria-label").map(|v| !v.trim().is_empty()).unwrap_or(false)
+            || input.attr("aria-labelledby").map(|v| !v.trim().is_empty()).unwrap_or(false);
+        let has_title = input.attr("title").map(|v| !v.trim().is_empty()).unwrap_or(false);
+
+        if has_for || has_aria || has_title { labeled += 1; }
+    }
+    (total, labeled)
+}
+
+fn compute_score(r: &AccessibilityReport) -> u8 {
+    let mut score = 0u32;
+    if !r.lang.is_empty() { score += 25; }
+    let total_img = r.images_with_alt + r.images_empty_alt + r.images_no_alt;
+    if total_img == 0 || r.images_no_alt == 0 { score += 25; }
+    if r.h1_count == 1 { score += 15; }
+    if !r.heading_skip { score += 10; }
+    if r.landmarks > 0 { score += 15; }
+    if r.inputs_total == 0 || r.inputs_with_label == r.inputs_total { score += 10; }
+    score.min(100) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_html_lang() {
+        assert_eq!(analyze(r#"<html lang="en"><body></body></html>"#).lang, "en");
+        assert_eq!(analyze(r#"<html><body></body></html>"#).lang, "");
+    }
+
+    #[test]
+    fn count_alt_text() {
+        let r = analyze(r#"<html><body>
+            <img src="a.png" alt="cat">
+            <img src="b.png" alt="">
+            <img src="c.png">
+        </body></html>"#);
+        assert_eq!((r.images_with_alt, r.images_empty_alt, r.images_no_alt), (1, 1, 1));
+    }
+
+    #[test]
+    fn heading_hierarchy() {
+        let skip = analyze(r#"<html><body><h1>T</h1><h3>Skip</h3></body></html>"#);
+        assert_eq!(skip.h1_count, 1);
+        assert!(skip.heading_skip, "expected skip detected");
+
+        let no_skip = analyze(r#"<html><body><h1>T</h1><h2>S</h2><h3>U</h3></body></html>"#);
+        assert!(!no_skip.heading_skip);
+    }
+
+    #[test]
+    fn aria_landmarks() {
+        let r = analyze(r#"<html><body>
+            <header>H</header><nav>N</nav><main>M</main>
+            <div role="search">S</div><footer>F</footer>
+        </body></html>"#);
+        assert!(r.landmarks >= 4, "expected >=4, got {}", r.landmarks);
+    }
+
+    #[test]
+    fn form_labels() {
+        let r = analyze(r#"<html><body><form>
+            <label for="name">Name</label>
+            <input id="name" type="text">
+            <input type="text" aria-label="Email">
+            <input type="text">
+        </form></body></html>"#);
+        assert_eq!((r.inputs_total, r.inputs_with_label), (3, 2));
+    }
+
+    #[test]
+    fn score_calculation() {
+        let perfect = analyze(r#"<html lang="en"><body>
+            <header>H</header>
+            <main><h1>T</h1><h2>S</h2>
+                <img src="a.png" alt="d">
+                <label for="q">Q</label>
+                <input id="q" type="text">
+            </main>
+            <footer>F</footer>
+        </body></html>"#);
+        assert_eq!(perfect.score, 100, "expected 100, got {:?}", perfect);
+
+        let bad = analyze(r#"<html><body><img src="x.png"></body></html>"#);
+        assert!(bad.score < 40, "expected low score, got {}", bad.score);
+    }
+}

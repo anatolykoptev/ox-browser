@@ -7,3 +7,4 @@ pub mod media;
 pub mod performance;
 pub mod pwa;
 pub mod seo;
+pub(crate) mod seo_helpers;
