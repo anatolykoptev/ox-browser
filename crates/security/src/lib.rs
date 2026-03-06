@@ -1,1 +1,3 @@
-// ox-security: CF detection and request hardening
+// ox-security: CF detection, request hardening, and technology fingerprinting.
+
+pub mod fingerprint;

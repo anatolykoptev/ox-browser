@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use ox_core::Page;
 use ox_http::detect_cloudflare;
-use ox_intelligence::fingerprint::Fingerprinter;
+use ox_security::fingerprint::Fingerprinter;
 use rmcp::model::*;
 use rmcp::ErrorData as McpError;
 use serde::{Deserialize, Serialize};
