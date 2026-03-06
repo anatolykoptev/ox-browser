@@ -21,10 +21,12 @@ pub mod ratelimit_domain;
 mod response;
 pub mod retry;
 pub mod retry_parse;
+pub mod solver_byparr;
 
 pub use cloudflare::{detect_cloudflare, ChallengeType, CloudflareChallenge};
 pub use cookie_cache::CookieCache;
 pub use cookie_provider::{CookieProvider, SolvedChallenge};
+pub use solver_byparr::{ByparrConfig, ByparrSolver};
 pub use client::HttpClient;
 pub use config::HttpConfig;
 pub use error::{HttpError, Result};
