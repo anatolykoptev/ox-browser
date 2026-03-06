@@ -1,1 +1,9 @@
+pub mod accessibility;
+pub mod api_discovery;
+pub mod content;
 pub mod fingerprint;
+pub mod fonts;
+pub mod media;
+pub mod performance;
+pub mod pwa;
+pub mod seo;
