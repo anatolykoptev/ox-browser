@@ -1,0 +1,153 @@
+{
+  "categories": {
+    "1": "CMS",
+    "12": "JS Framework",
+    "18": "Web Server",
+    "22": "Web Framework",
+    "47": "CSS Framework",
+    "10": "Analytics",
+    "31": "CDN",
+    "27": "Programming Language"
+  },
+  "technologies": {
+    "WordPress": {
+      "cats": [1],
+      "html": ["wp-content", "wp-includes"],
+      "headers": { "X-Powered-By": "WordPress" },
+      "meta": { "generator": "WordPress" },
+      "scripts": ["wp-includes/js"]
+    },
+    "React": {
+      "cats": [12],
+      "html": ["data-reactroot", "data-reactid", "__REACT_DEVTOOLS"],
+      "scripts": ["react\\.production\\.min\\.js", "react-dom"]
+    },
+    "Vue.js": {
+      "cats": [12],
+      "html": ["data-v-", "Vue\\.js"],
+      "scripts": ["vue\\.runtime", "vue\\.global"]
+    },
+    "Angular": {
+      "cats": [12],
+      "html": ["ng-version", "ng-app", "_nghost"],
+      "scripts": ["angular", "zone\\.js"]
+    },
+    "Next.js": {
+      "cats": [22],
+      "html": ["__NEXT_DATA__", "_next/static"],
+      "headers": { "X-Powered-By": "Next.js" },
+      "scripts": ["_next/static"]
+    },
+    "Nuxt.js": {
+      "cats": [22],
+      "html": ["__NUXT__", "_nuxt/"],
+      "scripts": ["_nuxt/"]
+    },
+    "Svelte": {
+      "cats": [12],
+      "html": ["svelte-", "__svelte"]
+    },
+    "jQuery": {
+      "cats": [12],
+      "scripts": ["jquery[.-]"]
+    },
+    "Bootstrap": {
+      "cats": [47],
+      "html": ["bootstrap\\.min\\.css", "bootstrap\\.min\\.js"],
+      "scripts": ["bootstrap"]
+    },
+    "Tailwind CSS": {
+      "cats": [47],
+      "html": ["tailwindcss", "tailwind\\.min\\.css"]
+    },
+    "Google Analytics": {
+      "cats": [10],
+      "html": ["google-analytics\\.com/analytics", "googletagmanager\\.com/gtag"],
+      "scripts": ["google-analytics", "googletagmanager"]
+    },
+    "Google Tag Manager": {
+      "cats": [10],
+      "html": ["googletagmanager\\.com/gtm"],
+      "scripts": ["googletagmanager\\.com/gtm"]
+    },
+    "nginx": {
+      "cats": [18],
+      "headers": { "Server": "nginx" }
+    },
+    "Apache": {
+      "cats": [18],
+      "headers": { "Server": "Apache" }
+    },
+    "Cloudflare": {
+      "cats": [31],
+      "headers": { "cf-ray": "", "Server": "cloudflare" }
+    },
+    "Vercel": {
+      "cats": [31],
+      "headers": { "X-Vercel-Id": "", "Server": "Vercel" }
+    },
+    "Netlify": {
+      "cats": [31],
+      "headers": { "X-NF-Request-ID": "", "Server": "Netlify" }
+    },
+    "PHP": {
+      "cats": [27],
+      "headers": { "X-Powered-By": "PHP" }
+    },
+    "Express": {
+      "cats": [22],
+      "headers": { "X-Powered-By": "Express" }
+    },
+    "Django": {
+      "cats": [22],
+      "headers": { "X-Frame-Options": "DENY" },
+      "html": ["csrfmiddlewaretoken", "django"]
+    },
+    "Ruby on Rails": {
+      "cats": [22],
+      "headers": { "X-Request-Id": "", "X-Runtime": "" },
+      "meta": { "csrf-param": "authenticity_token" }
+    },
+    "Shopify": {
+      "cats": [1],
+      "html": ["cdn\\.shopify\\.com", "Shopify\\.theme"],
+      "scripts": ["cdn\\.shopify\\.com"],
+      "headers": { "X-ShopId": "" }
+    },
+    "Wix": {
+      "cats": [1],
+      "html": ["wix\\.com", "_wixCIDX"],
+      "scripts": ["static\\.parastorage\\.com"]
+    },
+    "Gatsby": {
+      "cats": [22],
+      "html": ["___gatsby", "gatsby-"],
+      "meta": { "generator": "Gatsby" }
+    },
+    "Remix": {
+      "cats": [22],
+      "html": ["__remixContext"]
+    },
+    "Material UI": {
+      "cats": [47],
+      "html": ["MuiButton", "MuiPaper", "MuiTypography"]
+    },
+    "Font Awesome": {
+      "cats": [47],
+      "html": ["font-awesome", "fontawesome"],
+      "scripts": ["fontawesome"]
+    },
+    "Hotjar": {
+      "cats": [10],
+      "scripts": ["static\\.hotjar\\.com"]
+    },
+    "Stripe": {
+      "cats": [10],
+      "scripts": ["js\\.stripe\\.com"]
+    },
+    "Sentry": {
+      "cats": [10],
+      "scripts": ["browser\\.sentry-cdn\\.com", "sentry\\.io"]
+    }
+  }
+}

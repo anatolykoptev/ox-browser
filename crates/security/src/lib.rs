@@ -1,1 +1,1 @@
-pub mod fingerprint;
+// ox-security: CF detection and request hardening

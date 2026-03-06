@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 ox-http = { path = "../http" }
+ox-intelligence = { path = "../intelligence" }
 ox-security = { path = "../security" }
 ox-core = { path = "../core" }
 axum = "0.8"

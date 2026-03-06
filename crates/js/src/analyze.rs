@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use ox_core::Page;
 use ox_http::detect_cloudflare;
-use ox_security::fingerprint::Fingerprinter;
+use ox_intelligence::fingerprint::Fingerprinter;
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
