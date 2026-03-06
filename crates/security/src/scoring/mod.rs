@@ -4,6 +4,7 @@ mod aggregate;
 
 use serde::Serialize;
 
+use super::body_scan::BodyScanReport;
 use super::cookies::CookieReport;
 use super::cors::CorsReport;
 use super::csp::CspReport;
@@ -28,6 +29,7 @@ pub struct SecurityReport {
     pub supply_chain: SupplyChainReport,
     pub mixed_content: MixedContentReport,
     pub info_disclosure: InfoDisclosureReport,
+    pub body_scan: BodyScanReport,
     pub findings_summary: FindingsSummary,
 }
 

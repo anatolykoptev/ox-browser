@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use super::super::body_scan;
 use super::super::cookies::{self, CookieReport};
 use super::super::cors::{self, CorsReport};
 use super::super::csp::{self, CspReport};
@@ -38,6 +39,7 @@ pub fn analyze_security(
     let supply_chain_report = supply_chain::analyze_supply_chain(html, &page_domain);
     let mixed_content_report = mixed_content::analyze_mixed_content(html, url);
     let info_disc = info_disclosure::analyze_info_disclosure(resp_headers);
+    let body = body_scan::scan_body(html, url);
 
     let score = compute_score(
         &headers_report,
@@ -46,6 +48,7 @@ pub fn analyze_security(
         &cors_report,
         &sri_report,
         &info_disc,
+        &body,
     );
     let grade = score_to_grade(score);
     let findings_summary = count_findings(
@@ -57,6 +60,7 @@ pub fn analyze_security(
         &supply_chain_report,
         &mixed_content_report,
         &info_disc,
+        &body,
     );
 
     SecurityReport {
@@ -71,6 +75,7 @@ pub fn analyze_security(
         supply_chain: supply_chain_report,
         mixed_content: mixed_content_report,
         info_disclosure: info_disc,
+        body_scan: body,
         findings_summary,
     }
 }
@@ -94,6 +99,7 @@ fn compute_score(
     cors_report: &CorsReport,
     sri_report: &SriReport,
     info_disc: &info_disclosure::InfoDisclosureReport,
+    body: &body_scan::BodyScanReport,
 ) -> i32 {
     let mut score: i32 = 100;
 
@@ -106,6 +112,7 @@ fn compute_score(
     score += cors_report.score_modifier;
     score += sri_report.score_modifier;
     score += info_disc.score_modifier;
+    score += body.score_modifier;
 
     for f in &headers_report.findings {
         match f.header.as_str() {
@@ -134,6 +141,7 @@ fn count_findings(
     supply_chain_report: &supply_chain::SupplyChainReport,
     mixed_content_report: &mixed_content::MixedContentReport,
     info_disc: &info_disclosure::InfoDisclosureReport,
+    body: &body_scan::BodyScanReport,
 ) -> FindingsSummary {
     let mut sevs: Vec<Severity> = Vec::new();
 
@@ -147,6 +155,7 @@ fn count_findings(
     sevs.extend(supply_chain_report.findings.iter().map(|f| f.severity));
     sevs.extend(mixed_content_report.findings.iter().map(|f| f.severity));
     sevs.extend(info_disc.findings.iter().map(|f| f.severity));
+    sevs.extend(body.findings.iter().map(|f| f.severity));
 
     let total = sevs.len();
     FindingsSummary {

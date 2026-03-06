@@ -1,5 +1,6 @@
 // ox-security: CF detection, request hardening, technology fingerprinting, and security analysis.
 
+pub mod body_scan;
 pub mod cookies;
 pub mod cors;
 pub mod csp;
