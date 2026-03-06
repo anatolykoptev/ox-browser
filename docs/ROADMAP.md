@@ -107,20 +107,141 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 **Not solving:** Turnstile/CAPTCHA directly (delegates to external solver).
 **Depends on:** Phase 1.5
 
+## Phase 2.5: Web Intelligence (v0.2.5)
+
+**Goal:** Full website analysis — technology stack, SEO, performance, accessibility, content,
+media, fonts, PWA, API discovery. One `POST /analyze` → complete intelligence report.
+
+**Crate restructure:** Create `ox-intelligence` crate. Move `fingerprint.rs` from `ox-security`.
+Keep `ox-security` clean for Phase 3 (vulnerability scanning).
+
+```
+ox-intelligence/src/
+├── fingerprint.rs    — 100+ technologies with version capture (regex groups)
+├── seo.rs            — OG, Twitter Cards, JSON-LD, canonical, hreflang, robots, description
+├── performance.rs    — HTTP version, compression, cache headers, preload/prefetch, lazy images
+├── accessibility.rs  — html lang, alt coverage, heading hierarchy, ARIA landmarks, form labels
+├── content.rs        — internal/external links, word count, iframes
+├── fonts.rs          — Google Fonts, Adobe Fonts, @font-face from CSS
+├── pwa.rs            — manifest.json link, service worker, theme-color, apple-touch-icon
+├── media.rs          — image formats (WebP/AVIF/SVG), video embeds, audio, responsive srcset
+├── api_discovery.rs  — fetch/axios endpoints, GraphQL, __NEXT_DATA__, form actions, inline configs
+└── lib.rs
+```
+
+### Phase 2.5a: Fingerprint DB v2
+
+- [ ] Expand from 30 → 100+ technologies
+- [ ] Add version detection via regex capture groups (e.g. `jQuery/([\d.]+)`)
+- [ ] Fix false positives (Django X-Frame-Options, Ruby on Rails X-Runtime)
+- [ ] Add: Astro, SvelteKit, Vite, htmx, Alpine.js, Lit, Turbopack, Bun, Deno
+- [ ] Add third-party services: Intercom, Segment, Mixpanel, Facebook Pixel, Crisp, Auth0, Clerk
+- [ ] Add e-commerce: WooCommerce, Magento, PrestaShop, BigCommerce, Squarespace
+- [ ] Add ad networks: Google AdSense, Amazon Ads, Taboola, Outbrain
+- [ ] Version field in `Detection` struct
+- [ ] Tests: ≥20 tests covering version extraction + new technologies
+
+### Phase 2.5b: SEO Module
+
+- [ ] Open Graph tags (og:title, og:description, og:image, og:type, og:url)
+- [ ] Twitter Cards (twitter:card, twitter:title, twitter:image, twitter:site)
+- [ ] JSON-LD structured data (extract @type, parse Product/Article/Organization/FAQ/etc.)
+- [ ] Canonical URL (`<link rel="canonical">`)
+- [ ] Hreflang tags (language alternatives)
+- [ ] Robots meta (index/noindex, follow/nofollow)
+- [ ] Meta description, meta keywords
+- [ ] Favicon + apple-touch-icon URLs
+- [ ] `SeoReport` struct with completeness score
+- [ ] Tests: ≥10 tests
+
+### Phase 2.5c: Performance Module
+
+- [ ] HTTP protocol version (1.0/1.1/2/3) from response
+- [ ] Compression (Content-Encoding: gzip/br/zstd)
+- [ ] Cache headers (Cache-Control, ETag, Expires, Age)
+- [ ] Preload/prefetch/preconnect hints (`<link rel="preload|prefetch|preconnect">`)
+- [ ] Lazy loading coverage (images with `loading="lazy"` vs total)
+- [ ] Critical CSS (inline `<style>` in `<head>` count + size)
+- [ ] Image optimization hints (WebP/AVIF usage vs JPEG/PNG)
+- [ ] `PerformanceReport` struct
+- [ ] Tests: ≥8 tests
+
+### Phase 2.5d: Accessibility Module
+
+- [ ] `<html lang="...">` presence and value
+- [ ] Image alt text coverage (with alt / without alt / empty alt counts)
+- [ ] Heading hierarchy (h1 count, h2-h6 structure, skip detection)
+- [ ] ARIA landmarks (role="main|nav|banner|contentinfo" count)
+- [ ] Form labels coverage (inputs with associated labels vs orphans)
+- [ ] `AccessibilityReport` struct with score
+- [ ] Tests: ≥8 tests
+
+### Phase 2.5e: Content + Media Module
+
+- [ ] Links: internal vs external count, external domains list
+- [ ] Word count (body text, excluding scripts/styles)
+- [ ] Iframes (YouTube, Vimeo, Google Maps, other)
+- [ ] Images: total count, formats breakdown (JPEG/PNG/WebP/AVIF/SVG/GIF)
+- [ ] Images: srcset/`<picture>` responsive coverage
+- [ ] Images: CDN detection (imgix, Cloudinary, Cloudflare Images)
+- [ ] Video: platform detection (YouTube, Vimeo, Wistia, self-hosted)
+- [ ] Video: `<video>` formats (mp4, webm, hls)
+- [ ] Audio: `<audio>` elements, podcast embeds (Spotify, Apple, SoundCloud)
+- [ ] JSON-LD VideoObject / AudioObject detection
+- [ ] `ContentReport` + `MediaReport` structs
+- [ ] Tests: ≥10 tests
+
+### Phase 2.5f: Fonts + PWA + API Discovery
+
+- [ ] Fonts: Google Fonts URLs, Adobe Fonts, `@font-face` from inline CSS
+- [ ] PWA: `<link rel="manifest">`, service worker registration in scripts, theme-color meta
+- [ ] API Discovery: `fetch("/api/...")`, `axios.get(...)`, `XMLHttpRequest` in inline scripts
+- [ ] API Discovery: `__NEXT_DATA__`, `__NUXT__`, `window.__CONFIG__` extraction
+- [ ] API Discovery: GraphQL endpoint detection (`/graphql`, `__schema`)
+- [ ] API Discovery: `<form action="...">` POST endpoints
+- [ ] `FontsReport`, `PwaReport`, `ApiReport` structs
+- [ ] Tests: ≥10 tests
+
+### Phase 2.5g: Integration
+
+- [ ] Update `analyze.rs` to call all intelligence modules
+- [ ] Extended `AnalyzeResponse` with all report sections
+- [ ] Update go-code `webanalyze/client.go` types for new response fields
+- [ ] Update go-code `tool_site_analyze.go` XML formatting for all sections
+- [ ] Deploy ox-browser + go-code
+- [ ] Integration test with real sites (WordPress, Next.js, Shopify)
+
+**Result:** Complete website intelligence from a single HTTP request. ~2000 LOC, ~100 tests.
+**Depends on:** Phase 2
+
 ## Phase 3: Security Scanner (v0.3.0)
 
-**Goal:** Analyze pages for common web vulnerabilities.
+**Goal:** Vulnerability scanning and security posture assessment.
 
-- [ ] `ox-security` crate (usable standalone, without browser)
+`ox-security` crate — focused on security analysis only (fingerprinting moved to `ox-intelligence`).
+
+```
+ox-security/src/
+├── headers.rs   — HSTS, CSP, X-Content-Type-Options, Permissions-Policy, CORS, Referrer-Policy
+├── cookies.rs   — Secure/HttpOnly/SameSite flags, known tracker cookies
+├── xss.rs       — DOM sinks, event handlers, reflected patterns
+├── csp.rs       — CSP parser + scorer (A-F grade)
+├── sri.rs       — missing integrity attributes on scripts/styles
+└── lib.rs
+```
+
+- [ ] Security headers analysis with severity grading
+- [ ] Cookie security flags audit (Secure, HttpOnly, SameSite)
+- [ ] Known tracker cookies detection (ga_, _fbp, _gid, etc.)
 - [ ] XSS detector: DOM sinks, event handlers, reflected patterns
 - [ ] CSP parser and scorer (A-F grade)
 - [ ] SRI checker (missing integrity attributes)
-- [ ] Security headers analysis (HSTS, X-Frame-Options, etc.)
-- [ ] SecurityReport struct with findings + severity
+- [ ] `SecurityReport` struct with findings + severity + recommendations
+- [ ] `POST /security` endpoint (or `?security=true` param on `/analyze`)
 - [ ] CLI: `ox-browser scan <url>`
 
-**Result:** One-command security audit for any URL. ~600 LOC.
-**Depends on:** Phase 1 (Phase 2 optional but improves XSS detection)
+**Result:** One-command security audit for any URL. ~800 LOC.
+**Depends on:** Phase 2.5 (uses intelligence modules for context)
 
 ## Phase 4: Crawler (v0.4.0)
 
@@ -132,11 +253,11 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 - [ ] URL include/exclude filters (regex)
 - [ ] robots.txt parsing and respect
 - [ ] Rate limiting (requests per second per domain)
-- [ ] Callback-based page processing
+- [ ] Callback-based page processing (integrates with intelligence + security modules)
 - [ ] CLI: `ox-browser crawl <url> --depth 3`
 
 **Result:** Full site crawling with polite behavior. ~500 LOC.
-**Depends on:** Phase 1
+**Depends on:** Phase 1 (Phase 2.5 optional for per-page intelligence)
 
 ## Phase 5: MCP Server (v0.5.0)
 
@@ -147,10 +268,13 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 - [x] Health endpoint *(done in Phase 2c)*
 - [x] Integration with go-code (`site_analyze` tool) *(done in Phase 2d)*
 - [ ] `ox-mcp` crate with HTTP+SSE transport (native MCP protocol)
-- [ ] Tools: browse, select, fill_form, crawl, security_scan, solve_cf
+- [ ] Tools: browse, select, fill_form, crawl, solve_cf
+- [ ] Tools: site_intelligence (full Phase 2.5 report)
+- [ ] Tools: security_scan (Phase 3 report)
+- [ ] Tools: seo_audit, performance_audit, accessibility_audit (focused reports)
 - [ ] Integration with krolik-agent (skill + mcp_call)
 
-**Result:** AI agents can browse, scrape, scan, and solve CF via MCP. ~400 LOC.
+**Result:** AI agents can browse, scrape, analyze, and audit via MCP. ~400 LOC.
 **Depends on:** Phases 1-4
 
 ## Phase 6: Polish (v1.0.0)
@@ -158,12 +282,25 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 **Goal:** Production-ready quality.
 
 - [ ] CI/CD: GitHub Actions (test, lint, build, release)
-- [ ] Benchmarks (parsing, JS execution, CF solve time)
+- [ ] Benchmarks (parsing, analysis, CF solve time)
 - [ ] Crate documentation (rustdoc, 60%+ coverage)
 - [ ] GoReleaser-style binary releases
 
 **Result:** Publishable crate + production Docker image.
 **Depends on:** Phases 1-5
+
+## Crate Architecture
+
+```
+ox-browser/crates/
+├── core/           — Page, DOM (dom_query), forms, navigation, URL resolution
+├── http/           — HTTP client (wreq+BoringSSL), proxy, cookies, CF detection, middleware
+├── intelligence/   — Web intelligence: fingerprint, SEO, perf, a11y, content, media, fonts, PWA, API
+├── security/       — Security scanning: headers, cookies, XSS, CSP, SRI
+├── js/             — HTTP API: /health, /solve, /fetch, /fetch-smart, /analyze
+├── solver/         — CF challenge solver (Byparr/FlareSolverr)
+└── cli/            — CLI binary (fetch, scan, crawl subcommands)
+```
 
 ## Non-Goals
 
@@ -171,14 +308,13 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 - **Full browser compatibility** — not trying to replace Chrome/Firefox
 - **WebDriver/CDP protocol** — MCP is the integration protocol
 - **Turnstile/CAPTCHA solving** — requires visual solver, out of scope
-- **Image/media processing** — text and HTML only
 
 ## Comparison
 
 | Feature | ox-browser | go-stealth | go-browser |
 |---------|-----------|-----------|------------|
 | Language | Rust | Go | Go |
-| Purpose | Headless browser + CF bypass | Stealth HTTP client | Chrome automation |
+| Purpose | Web intelligence + CF bypass | Stealth HTTP client | Chrome automation |
 | Chrome needed | No | No | Yes (Rod) |
 | JS engine | External solver (Phase 2) | None | V8 (via Rod) |
 | DOM parsing | dom_query (mutable) | None | Chrome DOM |
@@ -188,13 +324,15 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 | CF JS solving | ✅ via Byparr/FlareSolverr | No (delegates) | Via Chrome |
 | CF 200 detection | ✅ (cf-mitigated, body markers) | No | N/A |
 | HTTP API | ✅ /fetch, /fetch-smart, /analyze | No | No |
-| Tech detection | ✅ /analyze (CMS, frameworks, CDN) | No | No |
+| Tech detection | ✅ 100+ technologies (Phase 2.5) | No | No |
+| SEO analysis | ✅ OG, JSON-LD, canonical (Phase 2.5) | No | No |
+| Security audit | ✅ headers, CSP, XSS (Phase 3) | No | No |
 | Proxy pool | Webshare + health ✅ | Webshare + health | No |
 | Rate limiting | Per-domain ✅ | Per-domain | No |
 | Middleware | Chain pattern ✅ | Chain pattern | No |
 | MCP server | Phase 5 | No | No |
 
 **When to use which:**
-- **ox-browser** — lightweight scraping + DOM + CF bypass, no Chrome dependency
+- **ox-browser** — web intelligence, security audit, CF bypass, no Chrome dependency
 - **go-stealth** — stealth HTTP requests without DOM/JS, delegates CF to ox-browser
 - **go-browser** — SPA rendering, full JS, screenshot/PDF (needs Chromium)
