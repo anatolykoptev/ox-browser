@@ -61,10 +61,16 @@ pub async fn run(
         cache,
         http_client,
     };
-    let app = ox_js::router(state);
+    let rest_router = ox_js::router(state.clone());
+    let mcp_router = ox_mcp::build_mcp_router(
+        state.provider.clone(),
+        state.cache.clone(),
+        state.http_client.clone(),
+    );
+    let app = rest_router.merge(mcp_router);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
-    tracing::info!("ox-browser server listening on :{port}");
+    tracing::info!("ox-browser server listening on :{port} (REST + MCP)");
     axum::serve(listener, app).await?;
 
     Ok(())
