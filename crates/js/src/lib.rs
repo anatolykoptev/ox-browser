@@ -1,5 +1,6 @@
 //! HTTP API server exposing CF solver via POST /solve for go-stealth.
 
+mod analyze;
 mod fetch;
 mod fetch_smart;
 
@@ -53,6 +54,7 @@ pub fn router(state: AppState) -> Router {
         .route("/solve", post(solve))
         .route("/fetch", post(fetch::fetch))
         .route("/fetch-smart", post(fetch_smart::fetch_smart))
+        .route("/analyze", post(analyze::analyze))
         .with_state(state)
 }
 
