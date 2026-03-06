@@ -8,6 +8,7 @@ use super::body_scan::BodyScanReport;
 use super::cookies::CookieReport;
 use super::cors::CorsReport;
 use super::csp::CspReport;
+use super::dangerous_js::DangerousJsReport;
 use super::headers::HeadersReport;
 use super::info_disclosure::InfoDisclosureReport;
 use super::mixed_content::MixedContentReport;
@@ -32,6 +33,7 @@ pub struct SecurityReport {
     pub info_disclosure: InfoDisclosureReport,
     pub body_scan: BodyScanReport,
     pub vuln_js: VulnJsReport,
+    pub dangerous_js: DangerousJsReport,
     pub findings_summary: FindingsSummary,
 }
 

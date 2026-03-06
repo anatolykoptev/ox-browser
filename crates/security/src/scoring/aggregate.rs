@@ -9,6 +9,7 @@ use super::super::csp::{self, CspReport};
 use super::super::headers::{self, HeaderStatus, HeadersReport};
 use super::super::info_disclosure;
 use super::super::mixed_content;
+use super::super::dangerous_js;
 use super::super::vuln_js;
 use super::super::sri::{self, SriReport};
 use super::super::supply_chain;
@@ -42,6 +43,7 @@ pub fn analyze_security(
     let info_disc = info_disclosure::analyze_info_disclosure(resp_headers);
     let body = body_scan::scan_body(html, url);
     let vuln = vuln_js::detect_vulnerable_js(html);
+    let dangerous = dangerous_js::analyze_dangerous_js(html);
 
     let score = compute_score(
         &headers_report,
@@ -52,6 +54,7 @@ pub fn analyze_security(
         &info_disc,
         &body,
         &vuln,
+        &dangerous,
     );
     let grade = score_to_grade(score);
     let findings_summary = count_findings(
@@ -65,6 +68,7 @@ pub fn analyze_security(
         &info_disc,
         &body,
         &vuln,
+        &dangerous,
     );
 
     SecurityReport {
@@ -81,6 +85,7 @@ pub fn analyze_security(
         info_disclosure: info_disc,
         body_scan: body,
         vuln_js: vuln,
+        dangerous_js: dangerous,
         findings_summary,
     }
 }
@@ -106,6 +111,7 @@ fn compute_score(
     info_disc: &info_disclosure::InfoDisclosureReport,
     body: &body_scan::BodyScanReport,
     vuln: &vuln_js::VulnJsReport,
+    dangerous: &dangerous_js::DangerousJsReport,
 ) -> i32 {
     let mut score: i32 = 100;
 
@@ -120,6 +126,7 @@ fn compute_score(
     score += info_disc.score_modifier;
     score += body.score_modifier;
     score += vuln.score_modifier;
+    score += dangerous.score_modifier;
 
     for f in &headers_report.findings {
         match f.header.as_str() {
@@ -150,6 +157,7 @@ fn count_findings(
     info_disc: &info_disclosure::InfoDisclosureReport,
     body: &body_scan::BodyScanReport,
     vuln: &vuln_js::VulnJsReport,
+    dangerous: &dangerous_js::DangerousJsReport,
 ) -> FindingsSummary {
     let mut sevs: Vec<Severity> = Vec::new();
 
@@ -165,6 +173,7 @@ fn count_findings(
     sevs.extend(info_disc.findings.iter().map(|f| f.severity));
     sevs.extend(body.findings.iter().map(|f| f.severity));
     sevs.extend(vuln.findings.iter().map(|f| f.severity));
+    sevs.extend(dangerous.findings.iter().map(|f| f.severity));
 
     let total = sevs.len();
     FindingsSummary {
