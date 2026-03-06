@@ -81,7 +81,7 @@ HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full resea
 - [x] Cache-aware (returns cached cookies on repeat requests)
 - [x] Block challenge rejection (400 Bad Request)
 
-**Result:** CF challenges solved via external solver. ~5500 LOC, 209 tests.
+**Result:** CF challenges solved via external solver. ~5800 LOC, 218 tests.
 **Architecture:** ox-browser → Byparr/FlareSolverr → stealth browser → cf_clearance → cache.
 **Not solving:** Turnstile/CAPTCHA directly (delegates to external solver).
 **Depends on:** Phase 1.5
