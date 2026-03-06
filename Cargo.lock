@@ -1167,12 +1167,16 @@ name = "ox-browser"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "axum",
  "clap",
  "ox-core",
  "ox-http",
+ "ox-js",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wreq-util",
 ]
 
 [[package]]

@@ -1,3 +1,5 @@
+mod serve;
+
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
@@ -30,6 +32,21 @@ enum Commands {
         #[arg(long)]
         proxy: Option<String>,
         /// Enable debug logging for HTTP requests
+        #[arg(long)]
+        debug: bool,
+    },
+    /// Start HTTP API server
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value = "8901")]
+        port: u16,
+        /// Byparr/FlareSolverr URL for challenge solving
+        #[arg(long, env = "BYPARR_URL")]
+        byparr_url: Option<String>,
+        /// Proxy URL
+        #[arg(long, env = "PROXY_URL")]
+        proxy_url: Option<String>,
+        /// Enable debug logging
         #[arg(long)]
         debug: bool,
     },
@@ -85,6 +102,9 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 println!("{}", page.html());
             }
+        }
+        Commands::Serve { port, byparr_url, proxy_url, debug } => {
+            serve::run(port, byparr_url, proxy_url, debug).await?;
         }
         Commands::Version => {
             println!("ox-browser {}", env!("CARGO_PKG_VERSION"));
