@@ -56,29 +56,34 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 **Result:** Undetectable TLS fingerprint. ~5085 LOC, 140 tests.
 **Key change:** `reqwest` → `wreq` (near-identical API, BoringSSL backend).
 
-## Phase 2: Cloudflare Bypass (v0.2.0)
+## Phase 2: Cloudflare Bypass (v0.2.0) ✅
 
-**Goal:** Solve Cloudflare JS challenges natively, provide cookies to go-stealth.
+**Goal:** Solve Cloudflare challenges via external solver, provide cookies to go-stealth.
 
-### Phase 2a: JS Challenge Solver
+**Architecture revision (March 2026):** Research showed embedded JS engines (Boa/QuickJS)
+cannot solve modern CF challenges — they require Canvas, WebGL, Audio Context (full browser
+surface). New approach: external stealth browser solver (Byparr/Camoufox) + cookie caching +
+HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full research.
 
-- [ ] `ox-js` crate: Boa engine with minimal DOM shim
-- [ ] DOM shim: `document.createElement`, `document.getElementById`, cookie access
-- [ ] `window.setTimeout`/`setInterval` via tokio timers
-- [ ] Extract + execute CF challenge-platform scripts
-- [ ] Return `cf_clearance` cookie on success
-- [ ] Timeout + fallback (max 30s per challenge attempt)
+### Phase 2a: CookieProvider + Solver Integration
 
-### Phase 2b: CookieProvider Integration
+- [x] `CookieProvider` trait: `async fn solve(url, challenge_type) -> SolvedChallenge`
+- [x] `SolvedChallenge` struct: cookies HashMap + user_agent
+- [x] `CookieCache`: per-domain TTL cache (25min default, matching cf_clearance lifetime)
+- [x] `ByparrSolver`: FlareSolverr-compatible HTTP client (Byparr, FlareSolverr, any drop-in)
+- [x] `solver_middleware`: intercepts HttpError::Cloudflare, solves, injects cookies, retries
+- [x] Block challenges correctly passed through (not solvable)
 
-- [ ] `CookieProvider` trait: `async fn solve(url, challenge) -> CookieJar`
-- [ ] HTTP endpoint: `POST /solve` — accepts URL, returns cookies
-- [ ] go-stealth integration: call ox-browser on `HttpError::Cloudflare`
-- [ ] Cookie caching: per-domain, TTL-based (cf_clearance ~30min)
-- [ ] Metrics: solve success rate, avg solve time
+### Phase 2b: HTTP API for go-stealth
 
-**Result:** CF JS challenges solved in ~5s without Chromium. go-stealth gets cookies.
-**Not solving:** Turnstile/CAPTCHA (requires visual solver — out of scope).
+- [x] `POST /solve` endpoint (accepts URL + challenge_type, returns cookies)
+- [x] `/health` endpoint
+- [x] Cache-aware (returns cached cookies on repeat requests)
+- [x] Block challenge rejection (400 Bad Request)
+
+**Result:** CF challenges solved via external solver. ~5500 LOC, 209 tests.
+**Architecture:** ox-browser → Byparr/FlareSolverr → stealth browser → cf_clearance → cache.
+**Not solving:** Turnstile/CAPTCHA directly (delegates to external solver).
 **Depends on:** Phase 1.5
 
 ## Phase 3: Security Scanner (v0.3.0)
@@ -153,12 +158,12 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 | Language | Rust | Go | Go |
 | Purpose | Headless browser + CF bypass | Stealth HTTP client | Chrome automation |
 | Chrome needed | No | No | Yes (Rod) |
-| JS engine | Boa (Phase 2) | None | V8 (via Rod) |
+| JS engine | External solver (Phase 2) | None | V8 (via Rod) |
 | DOM parsing | dom_query (mutable) | None | Chrome DOM |
 | TLS fingerprinting | ✅ wreq+BoringSSL | Yes (tls-client) | Via Chrome |
 | Browser profiles | 16 built-in ✅ | 16 built-in | N/A |
 | CF detection | ✅ (Phase 1.5) | ✅ | N/A |
-| CF JS solving | Phase 2b | No (delegates) | Via Chrome |
+| CF JS solving | ✅ via Byparr/FlareSolverr | No (delegates) | Via Chrome |
 | Proxy pool | Webshare + health ✅ | Webshare + health | No |
 | Rate limiting | Per-domain ✅ | Per-domain | No |
 | Middleware | Chain pattern ✅ | Chain pattern | No |
