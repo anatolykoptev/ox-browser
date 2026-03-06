@@ -5,6 +5,7 @@ pub mod cors;
 pub mod csp;
 pub mod fingerprint;
 pub mod headers;
+pub mod info_disclosure;
 pub mod mixed_content;
 pub mod scoring;
 pub mod sri;

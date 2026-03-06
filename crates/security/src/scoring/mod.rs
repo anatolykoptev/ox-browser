@@ -8,6 +8,7 @@ use super::cookies::CookieReport;
 use super::cors::CorsReport;
 use super::csp::CspReport;
 use super::headers::HeadersReport;
+use super::info_disclosure::InfoDisclosureReport;
 use super::mixed_content::MixedContentReport;
 use super::sri::SriReport;
 use super::supply_chain::SupplyChainReport;
@@ -26,6 +27,7 @@ pub struct SecurityReport {
     pub sri: SriReport,
     pub supply_chain: SupplyChainReport,
     pub mixed_content: MixedContentReport,
+    pub info_disclosure: InfoDisclosureReport,
     pub findings_summary: FindingsSummary,
 }
 

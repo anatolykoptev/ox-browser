@@ -6,6 +6,7 @@ use super::super::cookies::{self, CookieReport};
 use super::super::cors::{self, CorsReport};
 use super::super::csp::{self, CspReport};
 use super::super::headers::{self, HeaderStatus, HeadersReport};
+use super::super::info_disclosure;
 use super::super::mixed_content;
 use super::super::sri::{self, SriReport};
 use super::super::supply_chain;
@@ -36,6 +37,7 @@ pub fn analyze_security(
     let page_domain = extract_domain(url);
     let supply_chain_report = supply_chain::analyze_supply_chain(html, &page_domain);
     let mixed_content_report = mixed_content::analyze_mixed_content(html, url);
+    let info_disc = info_disclosure::analyze_info_disclosure(resp_headers);
 
     let score = compute_score(
         &headers_report,
@@ -43,6 +45,7 @@ pub fn analyze_security(
         &cookies_report,
         &cors_report,
         &sri_report,
+        &info_disc,
     );
     let grade = score_to_grade(score);
     let findings_summary = count_findings(
@@ -53,6 +56,7 @@ pub fn analyze_security(
         &sri_report,
         &supply_chain_report,
         &mixed_content_report,
+        &info_disc,
     );
 
     SecurityReport {
@@ -66,6 +70,7 @@ pub fn analyze_security(
         sri: sri_report,
         supply_chain: supply_chain_report,
         mixed_content: mixed_content_report,
+        info_disclosure: info_disc,
         findings_summary,
     }
 }
@@ -88,6 +93,7 @@ fn compute_score(
     cookies_report: &CookieReport,
     cors_report: &CorsReport,
     sri_report: &SriReport,
+    info_disc: &info_disclosure::InfoDisclosureReport,
 ) -> i32 {
     let mut score: i32 = 100;
 
@@ -99,6 +105,7 @@ fn compute_score(
     score += cookies_report.score_modifier;
     score += cors_report.score_modifier;
     score += sri_report.score_modifier;
+    score += info_disc.score_modifier;
 
     for f in &headers_report.findings {
         match f.header.as_str() {
@@ -126,6 +133,7 @@ fn count_findings(
     sri_report: &SriReport,
     supply_chain_report: &supply_chain::SupplyChainReport,
     mixed_content_report: &mixed_content::MixedContentReport,
+    info_disc: &info_disclosure::InfoDisclosureReport,
 ) -> FindingsSummary {
     let mut sevs: Vec<Severity> = Vec::new();
 
@@ -138,6 +146,7 @@ fn count_findings(
     sevs.extend(sri_report.findings.iter().map(|f| f.severity));
     sevs.extend(supply_chain_report.findings.iter().map(|f| f.severity));
     sevs.extend(mixed_content_report.findings.iter().map(|f| f.severity));
+    sevs.extend(info_disc.findings.iter().map(|f| f.severity));
 
     let total = sevs.len();
     FindingsSummary {
