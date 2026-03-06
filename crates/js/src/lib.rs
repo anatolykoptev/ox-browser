@@ -1,5 +1,8 @@
 //! HTTP API server exposing CF solver via POST /solve for go-stealth.
 
+mod fetch;
+mod fetch_smart;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -7,15 +10,16 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use ox_http::{ChallengeType, CookieCache, CookieProvider};
+use ox_http::{ChallengeType, CookieCache, CookieProvider, HttpClient};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-/// Shared state for the solver HTTP server.
+/// Shared application state for all HTTP endpoints.
 #[derive(Clone)]
-pub struct SolverState {
+pub struct AppState {
     pub provider: Arc<dyn CookieProvider>,
     pub cache: Arc<CookieCache>,
+    pub http_client: Arc<HttpClient>,
 }
 
 /// Incoming solve request body.
@@ -42,11 +46,13 @@ pub struct SolveResponse {
     pub error: Option<String>,
 }
 
-/// Builds the Axum router with /health and /solve endpoints.
-pub fn router(state: SolverState) -> Router {
+/// Builds the Axum router with /health, /solve, /fetch and /fetch-smart.
+pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/solve", post(solve))
+        .route("/fetch", post(fetch::fetch))
+        .route("/fetch-smart", post(fetch_smart::fetch_smart))
         .with_state(state)
 }
 
@@ -55,7 +61,7 @@ async fn health() -> &'static str {
 }
 
 async fn solve(
-    State(state): State<SolverState>,
+    State(state): State<AppState>,
     Json(req): Json<SolveRequest>,
 ) -> (StatusCode, Json<SolveResponse>) {
     let challenge_type = match req.challenge_type.as_str() {
@@ -129,7 +135,7 @@ mod tests {
     use async_trait::async_trait;
     use axum::body::Body;
     use http_body_util::BodyExt;
-    use ox_http::SolvedChallenge;
+    use ox_http::{HttpConfig, SolvedChallenge};
     use std::time::Duration;
     use tower::ServiceExt;
 
@@ -151,10 +157,13 @@ mod tests {
         }
     }
 
-    fn test_state() -> SolverState {
-        SolverState {
+    fn test_state() -> AppState {
+        AppState {
             provider: Arc::new(MockProvider),
             cache: Arc::new(CookieCache::new(Duration::from_secs(300))),
+            http_client: Arc::new(
+                HttpClient::new(HttpConfig::default()).unwrap(),
+            ),
         }
     }
 
