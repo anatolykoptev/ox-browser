@@ -1,19 +1,34 @@
 //! ByparrSolver — FlareSolverr-compatible CookieProvider.
+//!
+//! Limits concurrent solver requests based on available memory.
+//! Each Camoufox browser spawned by byparr uses ~100 MB; the semaphore
+//! ensures we never exceed the solver container's capacity.
 
 use std::collections::HashMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 
 use crate::cloudflare::ChallengeType;
 use crate::cookie_provider::{CookieProvider, SolvedChallenge};
+
+/// Estimated memory per Camoufox browser instance in megabytes.
+const BROWSER_MB: usize = 100;
+
+/// Memory reserved for the byparr Python process itself (MB).
+const OVERHEAD_MB: usize = 150;
 
 /// Configuration for connecting to a FlareSolverr-compatible service.
 #[derive(Debug, Clone)]
 pub struct ByparrConfig {
     pub base_url: String,
     pub timeout: Duration,
+    /// Memory budget for the solver container in megabytes.
+    /// Used to calculate max concurrent browsers: (budget - overhead) / per_browser.
+    /// Example: 768 MB → (768 - 150) / 100 = 6 concurrent.
+    pub memory_budget_mb: usize,
 }
 
 impl Default for ByparrConfig {
@@ -21,7 +36,16 @@ impl Default for ByparrConfig {
         Self {
             base_url: "http://127.0.0.1:8191".to_string(),
             timeout: Duration::from_secs(60),
+            memory_budget_mb: 768,
         }
+    }
+}
+
+impl ByparrConfig {
+    /// Calculate max concurrent browsers from memory budget.
+    pub fn max_concurrent(&self) -> usize {
+        let usable = self.memory_budget_mb.saturating_sub(OVERHEAD_MB);
+        (usable / BROWSER_MB).max(1)
     }
 }
 
@@ -58,9 +82,14 @@ struct SolverCookie {
 }
 
 /// Solves Cloudflare challenges via a FlareSolverr-compatible HTTP API.
+///
+/// Uses a semaphore derived from `memory_budget_mb` to limit concurrent
+/// solver requests. Each request spawns a headless browser in byparr;
+/// the reaper script inside the container kills browsers older than 5 min.
 pub struct ByparrSolver {
     config: ByparrConfig,
     client: wreq::Client,
+    semaphore: Semaphore,
 }
 
 impl ByparrSolver {
@@ -69,7 +98,18 @@ impl ByparrSolver {
             .timeout(config.timeout)
             .build()
             .expect("failed to build wreq client");
-        Self { config, client }
+        let max_concurrent = config.max_concurrent();
+        tracing::info!(
+            memory_budget_mb = config.memory_budget_mb,
+            max_concurrent,
+            "byparr solver initialized"
+        );
+        let semaphore = Semaphore::new(max_concurrent);
+        Self {
+            config,
+            client,
+            semaphore,
+        }
     }
 }
 
@@ -80,6 +120,13 @@ impl CookieProvider for ByparrSolver {
         url: &str,
         _challenge_type: ChallengeType,
     ) -> Result<SolvedChallenge, String> {
+        // Acquire semaphore permit — blocks if max concurrent solves are in-flight.
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| format!("byparr semaphore closed: {e}"))?;
+
         let endpoint = format!("{}/v1", self.config.base_url);
         let body = SolverRequest {
             cmd: "request.get".to_string(),
@@ -140,6 +187,45 @@ mod tests {
         let cfg = ByparrConfig::default();
         assert_eq!(cfg.base_url, "http://127.0.0.1:8191");
         assert_eq!(cfg.timeout, Duration::from_secs(60));
+        assert_eq!(cfg.memory_budget_mb, 768);
+    }
+
+    #[test]
+    fn max_concurrent_from_memory() {
+        // 768 MB → (768 - 150) / 100 = 6
+        let cfg = ByparrConfig {
+            memory_budget_mb: 768,
+            ..Default::default()
+        };
+        assert_eq!(cfg.max_concurrent(), 6);
+
+        // 512 MB → (512 - 150) / 100 = 3
+        let cfg = ByparrConfig {
+            memory_budget_mb: 512,
+            ..Default::default()
+        };
+        assert_eq!(cfg.max_concurrent(), 3);
+
+        // 1024 MB → (1024 - 150) / 100 = 8
+        let cfg = ByparrConfig {
+            memory_budget_mb: 1024,
+            ..Default::default()
+        };
+        assert_eq!(cfg.max_concurrent(), 8);
+
+        // 200 MB → (200 - 150) / 100 = 0 → clamped to 1
+        let cfg = ByparrConfig {
+            memory_budget_mb: 200,
+            ..Default::default()
+        };
+        assert_eq!(cfg.max_concurrent(), 1);
+
+        // 100 MB (less than overhead) → saturating_sub = 0, clamped to 1
+        let cfg = ByparrConfig {
+            memory_budget_mb: 100,
+            ..Default::default()
+        };
+        assert_eq!(cfg.max_concurrent(), 1);
     }
 
     #[test]
@@ -196,5 +282,21 @@ mod tests {
     fn byparr_solver_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ByparrSolver>();
+    }
+
+    #[tokio::test]
+    async fn semaphore_matches_memory_budget() {
+        let solver = ByparrSolver::new(ByparrConfig {
+            memory_budget_mb: 768,
+            ..Default::default()
+        });
+        // 768 → 6 concurrent
+        assert_eq!(solver.semaphore.available_permits(), 6);
+
+        let solver = ByparrSolver::new(ByparrConfig {
+            memory_budget_mb: 512,
+            ..Default::default()
+        });
+        assert_eq!(solver.semaphore.available_permits(), 3);
     }
 }

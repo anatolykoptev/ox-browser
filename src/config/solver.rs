@@ -9,6 +9,8 @@ pub struct SolverSection {
     pub byparr_url: Option<String>,
     /// Solver request timeout in seconds.
     pub byparr_timeout_secs: u64,
+    /// Memory budget for solver container in MB (used to calc max concurrent browsers).
+    pub byparr_memory_mb: usize,
 }
 
 impl Default for SolverSection {
@@ -16,6 +18,7 @@ impl Default for SolverSection {
         Self {
             byparr_url: None,
             byparr_timeout_secs: 60,
+            byparr_memory_mb: 768,
         }
     }
 }

@@ -123,6 +123,7 @@ pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
         Arc::new(ByparrSolver::new(ByparrConfig {
             base_url: url.clone(),
             timeout: Duration::from_secs(config.solver.byparr_timeout_secs),
+            memory_budget_mb: config.solver.byparr_memory_mb,
         }))
     } else {
         Arc::new(NoOpProvider)
@@ -173,6 +174,7 @@ mod tests {
         assert_eq!(cfg.proxy.health.cooldown_secs, 300);
         assert!(cfg.solver.byparr_url.is_none());
         assert_eq!(cfg.solver.byparr_timeout_secs, 60);
+        assert_eq!(cfg.solver.byparr_memory_mb, 768);
         assert!(cfg.cloudflare.detect);
         assert_eq!(cfg.log.level, "info");
         assert_eq!(cfg.fetch.default_timeout_secs, 15);
