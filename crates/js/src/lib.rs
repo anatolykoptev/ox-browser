@@ -6,6 +6,7 @@ mod fetch;
 mod fetch_smart;
 mod image_extract;
 mod image_search;
+mod readability;
 mod security;
 
 use std::collections::HashMap;
@@ -62,6 +63,7 @@ pub fn router(state: AppState) -> Router {
         .route("/security", post(security::security_scan))
         .route("/images/search", post(image_search::image_search))
         .route("/images/extract", post(image_extract::image_extract))
+        .route("/readability", post(readability::readability))
         .with_state(state)
 }
 

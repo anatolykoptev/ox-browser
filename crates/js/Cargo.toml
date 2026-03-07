@@ -18,3 +18,5 @@ url = "2"
 async-trait = "0.1"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+readabilityrs = "0.1"
+dom_query = "0.25"

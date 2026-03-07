@@ -4,6 +4,7 @@ mod analyze;
 mod fetch;
 mod image_extract;
 mod image_search;
+mod readability;
 mod security;
 mod solve;
 
@@ -20,6 +21,7 @@ pub use analyze::AnalyzeInput;
 pub use fetch::{FetchInput, FetchSmartInput};
 pub use image_extract::ImageExtractInput;
 pub use image_search::ImageSearchInput;
+pub use readability::ReadabilityInput;
 pub use security::SecurityScanInput;
 pub use solve::SolveCfInput;
 
@@ -102,6 +104,17 @@ impl OxMcpServer {
         Parameters(input): Parameters<SecurityScanInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_security_scan(input).await
+    }
+
+    #[tool(
+        name = "readability",
+        description = "Extract article content from a URL using Mozilla Readability algorithm. Removes navigation, ads, sidebars — returns clean article text. Supports plain text or HTML output. Use for reading website content, place descriptions, blog posts, news articles."
+    )]
+    async fn readability(
+        &self,
+        Parameters(input): Parameters<ReadabilityInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_readability(input).await
     }
 
     #[tool(
