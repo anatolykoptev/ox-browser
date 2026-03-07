@@ -16,6 +16,8 @@ const SKIP_PATTERNS: &[&str] = &[
     "/badge", "/banner-ad", "/pixel", "/tracking",
     "/spacer", "/blank", "/loading", "/spinner",
     "/emoji", "/smiley", "/button",
+    "mc.yandex.ru/watch", "google-analytics.com",
+    "facebook.com/tr", "doubleclick.net",
 ];
 
 /// File extensions to skip.
