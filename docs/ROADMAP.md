@@ -129,7 +129,7 @@ media, fonts, PWA, API discovery. One `POST /analyze` -> complete intelligence r
 - [ ] `site_intelligence` — full Phase 2.5 report
 - [x] `security_scan` — security audit (Phase 4)
 - [ ] `crawl` — site crawling (after Phase 5)
-- [ ] `image_search` — image search (after Phase 4.6)
+- [x] `image_search` — image search (Phase 4.6)
 
 ## Phase 4: Security Scanner (v0.4.0-v0.5.1) ✅
 
@@ -232,20 +232,23 @@ ox-security/src/
 - [ ] `security_scan` MCP tool gains `deep` parameter
 - **Depends on:** go-probe v0.2.0
 
-## Phase 4.6: Image Search Engine
+## Phase 4.6: Image Search Engine (v0.5.2) ✅
 
-**Goal:** Scrape image search results from Bing, DDG, Yandex, Brave using the stealth HTTP
+**Goal:** Scrape image search results from multiple engines using the stealth HTTP
 infrastructure. Expose via REST and MCP. Primary consumer: go-imagefy.
 
 See `docs/plans/2026-03-06-phase5-imagesearch-design.md` for full design.
 
-- [ ] `ox-imagesearch` crate with `ImageResult` + `ImageEngine` trait
-- [ ] Bing, DDG, Yandex, Brave image providers
-- [ ] `ImageSearchEngine` fusion: parallel engines + WRR merge + dedup
-- [ ] `POST /images/search` REST endpoint + `image_search` MCP tool
-- [ ] Unit tests for all parsers + fusion
+- [x] `ox-imagesearch` crate with `ImageResult` + `ImageEngine` trait
+- [x] Bing Images engine (`/images/async` endpoint parser)
+- [x] DDG Images engine (vqd token + `/i.js` JSON API)
+- [x] `ImageSearchEngine` fusion: parallel engines + WRR merge + dedup
+- [x] `POST /images/search` REST endpoint + `image_search` MCP tool
+- [x] 13 unit tests (bing, ddg, fusion)
+- [ ] Yandex Images engine (future)
+- [ ] Brave Images engine (future)
 
-**Result:** Multi-engine image search with stealth scraping. ~810 LOC.
+**Result:** Multi-engine image search with stealth scraping. ~700 LOC, 13 tests.
 **Depends on:** Phase 2
 
 ## Phase 5: Crawler
@@ -282,9 +285,9 @@ ox-browser/crates/
 ├── http/           — HTTP client (wreq+BoringSSL), proxy, cookies, CF detection, middleware
 ├── intelligence/   — Web intelligence: fingerprint, SEO, perf, a11y, content, media, fonts, PWA, API
 ├── security/       — Security: 14 modules, Observatory scoring, AST analysis, 6 crate integrations
-├── imagesearch/    — Image search: Bing, DDG, Yandex, Brave parsers + fusion
-├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze, /security
-├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 5 tools)
+├── imagesearch/    — Image search: Bing, DDG parsers + WRR fusion (13 tests)
+├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze, /security, /images/search
+├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 6 tools)
 ├── crawler/        — Site crawler (BFS/DFS, robots.txt, rate limiting)
 └── src/            — Binary: CLI + server startup
 ```
