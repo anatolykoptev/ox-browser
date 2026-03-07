@@ -9,7 +9,9 @@ ox-intelligence = { path = "../intelligence" }
 ox-security = { path = "../security" }
 ox-imagesearch = { path = "../imagesearch" }
 ox-core = { path = "../core" }
+ox-crawler = { path = "../crawler" }
 axum = "0.8"
+async-stream = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio.workspace = true

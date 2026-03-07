@@ -1,6 +1,7 @@
 //! MCP tool definitions and routing for ox-browser.
 
 mod analyze;
+mod crawl;
 mod fetch;
 mod image_extract;
 mod image_search;
@@ -11,6 +12,7 @@ mod solve;
 use std::sync::Arc;
 
 use ox_http::{CookieCache, CookieProvider, HttpClient};
+use ox_js::EndpointDefaults;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
@@ -23,6 +25,7 @@ pub use image_extract::ImageExtractInput;
 pub use image_search::ImageSearchInput;
 pub use readability::ReadabilityInput;
 pub use security::SecurityScanInput;
+pub use crawl::CrawlInput;
 pub use solve::SolveCfInput;
 
 /// MCP server exposing ox-browser capabilities as tools.
@@ -31,6 +34,7 @@ pub struct OxMcpServer {
     pub(crate) provider: Arc<dyn CookieProvider>,
     pub(crate) cache: Arc<CookieCache>,
     pub(crate) http_client: Arc<HttpClient>,
+    pub(crate) defaults: EndpointDefaults,
     pub(crate) tool_router: ToolRouter<Self>,
 }
 
@@ -39,11 +43,13 @@ impl OxMcpServer {
         provider: Arc<dyn CookieProvider>,
         cache: Arc<CookieCache>,
         http_client: Arc<HttpClient>,
+        defaults: EndpointDefaults,
     ) -> Self {
         Self {
             provider,
             cache,
             http_client,
+            defaults,
             tool_router: Self::tool_router(),
         }
     }
@@ -137,5 +143,16 @@ impl OxMcpServer {
         Parameters(input): Parameters<ImageSearchInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_image_search(input).await
+    }
+
+    #[tool(
+        name = "crawl",
+        description = "BFS site crawler. Starts from a seed URL and discovers pages up to max_depth. Respects robots.txt, deduplicates URLs and content, converts HTML to markdown. Returns all crawled pages with titles, content, and link counts. Use for site-wide content extraction, documentation crawling, or site mapping."
+    )]
+    async fn crawl(
+        &self,
+        Parameters(input): Parameters<CrawlInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_crawl(input).await
     }
 }

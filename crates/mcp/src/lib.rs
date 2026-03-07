@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use ox_http::{CookieCache, CookieProvider, HttpClient};
+use ox_js::EndpointDefaults;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::*;
 use rmcp::tool_handler;
@@ -37,8 +38,9 @@ pub fn build_mcp_router(
     provider: Arc<dyn CookieProvider>,
     cache: Arc<CookieCache>,
     http_client: Arc<HttpClient>,
+    defaults: EndpointDefaults,
 ) -> Router {
-    let server = OxMcpServer::new(provider, cache, http_client);
+    let server = OxMcpServer::new(provider, cache, http_client, defaults);
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
         LocalSessionManager::default().into(),

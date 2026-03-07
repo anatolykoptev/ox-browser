@@ -2,6 +2,7 @@
 
 mod analyze;
 pub mod analyze_types;
+mod crawl;
 mod fetch;
 mod fetch_smart;
 mod image_extract;
@@ -20,12 +21,33 @@ use ox_http::{ChallengeType, CookieCache, CookieProvider, HttpClient};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+/// Runtime defaults configurable via config.toml.
+#[derive(Clone, Debug)]
+pub struct EndpointDefaults {
+    pub fetch_timeout_secs: u64,
+    pub smart_timeout_secs: u64,
+    pub image_max_results: usize,
+    pub image_min_width: u32,
+}
+
+impl Default for EndpointDefaults {
+    fn default() -> Self {
+        Self {
+            fetch_timeout_secs: 15,
+            smart_timeout_secs: 30,
+            image_max_results: 10,
+            image_min_width: 400,
+        }
+    }
+}
+
 /// Shared application state for all HTTP endpoints.
 #[derive(Clone)]
 pub struct AppState {
     pub provider: Arc<dyn CookieProvider>,
     pub cache: Arc<CookieCache>,
     pub http_client: Arc<HttpClient>,
+    pub defaults: EndpointDefaults,
 }
 
 /// Incoming solve request body.
@@ -64,6 +86,7 @@ pub fn router(state: AppState) -> Router {
         .route("/images/search", post(image_search::image_search))
         .route("/images/extract", post(image_extract::image_extract))
         .route("/readability", post(readability::readability))
+        .route("/crawl", post(crawl::crawl))
         .with_state(state)
 }
 
@@ -175,6 +198,7 @@ mod tests {
             http_client: Arc::new(
                 HttpClient::new(HttpConfig::default()).unwrap(),
             ),
+            defaults: EndpointDefaults::default(),
         }
     }
 

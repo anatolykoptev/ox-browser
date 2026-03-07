@@ -1,5 +1,7 @@
+mod config;
 mod serve;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
@@ -37,16 +39,19 @@ enum Commands {
     },
     /// Start HTTP API server
     Serve {
-        /// Port to listen on
-        #[arg(long, default_value = "8901")]
-        port: u16,
-        /// Byparr/FlareSolverr URL for challenge solving
+        /// Path to config file
+        #[arg(long, env = "OX_BROWSER_CONFIG", default_value = "config.toml")]
+        config: PathBuf,
+        /// Port to listen on (overrides config file)
+        #[arg(long, env = "OX_PORT")]
+        port: Option<u16>,
+        /// Byparr/FlareSolverr URL for challenge solving (overrides config)
         #[arg(long, env = "BYPARR_URL")]
         byparr_url: Option<String>,
-        /// Proxy URL
+        /// Proxy URL (overrides config)
         #[arg(long, env = "PROXY_URL")]
         proxy_url: Option<String>,
-        /// Enable debug logging
+        /// Enable debug logging (overrides config)
         #[arg(long)]
         debug: bool,
     },
@@ -68,24 +73,24 @@ async fn main() -> anyhow::Result<()> {
             proxy,
             debug,
         } => {
-            let mut config = BrowserConfig::default();
+            let mut cfg = BrowserConfig::default();
 
             if let Some(browser_name) = &profile {
                 let filter = ProfileFilter {
                     browser: Some(browser_name.clone()),
                     ..Default::default()
                 };
-                config.profile = Some(random_profile(&filter));
+                cfg.profile = Some(random_profile(&filter));
             }
 
             if let Some(proxy_url) = proxy {
                 let pool = StaticPool::new(vec![proxy_url]);
-                config.proxy_pool = Some(Arc::new(pool));
+                cfg.proxy_pool = Some(Arc::new(pool));
             }
 
-            config.debug = debug;
+            cfg.debug = debug;
 
-            let browser = Browser::new(config)?;
+            let browser = Browser::new(cfg)?;
             let page = browser.page(&url).await?;
 
             if let Some(selector) = css {
@@ -103,8 +108,16 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", page.html());
             }
         }
-        Commands::Serve { port, byparr_url, proxy_url, debug } => {
-            serve::run(port, byparr_url, proxy_url, debug).await?;
+        Commands::Serve {
+            config: config_path,
+            port,
+            byparr_url,
+            proxy_url,
+            debug,
+        } => {
+            let mut server_config = config::ServerConfig::load(&config_path)?;
+            server_config.apply_cli_overrides(port, byparr_url, proxy_url, debug);
+            serve::run(server_config).await?;
         }
         Commands::Version => {
             println!("ox-browser {}", env!("CARGO_PKG_VERSION"));

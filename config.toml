@@ -1,0 +1,53 @@
+# ox-browser configuration
+# All values shown are defaults. Uncomment and modify as needed.
+# Priority: defaults → config.toml → env vars → CLI args.
+
+[server]
+# port = 8901
+# bind = "0.0.0.0"
+
+[http]
+# timeout_secs = 20
+# max_redirects = 10
+# Emulation: chrome136, chrome131, chrome127, chrome124, chrome120, chrome116,
+#            safari18, safari17, edge127, none
+# emulation = "chrome136"
+
+[retry]
+# max_retries = 3
+# initial_wait_ms = 500
+# max_wait_ms = 10000
+# multiplier = 2.0
+# jitter_pct = 0.3
+
+[cache]
+# cookie_ttl_secs = 1500   # 25 minutes
+
+[proxy]
+# url = ""                         # or set PROXY_URL env var
+# webshare_timeout_secs = 10
+
+[proxy.health]
+# failure_threshold = 0.5          # 50% failure rate to deactivate
+# min_requests = 3                 # min requests before threshold evaluated
+# cooldown_secs = 300              # 5 minutes
+
+[solver]
+# byparr_url = ""                  # or set BYPARR_URL env var
+# byparr_timeout_secs = 60
+
+[cloudflare]
+# detect = true
+
+[fetch]
+# default_timeout_secs = 15        # /fetch endpoint default
+# smart_timeout_secs = 30          # /fetch-smart endpoint default
+
+[images]
+# default_max_results = 10         # /images/search default
+# default_min_width = 400          # /images/extract min width (px)
+# min_dimension = 200              # extraction filter: skip images < this (px)
+# rrf_k = 60.0                    # Reciprocal Rank Fusion constant
+
+[log]
+# level = "info"                   # info, debug, warn, error, trace

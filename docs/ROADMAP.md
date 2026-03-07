@@ -253,20 +253,63 @@ See `docs/plans/2026-03-06-phase5-imagesearch-design.md` for full design.
 **Result:** 5-engine image search with stealth scraping. ~1400 LOC, 25 tests.
 **Depends on:** Phase 2
 
-## Phase 5: Crawler
+## Phase 4.7: Runtime Configuration (v0.5.3) ✅
 
-**Goal:** Crawl websites with configurable depth, filters, rate limiting.
+**Goal:** All hardcoded settings configurable via TOML without Docker rebuild.
 
-- [ ] `ox-crawler` crate
-- [ ] BFS/DFS crawl queue with deduplication
-- [ ] Depth/breadth limits, URL filters (regex)
-- [ ] robots.txt parsing and respect
-- [ ] Rate limiting per domain
-- [ ] Callback-based page processing (intelligence + security per page)
-- [ ] CLI: `ox-browser crawl <url> --depth 3`
+- [x] Modular config system: 10 sections in `src/config/` (26 parameters)
+- [x] Priority chain: defaults → config.toml → env vars → CLI args
+- [x] `EndpointDefaults` propagated to REST (`AppState`) and MCP (`OxMcpServer`)
+- [x] Docker volume mount for config.toml (no rebuild on config change)
+- [x] `--config` CLI flag with `OX_BROWSER_CONFIG` env fallback
+- [x] 12 unit tests for config parsing, defaults, CLI overrides, builders
+- [x] Clippy fixes: needless lifetime, Default derive, map-to-unit, redundant trim
 
-**Result:** Full site crawling with polite behavior. ~500 LOC.
-**Depends on:** Phase 1
+**Sections:** `[server]` `[http]` `[retry]` `[cache]` `[proxy]` `[solver]` `[cloudflare]` `[log]` `[fetch]` `[images]`
+
+**Result:** 26 runtime-configurable parameters, 0 hardcoded values. 502 tests.
+**Depends on:** Phase 2
+
+## Phase 5: Site Crawler (v0.6.0)
+
+**Goal:** Crawl websites with configurable depth/scope, streaming results,
+markdown output for AI consumers (Claude, go-code).
+
+See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
+
+### Phase 5.0: Core Crawl Engine
+
+- [ ] `CrawlConfig`: depth, max_pages, concurrency, scope, budget per path
+- [ ] URL frontier: `VecDeque` + depth priority (BFS default)
+- [ ] URL dedup: xxHash → `HashSet<u64>` (normalized URLs)
+- [ ] Scope filters: same_domain, same_host, custom regex allow/block
+- [ ] Cycle detection: path length limit + repeating segment detection
+- [ ] Crawl loop: tokio task pool + `mpsc` channel streaming
+- [ ] `CrawlResult`: url, status, title, markdown, links_found, depth
+- [ ] Reuse: `HttpClient`, `Page::links()`, `resolve_url()`, `Pool`
+
+### Phase 5.1: Polite Crawling
+
+- [ ] robots.txt: parse + per-domain cache (`robotstxt` crate)
+- [ ] Crawl-delay from robots.txt → per-domain rate limiter
+- [ ] Per-path URL budgets: `{"*": 300, "/blog": 50}`
+- [ ] Content dedup: blake3 hash to skip duplicate pages at different URLs
+
+### Phase 5.2: Markdown & Extraction
+
+- [ ] HTML → Markdown conversion (clean, structured)
+- [ ] fit_markdown: BM25-based noise removal (nav, footer, ads stripped)
+- [ ] Link metadata: internal/external, anchor text, nofollow
+
+### Phase 5.3: REST + MCP Integration
+
+- [ ] `POST /crawl` REST endpoint with SSE streaming
+- [ ] `crawl` MCP tool (Streamable HTTP)
+- [ ] `[crawler]` config section in config.toml
+- [ ] Wire into `AppState` and `OxMcpServer`
+
+**Result:** Full site crawler with streaming, markdown output, polite behavior.
+**Depends on:** Phase 1, Phase 4.7
 
 ## Phase 6: Polish (v1.0.0)
 
@@ -290,7 +333,7 @@ ox-browser/crates/
 ├── imagesearch/    — Image search: Bing, DDG parsers + WRR fusion (13 tests)
 ├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze, /security, /images/search
 ├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 6 tools)
-├── crawler/        — Site crawler (BFS/DFS, robots.txt, rate limiting)
+├── crawler/        — Site crawler (BFS/DFS, robots.txt, rate limiting, markdown output)
 └── src/            — Binary: CLI + server startup
 ```
 
