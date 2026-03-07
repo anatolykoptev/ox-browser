@@ -55,7 +55,7 @@ pub async fn image_search(
         engines.push(Arc::new(DdgImages));
     }
     if use_all || req.engines.iter().any(|e| e == "openverse") {
-        engines.push(Arc::new(OpenverseImages));
+        engines.push(Arc::new(OpenverseImages::from_env()));
     }
     if req.engines.iter().any(|e| e == "pexels") {
         if let Ok(key) = std::env::var("PEXELS_API_KEY") {

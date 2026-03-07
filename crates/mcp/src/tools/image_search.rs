@@ -59,7 +59,7 @@ impl OxMcpServer {
             engines.push(Arc::new(DdgImages));
         }
         if use_all || input.engines.iter().any(|e| e == "openverse") {
-            engines.push(Arc::new(OpenverseImages));
+            engines.push(Arc::new(OpenverseImages::from_env()));
         }
         if input.engines.iter().any(|e| e == "pexels") {
             if let Ok(key) = std::env::var("PEXELS_API_KEY") {
