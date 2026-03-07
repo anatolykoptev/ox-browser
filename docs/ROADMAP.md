@@ -25,7 +25,7 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 
 **Goal:** Anti-detection HTTP layer ported from go-stealth patterns.
 
-- [x] Browser profiles: 16 UA strings (Chrome/Firefox/Safari/Edge × Win/Mac/Linux/Mobile)
+- [x] Browser profiles: 16 UA strings (Chrome/Firefox/Safari/Edge x Win/Mac/Linux/Mobile)
 - [x] Client Hints: auto-inject `sec-ch-ua-*` headers matching UA
 - [x] Header ordering: realistic browser header order per profile
 - [x] Middleware chain: composable `Handler` trait (logging, retry, rate limit, client hints)
@@ -34,7 +34,7 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 - [x] Per-domain rate limiting: sliding window + min delay, Retry-After parsing
 - [x] Session: persistent browsing context (consistent fingerprint, cookie jar)
 - [x] Cloudflare detection: `detect_cloudflare()` + `cloudflare_detect_middleware`
-- [x] CF challenge types: JsChallenge, Turnstile, Block → retryable `HttpError::Cloudflare`
+- [x] CF challenge types: JsChallenge, Turnstile, Block
 - [x] CF + retry integration: auto-retry with different proxy on CF block
 - [x] Hard red tests: 34 edge case tests (retry, proxy, CF detection + middleware)
 
@@ -54,333 +54,214 @@ Naming convention: `ox-*` prefix for Rust services (oxide theme), parallel to `g
 - [x] All 140 tests pass, clippy clean
 
 **Result:** Undetectable TLS fingerprint. ~5085 LOC, 140 tests.
-**Key change:** `reqwest` → `wreq` (near-identical API, BoringSSL backend).
+**Key change:** `reqwest` -> `wreq` (near-identical API, BoringSSL backend).
 
 ## Phase 2: Cloudflare Bypass + HTTP API (v0.2.0) ✅
 
 **Goal:** Solve Cloudflare challenges via external solver, provide cookies to go-stealth,
 expose fetch/analyze API for the ecosystem.
 
-**Architecture revision (March 2026):** Research showed embedded JS engines (Boa/QuickJS)
-cannot solve modern CF challenges — they require Canvas, WebGL, Audio Context (full browser
-surface). New approach: external stealth browser solver (Byparr/Camoufox) + cookie caching +
-HTTP API. See `docs/plans/2026-03-05-phase2-cloudflare-bypass.md` for full research.
-
-### Phase 2a: CookieProvider + Solver Integration
+### Phase 2a: CookieProvider + Solver Integration ✅
 
 - [x] `CookieProvider` trait: `async fn solve(url, challenge_type) -> SolvedChallenge`
 - [x] `SolvedChallenge` struct: cookies HashMap + user_agent
 - [x] `CookieCache`: per-domain TTL cache (25min default, matching cf_clearance lifetime)
-- [x] `ByparrSolver`: FlareSolverr-compatible HTTP client (Byparr, FlareSolverr, any drop-in)
+- [x] `ByparrSolver`: FlareSolverr-compatible HTTP client
 - [x] `solver_middleware`: intercepts HttpError::Cloudflare, solves, injects cookies, retries
-- [x] Block challenges correctly passed through (not solvable)
 
-### Phase 2b: CF Detection at HTTP 200
+### Phase 2b: CF Detection at HTTP 200 ✅
 
 - [x] Detect Cloudflare challenges hidden behind HTTP 200 responses
 - [x] `cf-mitigated` header detection (managed challenge)
 - [x] Body markers: `_cf_chl_opt`, `challenge-platform`, `cf-turnstile`
-- [x] Updated `detect_cloudflare()` to check both status codes and response body/headers
-- [x] 35 hard red tests covering edge cases (CF 200 detection, retry, proxy, middleware)
+- [x] 35 hard red tests covering edge cases
 
-### Phase 2c: HTTP API
+### Phase 2c: HTTP API ✅
 
-- [x] `POST /solve` endpoint (accepts URL + challenge_type, returns cookies)
-- [x] `POST /fetch` endpoint (stealth fetch with proxy + CF bypass)
-- [x] `POST /fetch-smart` endpoint (three-tier chain: proxy → ox-browser → Byparr fallback)
-- [x] `POST /analyze` endpoint (fetch page + detect tech stack from HTML/headers)
-- [x] `/health` endpoint
-- [x] Cache-aware (returns cached cookies on repeat requests)
-- [x] Block challenge rejection (400 Bad Request)
+- [x] `POST /solve`, `POST /fetch`, `POST /fetch-smart`, `POST /analyze`, `/health`
+- [x] Three-tier fetch chain: proxy -> ox-browser -> Byparr fallback
 
-### Phase 2d: Docker Deployment
+### Phase 2d: Docker Deployment ✅
 
-- [x] Multi-stage Dockerfile: cargo-chef (dep caching) + BoringSSL build (cmake, libclang-dev)
-- [x] `.dockerignore` (excludes target/, .git/ — context from ~10GB to ~30MB)
+- [x] Multi-stage Dockerfile: cargo-chef + BoringSSL build
 - [x] docker-compose.yml entry (port 8901, backend network)
-- [x] Integration with go-code `site_analyze` MCP tool (tech detection + source map extraction)
-- [x] Integration with go-search `web_url_read` via `/fetch-smart`
+- [x] Integration with go-code `site_analyze` and go-search `web_url_read`
 
 **Result:** CF bypass + stealth fetch API + tech analysis. ~5800 LOC, 220 tests.
-**Architecture:** ox-browser → Byparr/FlareSolverr → stealth browser → cf_clearance → cache.
-**Three-tier fetch:** go-stealth proxy → ox-browser /fetch-smart → Byparr (escalating bypass).
-**Not solving:** Turnstile/CAPTCHA directly (delegates to external solver).
 **Depends on:** Phase 1.5
 
 ## Phase 2.5: Web Intelligence (v0.2.5) ✅
 
 **Goal:** Full website analysis — technology stack, SEO, performance, accessibility, content,
-media, fonts, PWA, API discovery. One `POST /analyze` → complete intelligence report.
+media, fonts, PWA, API discovery. One `POST /analyze` -> complete intelligence report.
 
-**Crate restructure:** Created `ox-intelligence` crate. Moved `fingerprint.rs` from `ox-security`.
-`ox-security` reserved for Phase 4 (vulnerability scanning).
+**Crate:** `ox-intelligence` (9 modules, ~1500 LOC, 55 tests).
 
-```
-ox-intelligence/src/
-├── fingerprint.rs    — rswappalyzer wrapper (7,000+ techs, version extraction, false positive filter)
-├── seo.rs            — OG, Twitter Cards, JSON-LD, canonical, hreflang, robots, description
-├── seo_helpers.rs    — meta_property(), meta_name(), link_href() helpers
-├── performance.rs    — compression, cache headers, HTTP/3, preload/prefetch, lazy images, inline CSS
-├── accessibility.rs  — html lang, alt coverage, heading hierarchy, ARIA landmarks, form labels, score
-├── content.rs        — internal/external links, word count, iframes
-├── fonts.rs          — Google Fonts, Adobe Fonts, @font-face from CSS
-├── pwa.rs            — manifest.json link, service worker, theme-color, apple-touch-icon
-├── media.rs          — image formats, video/audio embeds, srcset/picture, CDN detection
-├── api_discovery.rs  — fetch/axios endpoints, GraphQL, WebSocket, __NEXT_DATA__, form actions
-└── lib.rs
-```
+- [x] Fingerprint: rswappalyzer 7,000+ technologies
+- [x] SEO: OG, Twitter Cards, JSON-LD, canonical, hreflang, robots, score 0-100
+- [x] Performance: compression, cache, HTTP/3, preload, lazy images
+- [x] Accessibility: lang, alt coverage, headings, ARIA, form labels, score 0-100
+- [x] Content: links, word count, iframes
+- [x] Media: image formats, video/audio, srcset, CDN detection
+- [x] Fonts: Google Fonts, Adobe Fonts, @font-face
+- [x] PWA: manifest, service worker, theme-color
+- [x] API Discovery: fetch/axios endpoints, GraphQL, WebSocket, __NEXT_DATA__
 
-### Phase 2.5a: Fingerprint DB v2 ✅
-
-- [x] Replace custom 30-tech DB with `rswappalyzer` v0.4.0 (7,000+ technologies)
-- [x] Version detection via rswappalyzer capture groups
-- [x] False positive filter (Onsen UI on wp-consent-api) + garbage version sanitizer
-- [x] Categories as `Vec<String>` (CMS, Blogs, etc.)
-- [x] `Detection` struct with name, categories, confidence, version
-- [x] Tests: 10 tests (React, Next.js, Nginx, Cloudflare, WordPress, versions, false positives)
-
-### Phase 2.5b: SEO Module ✅
-
-- [x] Open Graph tags (og:title, og:description, og:image, og:type, og:url, og:site_name)
-- [x] Twitter Cards (twitter:card, twitter:title, twitter:description, twitter:image, twitter:site)
-- [x] JSON-LD structured data (extract @type, raw JSON)
-- [x] Canonical URL (`<link rel="canonical">`)
-- [x] Hreflang tags (language alternatives)
-- [x] Robots meta (index/noindex, follow/nofollow)
-- [x] Meta description, meta keywords
-- [x] Favicon URL
-- [x] `SeoReport` struct with weighted completeness score (9 checks, 0-100)
-- [x] Tests: 8 tests
-
-### Phase 2.5c: Performance Module ✅
-
-- [x] Compression (Content-Encoding: gzip/br/zstd)
-- [x] Cache headers (Cache-Control, ETag, Expires, Age)
-- [x] HTTP/3 detection (alt-svc header)
-- [x] Preload/prefetch/preconnect hints
-- [x] Lazy loading coverage (images with `loading="lazy"` vs total)
-- [x] Inline CSS count + byte size
-- [x] `PerformanceReport` struct
-- [x] Tests: 7 tests
-
-### Phase 2.5d: Accessibility Module ✅
-
-- [x] `<html lang="...">` presence and value
-- [x] Image alt text coverage (with alt / empty alt / no alt counts)
-- [x] Heading hierarchy (h1 count, full heading list, skip detection)
-- [x] ARIA landmarks (role="main|nav|banner|contentinfo" count)
-- [x] Form labels coverage (inputs with associated labels vs orphans)
-- [x] `AccessibilityReport` struct with weighted score (6 checks, 0-100)
-- [x] Tests: 6 tests
-
-### Phase 2.5e: Content + Media Module ✅
-
-- [x] Links: internal vs external count, external domains list
-- [x] Word count (body text, excluding scripts/styles)
-- [x] Iframes with platform detection (YouTube, Vimeo, Google Maps, Spotify, etc.)
-- [x] Images: total count, formats breakdown (JPEG/PNG/WebP/AVIF/SVG/GIF)
-- [x] Images: srcset/`<picture>` responsive coverage
-- [x] Images: CDN detection (imgix, Cloudinary, Cloudflare Images)
-- [x] Video: platform detection (YouTube, Vimeo, Wistia, self-hosted)
-- [x] Audio: platform detection (Spotify, Apple, SoundCloud, self-hosted)
-- [x] `ContentReport` + `MediaReport` structs
-- [x] Tests: 9 tests (4 content + 5 media)
-
-### Phase 2.5f: Fonts + PWA + API Discovery ✅
-
-- [x] Fonts: Google Fonts URLs (CSS2 multi-param), Adobe Fonts, `@font-face` from inline CSS
-- [x] PWA: `<link rel="manifest">`, service worker registration, theme-color, apple-touch-icon
-- [x] API Discovery: fetch/axios endpoints from inline scripts
-- [x] API Discovery: `__NEXT_DATA__`, `__NUXT__` detection
-- [x] API Discovery: GraphQL endpoint detection
-- [x] API Discovery: WebSocket URL detection (ws://, wss://)
-- [x] API Discovery: `<form action="...">` POST endpoints
-- [x] `FontsReport`, `PwaReport`, `ApiReport` structs
-- [x] Tests: 15 tests (4 fonts + 4 PWA + 7 API discovery)
-
-### Phase 2.5g: Integration ✅
-
-- [x] `analyze.rs` calls all 9 intelligence modules
-- [x] `AnalyzeResponse` expanded with seo, performance, accessibility, content, media, fonts, pwa, api
-- [x] `analyze_types.rs` extracted (types + error constructor)
-- [x] go-code `webanalyze/types.go` — all Go types matching Rust structs
-- [x] go-code `webanalyze/client.go` — `AnalyzeResponse` with new fields, `Technology.Categories`
-- [x] go-code `tool_site_analyze_format.go` — XML formatters for all 8 sections
-- [x] Deploy ox-browser + go-code
-- [x] Integration test: wordpress.org (SEO 100, a11y 100, 9 techs), piter.now (11 techs, SEO 95)
-
-**Result:** Complete website intelligence from a single HTTP request. ~1500 LOC, 55 tests.
-**Key dep:** `rswappalyzer` v0.4.0 (7,000+ technologies, Wappalyzer DB successor).
 **Depends on:** Phase 2
 
 ## Phase 3: MCP Server (v0.3.0) ✅
 
 **Goal:** Expose ox-browser as native MCP service for AI agents via Streamable HTTP.
 
-**Architecture:** rmcp v1.1.0 SDK with `#[tool_handler]` proc-macro registration,
-Streamable HTTP transport (SSE deprecated), mounted alongside REST API at `/mcp`.
-
-### Phase 3a: Core MCP Infrastructure ✅
-
 - [x] `ox-mcp` crate with rmcp v1.1.0 (Streamable HTTP transport)
-- [x] `OxMcpServer` struct with `#[tool_router]` proc-macro registration
-- [x] `ServerHandler` impl with `get_info()` (name, version, capabilities)
-- [x] `StreamableHttpService` with `LocalSessionManager` for session management
-- [x] MCP router merged with REST API via `axum::Router::merge()`
-
-### Phase 3b: MCP Tools (REST Mirror) ✅
-
-- [x] `fetch` — stealth HTTP fetch via wreq+BoringSSL (mirrors `/fetch`)
-- [x] `fetch_smart` — three-tier CF bypass chain (mirrors `/fetch-smart`)
-- [x] `analyze` — tech stack detection via Fingerprinter (mirrors `/analyze`)
-- [x] `solve_cf` — Cloudflare challenge solver with cache (mirrors `/solve`)
-
-### Phase 3c: Deploy + Integration ✅
-
-- [x] Docker rebuild with MCP support (same port 8901, `/mcp` endpoint)
-- [x] MCP initialize/tools/list smoke tests pass (4 tools registered)
+- [x] 4 MCP tools: `fetch`, `fetch_smart`, `analyze`, `solve_cf`
+- [x] Merged with REST API at `/mcp` endpoint
 - [x] `claude mcp add -s user -t http ox-browser http://127.0.0.1:8901/mcp`
 
-**Result:** 4 MCP tools over Streamable HTTP, AI agents can fetch/analyze/bypass CF. ~400 LOC.
-**Key tech:** rmcp v1.1.0, Streamable HTTP (not SSE), proc-macro tool registration.
-**Competitive edge:** No browser needed — Chrome MCP (29 tools) and Playwright MCP (35+ tools)
-require real browser; ox-browser is headless HTTP with stealth TLS fingerprinting.
+**Result:** 4 MCP tools over Streamable HTTP. ~400 LOC.
 **Depends on:** Phase 2
 
 ### Future MCP Tools (incremental)
 
-- [ ] `seo_audit` — SEO analysis report (after Phase 2.5b)
-- [ ] `performance_audit` — performance metrics (after Phase 2.5c)
-- [ ] `accessibility_audit` — a11y report (after Phase 2.5d)
-- [ ] `site_intelligence` — full Phase 2.5 report (after Phase 2.5g)
-- [x] `security_scan` — security audit ✅ (Phase 4)
+- [ ] `seo_audit` — SEO analysis report
+- [ ] `performance_audit` — performance metrics
+- [ ] `accessibility_audit` — a11y report
+- [ ] `site_intelligence` — full Phase 2.5 report
+- [x] `security_scan` — security audit (Phase 4)
 - [ ] `crawl` — site crawling (after Phase 5)
+- [ ] `image_search` — image search (after Phase 4.6)
 
-## Phase 4: Security Scanner (v0.4.0) ✅
+## Phase 4: Security Scanner (v0.4.0-v0.5.1) ✅
 
 **Goal:** Passive security posture assessment from a single HTTP response — Observatory-compatible scoring.
 
-`ox-security` crate — focused on security analysis only (fingerprinting moved to `ox-intelligence`).
+`ox-security` crate — 14 modules, ~2500 LOC, 135 tests.
+
+### Phase 4.0: Core Security Modules (v0.4.0) ✅
+
+8 modules, 58 tests:
+
+- [x] Security headers analysis (15 headers) with severity grading
+- [x] Cookie security audit (Secure, HttpOnly, SameSite, __Host-/__Secure- prefixes)
+- [x] CSP parser and scorer (A-F grade, Observatory-compatible)
+- [x] SRI checker (missing integrity on external scripts/styles)
+- [x] CORS misconfiguration detection (wildcard ACAO, credentials misuse)
+- [x] Supply chain risk (polyfill.io, bootcss, bootcdn)
+- [x] Mixed content detection (HTTP resources on HTTPS pages)
+- [x] Observatory-compatible scoring (base 100, modifiers, grades F to A+)
+- [x] `POST /security` REST endpoint + `security_scan` MCP tool
+
+### Phase 4.5: Deep Security Scanner (v0.5.0-v0.5.1) ✅
+
+Closed all gaps vs ZAP passive rules, Mozilla Observatory, SecurityHeaders.com.
++6 new modules, enhanced 4 existing modules, integrated 6 spec-compliant crates.
+
+**Library integrations (v0.5.0):**
+- `content-security-policy` v0.6 — W3C CSP Level 3 parser (replaced regex parser)
+- `ammonia` v4.1 — HTML sanitizer for XSS pattern detection
+- `oxc_parser` v0.116 — JS AST analysis for dangerous patterns
+- `semver` v1 — semantic version comparison for vulnerable JS detection
+- `ipnet` v2.12 — CIDR-based private IP detection (replaced regex)
+- `psl` v2.1 — Public Suffix List for cookie domain scoping and SRI origin checks
+
+**New modules:**
+
+| Module | What it detects | Tests |
+|--------|----------------|-------|
+| `info_disclosure` | Server version, X-Powered-By, debug headers, deprecated headers | 9 |
+| `body_scan` | Private IPs (ipnet), XSS (ammonia), stack traces, source maps, CSRF forms | 21 |
+| `vuln_js` | jQuery/Angular/React/Bootstrap/etc. with semver comparison | 8 |
+| `dangerous_js` | AST-based: Function constructor, innerHTML, setTimeout+string (oxc_parser) | 9 |
+| `redirect` | HTTP sites (Critical), HTTPS->HTTP downgrade (High), cross-host (Info) | 5 |
+| `scoring/bonuses` | +5 strict Referrer-Policy, +5 HSTS preload-ready (when base >= 90) | - |
+
+**Enhanced modules:**
+
+| Module | Enhancement |
+|--------|------------|
+| `headers` | HSTS preload-readiness, Cache-Control audit, Basic Auth detection, X-XSS-Protection deprecation |
+| `cookies` | PSL domain scoping (Critical on public suffixes), CSRF cookie detection |
+| `csp` | W3C Level 3 parser, multiple policies, upgrade-insecure-requests, reporting detection |
+| `sri` | PSL-based cross-origin check (registrable domain comparison) |
 
 ```
 ox-security/src/
-├── types.rs          — Shared Severity enum (Info/Low/Medium/High/Critical)
+├── types.rs             — Severity enum (Info/Low/Medium/High/Critical)
 ├── headers/
-│   ├── mod.rs        — HeaderFinding, HeaderStatus, HeadersReport, analyze_headers()
-│   ├── checks.rs     — 15 individual header checks (HSTS, CSP, XCTO, XFO, COOP, COEP, CORP, etc.)
-│   └── tests.rs      — 11 tests
+│   ├── mod.rs           — analyze_headers(headers, url)
+│   ├── checks.rs        — Core checks (HSTS, CSP, XCTO, XFO, Referrer, COOP, Permissions)
+│   ├── checks_ext.rs    — Extended checks (Cache-Control, Basic Auth, HSTS preload)
+│   └── tests.rs         — 15 tests
 ├── csp/
-│   ├── mod.rs        — CspReport, evaluate_csp(), scoring + grading
-│   ├── parser.rs     — CSP string parser
-│   ├── checks.rs     — 8 bypass detection checks (unsafe-inline, unsafe-eval, broad sources, etc.)
-│   └── tests.rs      — 11 tests
-├── cookies.rs        — Cookie security audit, session/tracker detection, __Host-/__Secure- prefixes (6 tests)
-├── cors.rs           — CORS misconfiguration detection (4 tests)
-├── sri.rs            — SRI coverage for external scripts/styles (5 tests)
-├── supply_chain.rs   — Known risky CDN domains (polyfill.io, bootcss, bootcdn) (4 tests)
-├── mixed_content.rs  — HTTP resources on HTTPS pages (4 tests)
+│   ├── mod.rs           — CspReport, policy_count, upgrade_insecure, reporting
+│   ├── parser.rs        — W3C parser via content-security-policy crate
+│   ├── checks.rs        — Bypass detection + insecure scheme + reporting
+│   └── tests.rs         — 14 tests
+├── cookies/
+│   ├── mod.rs           — PSL domain scoping, CSRF detection, analyze_cookies(hdrs, url)
+│   └── tests.rs         — 9 tests
+├── cors.rs              — CORS misconfiguration (5 tests)
+├── sri.rs               — SRI with PSL-based origin check (6 tests)
+├── supply_chain.rs      — Risky CDN domains (4 tests)
+├── mixed_content.rs     — HTTP on HTTPS (4 tests)
+├── info_disclosure.rs   — Server version, debug headers, deprecated headers (9 tests)
+├── body_scan/
+│   ├── mod.rs           — Private IP, XSS, stack traces, source maps, CSRF forms
+│   └── tests.rs         — 21 tests
+├── vuln_js.rs           — Vulnerable JS with semver (8 tests)
+├── dangerous_js.rs      — AST-based JS analysis via oxc_parser (9 tests)
+├── redirect.rs          — HTTP/HTTPS redirect analysis (5 tests)
+├── fingerprint.rs       — Legacy (moved to ox-intelligence)
 ├── scoring/
-│   ├── mod.rs        — SecurityReport, analyze_security() entry point, score_to_grade()
-│   └── aggregate.rs  — Aggregation logic combining all 7 analyzers
+│   ├── mod.rs           — SecurityReport, FindingsSummary, score_to_grade()
+│   ├── aggregate.rs     — analyze_security(), compute_score(), count_findings()
+│   └── bonuses.rs       — Referrer-Policy +5, HSTS preload +5
 └── lib.rs
 ```
 
-- [x] Security headers analysis (15 headers) with severity grading
-- [x] Cookie security flags audit (Secure, HttpOnly, SameSite, Path)
-- [x] Known tracker cookies detection (ga_, _fbp, _gid, etc.)
-- [x] Session cookie detection (PHPSESSID, JSESSIONID, etc.)
-- [x] __Host-/__Secure- cookie prefix validation
-- [x] CSP parser and scorer (A-F grade, Observatory-compatible)
-- [x] CSP bypass detection (unsafe-inline, unsafe-eval, broad sources, missing directives)
-- [x] SRI checker (missing integrity attributes on external scripts/styles)
-- [x] CORS misconfiguration detection (wildcard ACAO, credentials misuse)
-- [x] Supply chain risk analysis (known compromised CDN domains)
-- [x] Mixed content detection (HTTP resources on HTTPS pages)
-- [x] Observatory-compatible scoring (base 100, modifiers, grades F→A+)
-- [x] `SecurityReport` struct with findings + severity + score + grade
-- [x] `POST /security` REST endpoint
-- [x] MCP tool `security_scan` (5th tool, total 5 MCP tools)
+**Result:** 14 modules, ~2500 LOC, 135 tests. Full Observatory/ZAP passive parity.
+**Scoring:** Mozilla Observatory-compatible (base 100, bonuses up to +10, grades F to A+).
+**Key crates:** content-security-policy, ammonia, oxc_parser, semver, ipnet, psl.
 
-**Result:** Passive security audit from single HTTP response. 8 modules, ~1200 LOC, 58 tests.
-**Scoring:** Mozilla Observatory-compatible (base 100, modifiers -50 to +10, grades F→A+).
-**Novel:** Supply chain risk analysis (Polyfill.io case), __Host-/__Secure- prefix checks.
-**Depends on:** Phase 2.5 (uses intelligence modules for context)
-
-## Phase 4.5: Deep Security Scanner (v0.4.5) ✅ (passive), 4.5e pending
-
-**Goal:** Close all gaps vs ZAP passive rules, Mozilla Observatory, SecurityHeaders.com.
-Elevate ox-security from "header checker" to "full passive security scanner".
-
-### Phase 4.5a: Information Disclosure Detection ✅
-
-New `info_disclosure` module — detect headers/body content that leaks internal info.
-
-- [x] `Server` header version extraction (`nginx/1.18.0` → severity Medium)
-- [x] `X-Powered-By` presence (any value = finding)
-- [x] `X-AspNet-Version`, `X-AspNetMvc-Version`, `X-Generator` detection
-- [x] `X-Backend-Server` (internal hostname exposure = High)
-- [x] `X-Debug-Token`, `X-ChromeLogger-Data` (debug headers = High)
-- [x] `X-Runtime` (Rails timing disclosure)
-- [x] Deprecated header warnings: `Public-Key-Pins` (HPKP), `Expect-CT`
-
-### Phase 4.5b: Body Scanner ✅
-
-New `body_scan` module — regex-based scanning of HTML body for security issues.
-
-- [x] Private IP disclosure (RFC 1918: 10.x, 172.16-31.x, 192.168.x in body)
-- [x] Stack trace detection (Java, Python, PHP, .NET exception patterns)
-- [x] HTML comment scanner (`<!-- TODO`, `FIXME`, `password=`, `secret=`)
-- [x] `<meta name="generator">` version exposure
-- [x] Directory listing patterns (`Index of /`, `Directory listing for`)
-- [x] Session ID in URL (`?jsessionid=`, `?PHPSESSID=`)
-- [x] Sensitive params in URL (`?password=`, `?token=`, `?api_key=`)
-- [x] Insecure form post (`<form action="http://...">` on HTTPS page)
-
-### Phase 4.5c: Vulnerable JS Library Detection ✅
-
-New `vuln_js` module — detect known-vulnerable JavaScript libraries from `<script src>` URLs.
-
-- [x] Bundled database (jQuery, Angular, React, Bootstrap, Lodash, Vue, Moment, Handlebars, DOMPurify)
-- [x] URL pattern matching (`jquery-3.3.1.min.js` → CVE list)
-- [x] Version extraction from script URLs
-- [x] Severity mapping (CVE CVSS → our severity levels)
-
-### Phase 4.5d: Enhanced Existing Modules ✅
-
-- [x] CORS: origin reflection detection (reflected origin + `ACAC: true` → High)
-- [x] Headers: `Clear-Site-Data` check (Info severity)
-- [x] Headers: `Content-Type` charset completeness (Low severity)
-
-### Phase 4.5e: go-probe Integration
+### Phase 4.5k: go-probe Integration (pending)
 
 - [ ] `POST /security` gains `deep: true` parameter
 - [ ] When deep=true, calls go-probe for TLS + DNS analysis
 - [ ] Merge TLS + DNS findings into SecurityReport
 - [ ] Combined weighted scoring (passive 60%, TLS 25%, DNS 15%)
 - [ ] `security_scan` MCP tool gains `deep` parameter
+- **Depends on:** go-probe v0.2.0
 
-**Result:** 11 passive security modules, ~2000 LOC, 95 tests. Observatory-compatible scoring.
-**Parity with:** ZAP passive rules, Mozilla Observatory, SecurityHeaders.com.
-**Novel additions:** Vulnerable JS detection, body scanning, supply chain risk.
-**Pending:** go-probe integration (4.5e) for active TLS/DNS probing.
-**Depends on:** Phase 4, go-probe v0.2.0
-**Depends on:** Phase 4, go-probe v0.2.0
+## Phase 4.6: Image Search Engine
 
-## Phase 5: Crawler (v0.5.0)
+**Goal:** Scrape image search results from Bing, DDG, Yandex, Brave using the stealth HTTP
+infrastructure. Expose via REST and MCP. Primary consumer: go-imagefy.
+
+See `docs/plans/2026-03-06-phase5-imagesearch-design.md` for full design.
+
+- [ ] `ox-imagesearch` crate with `ImageResult` + `ImageEngine` trait
+- [ ] Bing, DDG, Yandex, Brave image providers
+- [ ] `ImageSearchEngine` fusion: parallel engines + WRR merge + dedup
+- [ ] `POST /images/search` REST endpoint + `image_search` MCP tool
+- [ ] Unit tests for all parsers + fusion
+
+**Result:** Multi-engine image search with stealth scraping. ~810 LOC.
+**Depends on:** Phase 2
+
+## Phase 5: Crawler
 
 **Goal:** Crawl websites with configurable depth, filters, rate limiting.
 
 - [ ] `ox-crawler` crate
-- [ ] BFS/DFS crawl queue with deduplication (visited set)
-- [ ] Depth and breadth limits
-- [ ] URL include/exclude filters (regex)
+- [ ] BFS/DFS crawl queue with deduplication
+- [ ] Depth/breadth limits, URL filters (regex)
 - [ ] robots.txt parsing and respect
-- [ ] Rate limiting (requests per second per domain)
-- [ ] Callback-based page processing (integrates with intelligence + security modules)
+- [ ] Rate limiting per domain
+- [ ] Callback-based page processing (intelligence + security per page)
 - [ ] CLI: `ox-browser crawl <url> --depth 3`
 
 **Result:** Full site crawling with polite behavior. ~500 LOC.
-**Depends on:** Phase 1 (Phase 2.5 optional for per-page intelligence)
+**Depends on:** Phase 1
 
 ## Phase 6: Polish (v1.0.0)
 
@@ -391,7 +272,6 @@ New `vuln_js` module — detect known-vulnerable JavaScript libraries from `<scr
 - [ ] Crate documentation (rustdoc, 60%+ coverage)
 - [ ] GoReleaser-style binary releases
 
-**Result:** Publishable crate + production Docker image.
 **Depends on:** Phases 1-5
 
 ## Crate Architecture
@@ -401,11 +281,12 @@ ox-browser/crates/
 ├── core/           — Page, DOM (dom_query), forms, navigation, URL resolution
 ├── http/           — HTTP client (wreq+BoringSSL), proxy, cookies, CF detection, middleware
 ├── intelligence/   — Web intelligence: fingerprint, SEO, perf, a11y, content, media, fonts, PWA, API
-├── security/       — Security scanning: 11 modules, Observatory scoring, body scan, vuln JS
-├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze
+├── security/       — Security: 14 modules, Observatory scoring, AST analysis, 6 crate integrations
+├── imagesearch/    — Image search: Bing, DDG, Yandex, Brave parsers + fusion
+├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze, /security
 ├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 5 tools)
 ├── crawler/        — Site crawler (BFS/DFS, robots.txt, rate limiting)
-└── src/            — Binary: CLI + server startup (serve.rs merges REST + MCP)
+└── src/            — Binary: CLI + server startup
 ```
 
 ## Non-Goals
@@ -422,22 +303,13 @@ ox-browser/crates/
 | Language | Rust | Go | Go |
 | Purpose | Web intelligence + CF bypass | Stealth HTTP client | Chrome automation |
 | Chrome needed | No | No | Yes (Rod) |
-| JS engine | External solver (Phase 2) | None | V8 (via Rod) |
-| DOM parsing | dom_query (mutable) | None | Chrome DOM |
-| TLS fingerprinting | ✅ wreq+BoringSSL | Yes (tls-client) | Via Chrome |
-| Browser profiles | 16 built-in ✅ | 16 built-in | N/A |
-| CF detection | ✅ (Phase 1.5) | ✅ | N/A |
-| CF JS solving | ✅ via Byparr/FlareSolverr | No (delegates) | Via Chrome |
-| CF 200 detection | ✅ (cf-mitigated, body markers) | No | N/A |
-| HTTP API | ✅ /fetch, /fetch-smart, /analyze | No | No |
-| Tech detection | ✅ 7,000+ technologies (rswappalyzer) | No | No |
-| SEO analysis | ✅ OG, Twitter, JSON-LD, hreflang, score | No | No |
-| Web intelligence | ✅ SEO + perf + a11y + content + media + fonts + PWA + API | No | No |
-| Security audit | ✅ 11 modules, Observatory scoring (v0.4.5) | No | No |
-| Proxy pool | Webshare + health ✅ | Webshare + health | No |
-| Rate limiting | Per-domain ✅ | Per-domain | No |
-| Middleware | Chain pattern ✅ | Chain pattern | No |
-| MCP server | ✅ 5 tools, Streamable HTTP (v0.3.0+) | No | No |
+| TLS fingerprinting | wreq+BoringSSL | tls-client | Via Chrome |
+| CF bypass | JS + Turnstile + Block + HTTP 200 | JS + Turnstile | Via Chrome |
+| Tech detection | 7,000+ (rswappalyzer) | No | No |
+| Web intelligence | 9 modules (SEO, perf, a11y, ...) | No | No |
+| Security audit | 14 modules, 135 tests, Observatory | No | No |
+| MCP server | 5 tools, Streamable HTTP | No | No |
+| HTTP API | /fetch, /analyze, /security | No | No |
 
 **Ecosystem:**
 - **ox-browser** — web intelligence, passive security audit, CF bypass, no Chrome dependency
