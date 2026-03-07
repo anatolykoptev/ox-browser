@@ -13,6 +13,7 @@ ox-js = { path = "../js" }
 ox-crawler = { path = "../crawler" }
 ox-core = { path = "../core" }
 ox-security = { path = "../security" }
+ox-intelligence = { path = "../intelligence" }
 ox-imagesearch = { path = "../imagesearch" }
 axum = "0.8"
 tokio.workspace = true

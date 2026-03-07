@@ -81,7 +81,7 @@ impl OxMcpServer {
 
     #[tool(
         name = "analyze",
-        description = "Fetch a URL and detect its technology stack (frameworks, CMS, servers) using Wappalyzer-compatible fingerprinting. Returns technologies, meta info, and page assets."
+        description = "Full site intelligence analysis. Detects 7,000+ technologies via Wappalyzer fingerprinting (with categories and versions). Runs 8 intelligence modules: SEO (OG tags, JSON-LD, hreflang, score), performance (resource hints, preload, lazy loading), accessibility (alt text, ARIA, headings), content (iframes, embeds, structure), media (video/audio sources), fonts (Google/Adobe/custom), PWA (manifest, service worker), and API discovery (endpoints, GraphQL). Returns comprehensive site profile."
     )]
     async fn analyze(
         &self,

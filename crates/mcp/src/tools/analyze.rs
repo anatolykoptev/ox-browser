@@ -1,11 +1,13 @@
-//! MCP tool implementation for tech stack analysis.
+//! MCP tool: analyze — fetch page, detect technologies, run intelligence modules.
 
 use std::collections::HashMap;
 use std::time::Instant;
 
 use ox_core::Page;
 use ox_http::detect_cloudflare;
-use ox_security::fingerprint::Fingerprinter;
+use ox_intelligence::{
+    accessibility, api_discovery, content, fingerprint, fonts, media, performance, pwa, seo,
+};
 use rmcp::model::*;
 use rmcp::ErrorData as McpError;
 use serde::{Deserialize, Serialize};
@@ -18,7 +20,7 @@ use super::OxMcpServer;
 /// Input parameters for the `analyze` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AnalyzeInput {
-    /// The URL to analyze for technology detection.
+    /// The URL to analyze for technology detection and site intelligence.
     pub url: String,
 }
 
@@ -29,6 +31,14 @@ struct AnalyzeResult {
     technologies: Vec<TechInfo>,
     meta: MetaInfo,
     assets: AssetInfo,
+    seo: seo::SeoReport,
+    performance: performance::PerformanceReport,
+    accessibility: accessibility::AccessibilityReport,
+    content: content::ContentReport,
+    media: media::MediaReport,
+    fonts: fonts::FontsReport,
+    pwa: pwa::PwaReport,
+    api: api_discovery::ApiReport,
     cf_detected: bool,
     elapsed_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,8 +48,10 @@ struct AnalyzeResult {
 #[derive(Serialize)]
 struct TechInfo {
     name: String,
-    category: String,
+    categories: Vec<String>,
     confidence: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -57,7 +69,7 @@ struct AssetInfo {
 }
 
 impl OxMcpServer {
-    /// Fetch a page and detect its technology stack.
+    /// Fetch a page and run full site intelligence analysis.
     pub(crate) async fn do_analyze(
         &self,
         input: AnalyzeInput,
@@ -81,6 +93,14 @@ impl OxMcpServer {
                         scripts: vec![],
                         stylesheets: vec![],
                     },
+                    seo: Default::default(),
+                    performance: Default::default(),
+                    accessibility: Default::default(),
+                    content: Default::default(),
+                    media: Default::default(),
+                    fonts: Default::default(),
+                    pwa: Default::default(),
+                    api: Default::default(),
                     cf_detected: false,
                     elapsed_ms: start.elapsed().as_millis() as u64,
                     error: Some(e.to_string()),
@@ -122,16 +142,37 @@ impl OxMcpServer {
             .filter_map(|s| s.attr("href").map(|v| v.to_string()))
             .collect();
 
-        let fingerprinter = Fingerprinter::new();
-        let detections =
-            fingerprinter.detect(&headers, &resp.body, &meta_tags, &script_srcs);
+        // Extract cookies for fingerprinting
+        let cookies: HashMap<String, String> = headers
+            .get("set-cookie")
+            .map(|v| {
+                v.split(';')
+                    .filter_map(|pair| {
+                        let mut kv = pair.trim().splitn(2, '=');
+                        let k = kv.next()?.trim().to_owned();
+                        let val = kv.next().unwrap_or("").trim().to_owned();
+                        if k.is_empty() {
+                            None
+                        } else {
+                            Some((k, val))
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Technology fingerprinting (rswappalyzer — 7,000+ techs)
+        let detections = fingerprint::detect(
+            &input.url, &headers, &resp.body, &meta_tags, &script_srcs, &cookies,
+        );
 
         let technologies: Vec<TechInfo> = detections
             .into_iter()
             .map(|d| TechInfo {
                 name: d.name,
-                category: d.category,
+                categories: d.categories,
                 confidence: d.confidence,
+                version: d.version,
             })
             .collect();
 
@@ -145,6 +186,16 @@ impl OxMcpServer {
             title: page.title(),
         };
 
+        // Run all intelligence modules
+        let seo_report = seo::analyze(&resp.body);
+        let perf_report = performance::analyze(&headers, &resp.body);
+        let a11y_report = accessibility::analyze(&resp.body);
+        let content_report = content::analyze(&resp.body, &input.url);
+        let media_report = media::analyze(&resp.body);
+        let fonts_report = fonts::analyze(&resp.body);
+        let pwa_report = pwa::analyze(&resp.body);
+        let api_report = api_discovery::analyze(&resp.body);
+
         let result = AnalyzeResult {
             url: input.url,
             status: resp.status,
@@ -154,6 +205,14 @@ impl OxMcpServer {
                 scripts: script_srcs,
                 stylesheets,
             },
+            seo: seo_report,
+            performance: perf_report,
+            accessibility: a11y_report,
+            content: content_report,
+            media: media_report,
+            fonts: fonts_report,
+            pwa: pwa_report,
+            api: api_report,
             cf_detected,
             elapsed_ms: start.elapsed().as_millis() as u64,
             error: None,
