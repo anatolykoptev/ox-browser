@@ -13,6 +13,8 @@ tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 urlencoding = "2"
+url = "2"
+dom_query = "0.11"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

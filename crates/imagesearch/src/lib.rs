@@ -3,6 +3,7 @@
 pub mod bing;
 pub mod brave;
 pub mod ddg;
+pub mod extract;
 pub mod fusion;
 pub mod openverse;
 pub mod pexels;

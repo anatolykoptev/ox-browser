@@ -2,6 +2,7 @@
 
 mod analyze;
 mod fetch;
+mod image_extract;
 mod image_search;
 mod security;
 mod solve;
@@ -17,6 +18,7 @@ use rmcp::{tool, tool_router};
 
 pub use analyze::AnalyzeInput;
 pub use fetch::{FetchInput, FetchSmartInput};
+pub use image_extract::ImageExtractInput;
 pub use image_search::ImageSearchInput;
 pub use security::SecurityScanInput;
 pub use solve::SolveCfInput;
@@ -100,6 +102,17 @@ impl OxMcpServer {
         Parameters(input): Parameters<SecurityScanInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_security_scan(input).await
+    }
+
+    #[tool(
+        name = "image_extract",
+        description = "Extract candidate photos from a webpage. Fetches the URL, parses all <img>, <picture>, og:image, and CSS background-image URLs. Filters out logos, icons, SVGs, GIFs, tiny images, and data URIs. Returns full-size image URLs sorted by priority (og:image first). Use for grabbing photos from a place's official website."
+    )]
+    async fn image_extract(
+        &self,
+        Parameters(input): Parameters<ImageExtractInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_image_extract(input).await
     }
 
     #[tool(

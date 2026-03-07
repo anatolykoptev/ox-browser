@@ -4,6 +4,7 @@ mod analyze;
 pub mod analyze_types;
 mod fetch;
 mod fetch_smart;
+mod image_extract;
 mod image_search;
 mod security;
 
@@ -60,6 +61,7 @@ pub fn router(state: AppState) -> Router {
         .route("/analyze", post(analyze::analyze))
         .route("/security", post(security::security_scan))
         .route("/images/search", post(image_search::image_search))
+        .route("/images/extract", post(image_extract::image_extract))
         .with_state(state)
 }
 
