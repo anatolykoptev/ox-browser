@@ -4,8 +4,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use ox_imagesearch::bing::BingImages;
+use ox_imagesearch::brave::BraveImages;
 use ox_imagesearch::ddg::DdgImages;
 use ox_imagesearch::fusion::ImageSearchEngine;
+use ox_imagesearch::openverse::OpenverseImages;
+use ox_imagesearch::pexels::PexelsImages;
 use ox_imagesearch::{ImageEngine, ImageResult};
 use rmcp::model::*;
 use rmcp::ErrorData as McpError;
@@ -21,7 +24,7 @@ use super::OxMcpServer;
 pub struct ImageSearchInput {
     /// Search query for images.
     pub query: String,
-    /// Engines to use: "bing", "ddg". Default: all.
+    /// Engines to use: "bing", "ddg", "openverse", "pexels", "brave". Default: bing+ddg+openverse.
     #[serde(default)]
     pub engines: Vec<String>,
     /// Maximum results to return. Default: 10.
@@ -54,6 +57,17 @@ impl OxMcpServer {
         }
         if use_all || input.engines.iter().any(|e| e == "ddg") {
             engines.push(Arc::new(DdgImages));
+        }
+        if use_all || input.engines.iter().any(|e| e == "openverse") {
+            engines.push(Arc::new(OpenverseImages));
+        }
+        if input.engines.iter().any(|e| e == "pexels") {
+            if let Ok(key) = std::env::var("PEXELS_API_KEY") {
+                engines.push(Arc::new(PexelsImages { api_key: key }));
+            }
+        }
+        if input.engines.iter().any(|e| e == "brave") {
+            engines.push(Arc::new(BraveImages));
         }
 
         let engine_names: Vec<String> =

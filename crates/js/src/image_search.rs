@@ -7,7 +7,12 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use ox_imagesearch::fusion::ImageSearchEngine;
-use ox_imagesearch::{bing::BingImages, ddg::DdgImages, ImageEngine, ImageResult};
+use ox_imagesearch::bing::BingImages;
+use ox_imagesearch::brave::BraveImages;
+use ox_imagesearch::ddg::DdgImages;
+use ox_imagesearch::openverse::OpenverseImages;
+use ox_imagesearch::pexels::PexelsImages;
+use ox_imagesearch::{ImageEngine, ImageResult};
 use serde::{Deserialize, Serialize};
 
 use super::AppState;
@@ -48,6 +53,17 @@ pub async fn image_search(
     }
     if use_all || req.engines.iter().any(|e| e == "ddg") {
         engines.push(Arc::new(DdgImages));
+    }
+    if use_all || req.engines.iter().any(|e| e == "openverse") {
+        engines.push(Arc::new(OpenverseImages));
+    }
+    if req.engines.iter().any(|e| e == "pexels") {
+        if let Ok(key) = std::env::var("PEXELS_API_KEY") {
+            engines.push(Arc::new(PexelsImages { api_key: key }));
+        }
+    }
+    if req.engines.iter().any(|e| e == "brave") {
+        engines.push(Arc::new(BraveImages));
     }
 
     let engine_names: Vec<String> = engines.iter().map(|e| e.name().to_owned()).collect();

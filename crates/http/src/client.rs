@@ -75,6 +75,19 @@ impl HttpClient {
         self.handler.handle(req).await
     }
 
+    /// Execute a GET request with extra headers appended after the defaults.
+    pub async fn get_with_headers(
+        &self,
+        url: &str,
+        extra_headers: &[(&str, &str)],
+    ) -> Result<HttpResponse> {
+        let mut req = self.build_request("GET", url, None, None);
+        for &(k, v) in extra_headers {
+            req.headers.push((k.to_owned(), v.to_owned()));
+        }
+        self.handler.handle(req).await
+    }
+
     /// Execute a POST request with a text body and content type.
     pub async fn post(
         &self,

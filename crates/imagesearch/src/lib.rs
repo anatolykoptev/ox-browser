@@ -1,8 +1,11 @@
 //! Multi-engine image search with stealth HTTP.
 
 pub mod bing;
+pub mod brave;
 pub mod ddg;
 pub mod fusion;
+pub mod openverse;
+pub mod pexels;
 
 use async_trait::async_trait;
 use ox_http::HttpClient;
