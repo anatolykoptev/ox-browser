@@ -1,22 +1,39 @@
-//! CSP header string parser.
+//! CSP header string parser — thin wrapper around `content_security_policy` crate.
+
+use content_security_policy::{CspList, PolicyDisposition, PolicySource};
 
 use super::CspDirective;
 
-/// Parse a CSP header string into directives.
-/// CSP format: "directive1 value1 value2; directive2 value3"
+/// Parse a raw CSP header using the spec-compliant W3C CSP Level 3 parser.
+/// Returns a `CspList` for advanced checks (e.g. `should_request_be_blocked`).
+pub fn parse_csp_list(raw: &str) -> CspList {
+    CspList::parse(raw, PolicySource::Header, PolicyDisposition::Enforce)
+}
+
+/// Parse a CSP header into our `CspDirective` structs for compatibility
+/// with existing checks. Extracts directives from the first policy only
+/// (single-policy headers). For multi-policy, use `parse_csp_list`.
 pub fn parse_csp(raw: &str) -> Vec<CspDirective> {
-    raw.split(';')
-        .filter_map(|part| {
-            let trimmed = part.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-            let mut tokens = trimmed.split_whitespace();
-            let name = tokens.next()?.to_lowercase();
-            let values: Vec<String> = tokens.map(|t| t.to_string()).collect();
-            Some(CspDirective { name, values })
+    let csp_list = parse_csp_list(raw);
+    csp_list
+        .0
+        .first()
+        .map(|policy| {
+            policy
+                .directive_set
+                .iter()
+                .map(|d| CspDirective {
+                    name: d.name.clone(),
+                    values: d.value.clone(),
+                })
+                .collect()
         })
-        .collect()
+        .unwrap_or_default()
+}
+
+/// Count total policies in a CSP header (comma-separated).
+pub fn policy_count(raw: &str) -> usize {
+    parse_csp_list(raw).0.len()
 }
 
 pub fn get_directive_values<'a>(

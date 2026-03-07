@@ -100,3 +100,59 @@ fn test_style_src_unsafe_inline_only() {
     // has_unsafe_inline should only be true for script-src
     assert!(!report.has_unsafe_inline);
 }
+
+// --- New tests leveraging the content-security-policy crate ---
+
+#[test]
+fn test_upgrade_insecure_requests() {
+    let csp = "default-src 'self'; upgrade-insecure-requests";
+    let report = evaluate_csp(csp);
+    assert!(
+        report.has_upgrade_insecure_requests,
+        "should detect upgrade-insecure-requests directive"
+    );
+
+    let report_without = evaluate_csp("default-src 'self'");
+    assert!(
+        !report_without.has_upgrade_insecure_requests,
+        "should not report upgrade-insecure-requests when absent"
+    );
+}
+
+#[test]
+fn test_multiple_policies() {
+    // Comma-separated policies — the crate parses these as separate policies
+    let csp = "script-src 'self', style-src 'self'";
+    let report = evaluate_csp(csp);
+    assert_eq!(
+        report.policy_count, 2,
+        "comma-separated header should yield 2 policies"
+    );
+    // Our directives extract from the first policy only
+    assert_eq!(report.directives.len(), 1);
+    assert_eq!(report.directives[0].name, "script-src");
+}
+
+#[test]
+fn test_report_to_detection() {
+    let csp = "default-src 'self'; report-to csp-endpoint";
+    let report = evaluate_csp(csp);
+    assert!(
+        report.has_reporting,
+        "should detect report-to directive"
+    );
+
+    let csp_uri = "default-src 'self'; report-uri /csp-violations";
+    let report_uri = evaluate_csp(csp_uri);
+    assert!(
+        report_uri.has_reporting,
+        "should detect report-uri directive"
+    );
+
+    let csp_none = "default-src 'self'";
+    let report_none = evaluate_csp(csp_none);
+    assert!(
+        !report_none.has_reporting,
+        "should not report reporting when absent"
+    );
+}

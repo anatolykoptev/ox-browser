@@ -41,6 +41,9 @@ lazy_re!(RE_DIR_LISTING, r"(?i)<(?:title|h1)>Index of /|Directory listing for /"
 lazy_re!(RE_SESSION_URL, r"(?i)(?:jsessionid|phpsessid|sid|session_id|sessionid|aspsessionid)[=;][A-Za-z0-9]{8,}");
 lazy_re!(RE_SENSITIVE_PARAM, r"(?i)[?&](password|passwd|pwd|secret|token|api_key|apikey|access_token|auth|authorization)=");
 lazy_re!(RE_INSECURE_FORM, r#"(?i)<form\s[^>]*action\s*=\s*["']http://[^"']*["']"#);
+lazy_re!(RE_EVENT_HANDLER, r#"(?i)\bon\w+\s*=\s*["']"#);
+lazy_re!(RE_JS_URL, r#"(?i)javascript\s*:"#);
+lazy_re!(RE_SOURCE_MAP, r"//[#@]\s*sourceMappingURL\s*=\s*(\S+)");
 
 fn severity_penalty(sev: Severity) -> i32 {
     match sev {
@@ -95,8 +98,52 @@ pub fn scan_body(html: &str, page_url: &str) -> BodyScanReport {
     if page_url.starts_with("https://") && RE_INSECURE_FORM.is_match(html) {
         f.push(finding("insecure_form_action", "Form submits to insecure HTTP endpoint", Severity::High));
     }
+    // 9. XSS pattern detection via ammonia
+    f.extend(check_xss_patterns(html));
+    // 10. Exposed source maps
+    f.extend(check_source_maps(html));
     let raw: i32 = f.iter().map(|x| severity_penalty(x.severity)).sum();
     BodyScanReport { findings: f, score_modifier: raw.max(-30) }
+}
+
+/// Detect XSS patterns by comparing original HTML with ammonia-sanitized output.
+fn check_xss_patterns(html: &str) -> Vec<BodyScanFinding> {
+    let cleaned = ammonia::clean(html);
+    let mut findings = Vec::new();
+
+    let orig_events = RE_EVENT_HANDLER.find_iter(html).count();
+    let clean_events = RE_EVENT_HANDLER.find_iter(&cleaned).count();
+    if orig_events > clean_events {
+        let stripped = orig_events - clean_events;
+        findings.push(finding(
+            "xss_event_handlers",
+            &format!("{stripped} inline event handler(s) detected"),
+            Severity::Medium,
+        ));
+    }
+
+    if RE_JS_URL.is_match(html) && !RE_JS_URL.is_match(&cleaned) {
+        findings.push(finding(
+            "xss_javascript_url",
+            "javascript: URL scheme detected in HTML",
+            Severity::High,
+        ));
+    }
+
+    findings
+}
+
+/// Detect exposed source map references in inline scripts.
+fn check_source_maps(html: &str) -> Vec<BodyScanFinding> {
+    let mut findings = Vec::new();
+    if let Some(cap) = RE_SOURCE_MAP.captures(html) {
+        findings.push(finding(
+            "exposed_source_map",
+            &format!("Source map reference found: {}", &cap[1]),
+            Severity::Medium,
+        ));
+    }
+    findings
 }
 
 /// Private/reserved CIDR ranges to detect in HTML bodies.
@@ -124,89 +171,4 @@ fn finding(check: &str, detail: &str, severity: Severity) -> BodyScanFinding {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    const URL: &str = "https://example.com";
-
-    #[test]
-    fn test_private_ip_in_body() {
-        let r = scan_body("Server at 192.168.1.100 responded", URL);
-        assert_eq!(r.findings.len(), 1);
-        assert_eq!(r.findings[0].check, "private_ip");
-    }
-    #[test]
-    fn test_no_false_positive_public_ip() {
-        let r = scan_body("DNS at 8.8.8.8", URL);
-        assert!(r.findings.iter().all(|f| f.check != "private_ip"));
-    }
-    #[test]
-    fn test_java_stack_trace() {
-        let r = scan_body("at com.example.App.main(App.java:42)", URL);
-        assert_eq!(r.findings[0].check, "stack_trace");
-        assert_eq!(r.findings[0].severity, Severity::High);
-    }
-    #[test]
-    fn test_python_traceback() {
-        let r = scan_body("Traceback (most recent call last)", URL);
-        assert_eq!(r.findings[0].check, "stack_trace");
-    }
-    #[test]
-    fn test_php_error() {
-        let r = scan_body("Fatal error: something in /var/www/app.php:123", URL);
-        assert_eq!(r.findings[0].check, "stack_trace");
-    }
-    #[test]
-    fn test_suspicious_comment() {
-        let r = scan_body("<!-- TODO: remove hardcoded password=admin123 -->", URL);
-        assert!(r.findings.iter().any(|f| f.check == "suspicious_comment"));
-    }
-    #[test]
-    fn test_normal_comment_no_finding() {
-        let r = scan_body("<!-- Navigation section -->", URL);
-        assert!(r.findings.iter().all(|f| f.check != "suspicious_comment"));
-    }
-    #[test]
-    fn test_meta_generator_version() {
-        let r = scan_body(r#"<meta name="generator" content="WordPress 6.4.2">"#, URL);
-        assert!(r.findings.iter().any(|f| f.check == "generator_version"));
-    }
-    #[test]
-    fn test_directory_listing() {
-        let r = scan_body("<title>Index of /uploads</title>", URL);
-        assert!(r.findings.iter().any(|f| f.check == "directory_listing"));
-    }
-    #[test]
-    fn test_session_id_in_url() {
-        let r = scan_body("", "https://example.com/app;jsessionid=ABC123DEF456");
-        assert!(r.findings.iter().any(|f| f.check == "session_in_url"));
-    }
-    #[test]
-    fn test_sensitive_param_in_url() {
-        let r = scan_body("", "https://example.com/?token=abc123&password=secret");
-        assert!(r.findings.iter().any(|f| f.check == "sensitive_url_param"));
-    }
-    #[test]
-    fn test_insecure_form_action() {
-        let html = r#"<form action="http://evil.com/login" method="post">"#;
-        let r = scan_body(html, URL);
-        assert!(r.findings.iter().any(|f| f.check == "insecure_form_action"));
-    }
-    #[test]
-    fn test_loopback_ip_detected() {
-        let r = scan_body("Connected to 127.0.0.1 on port 8080", URL);
-        assert_eq!(r.findings.len(), 1);
-        assert_eq!(r.findings[0].check, "private_ip");
-        assert!(r.findings[0].detail.contains("127.0.0.1"));
-    }
-    #[test]
-    fn test_no_false_positive_near_private_ip() {
-        let r = scan_body("Upstream server 11.0.0.1 responded OK", URL);
-        assert!(r.findings.iter().all(|f| f.check != "private_ip"));
-    }
-    #[test]
-    fn test_clean_page() {
-        let r = scan_body("<html><body><p>Hello world</p></body></html>", URL);
-        assert!(r.findings.is_empty());
-        assert_eq!(r.score_modifier, 0);
-    }
-}
+mod tests;

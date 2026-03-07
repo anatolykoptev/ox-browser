@@ -1,6 +1,7 @@
 //! Content Security Policy parser, evaluator, and bypass detector.
 //!
-//! Provides Observatory-compatible scoring and A-F grading.
+//! Uses the `content_security_policy` crate for spec-compliant W3C CSP Level 3
+//! parsing, with our own scoring and bypass detection on top.
 
 mod checks;
 mod parser;
@@ -23,6 +24,9 @@ pub struct CspReport {
     pub has_hash: bool,
     pub has_strict_dynamic: bool,
     pub missing_directives: Vec<String>,
+    pub has_upgrade_insecure_requests: bool,
+    pub has_reporting: bool,
+    pub policy_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,23 +46,7 @@ pub struct CspFinding {
 /// Returns `CspReport` with findings, grade, and score.
 pub fn evaluate_csp(csp_header: &str) -> CspReport {
     if csp_header.trim().is_empty() {
-        return CspReport {
-            raw: String::new(),
-            directives: vec![],
-            findings: vec![CspFinding {
-                directive: "content-security-policy".into(),
-                description: "Content Security Policy not implemented".into(),
-                severity: Severity::High,
-            }],
-            grade: 'F',
-            score: -25,
-            has_unsafe_inline: false,
-            has_unsafe_eval: false,
-            has_nonce: false,
-            has_hash: false,
-            has_strict_dynamic: false,
-            missing_directives: vec![],
-        };
+        return empty_report();
     }
 
     let directives = parser::parse_csp(csp_header);
@@ -77,6 +65,11 @@ pub fn evaluate_csp(csp_header: &str) -> CspReport {
         .map(|v| has_value(v, "'strict-dynamic'"))
         .unwrap_or(false);
 
+    let has_upgrade_insecure_requests =
+        get_directive_values(&directives, "upgrade-insecure-requests").is_some();
+    let has_reporting = checks::has_reporting(&directives);
+    let policy_count = parser::policy_count(csp_header);
+
     let score = compute_score(&directives, has_unsafe_inline, has_unsafe_eval);
     let grade = score_to_grade(score);
 
@@ -92,6 +85,32 @@ pub fn evaluate_csp(csp_header: &str) -> CspReport {
         has_hash,
         has_strict_dynamic,
         missing_directives,
+        has_upgrade_insecure_requests,
+        has_reporting,
+        policy_count,
+    }
+}
+
+fn empty_report() -> CspReport {
+    CspReport {
+        raw: String::new(),
+        directives: vec![],
+        findings: vec![CspFinding {
+            directive: "content-security-policy".into(),
+            description: "Content Security Policy not implemented".into(),
+            severity: Severity::High,
+        }],
+        grade: 'F',
+        score: -25,
+        has_unsafe_inline: false,
+        has_unsafe_eval: false,
+        has_nonce: false,
+        has_hash: false,
+        has_strict_dynamic: false,
+        missing_directives: vec![],
+        has_upgrade_insecure_requests: false,
+        has_reporting: false,
+        policy_count: 0,
     }
 }
 
@@ -101,7 +120,6 @@ fn compute_score(
     has_unsafe_inline: bool,
     has_unsafe_eval: bool,
 ) -> i32 {
-    // Check for insecure schemes or broad sources in script-src
     let script_vals = get_script_src_values(directives);
     if let Some(vals) = script_vals {
         let broad = ["https:", "data:", "http:", "*"];
@@ -110,7 +128,6 @@ fn compute_score(
         }
     }
 
-    // unsafe-inline in script-src (without nonce/hash) → -20
     if has_unsafe_inline {
         if let Some(vals) = script_vals {
             if !has_nonce_or_hash(vals) {
@@ -119,12 +136,10 @@ fn compute_score(
         }
     }
 
-    // unsafe-eval → -10
     if has_unsafe_eval {
         return -10;
     }
 
-    // Check unsafe-inline in style-src only (not script-src) → 0
     let style_vals = get_directive_values(directives, "style-src");
     let style_has_unsafe = style_vals
         .map(|v| has_value(v, "'unsafe-inline'"))
@@ -133,7 +148,6 @@ fn compute_score(
         return 0;
     }
 
-    // default-src 'none' with no unsafe → +10
     let default_vals = get_directive_values(directives, "default-src");
     let default_none = default_vals
         .map(|v| has_value(v, "'none'"))
@@ -142,7 +156,6 @@ fn compute_score(
         return 10;
     }
 
-    // No unsafe-inline, no unsafe-eval → +5
     5
 }
 

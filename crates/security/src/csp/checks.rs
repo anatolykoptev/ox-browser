@@ -11,12 +11,36 @@ pub fn run_checks(directives: &[CspDirective]) -> (Vec<CspFinding>, Vec<String>)
     let mut missing = Vec::new();
 
     check_unsafe_inline(directives, &mut findings);
-    check_unsafe_eval(directives, &mut findings);
+    check_unsafe_eval_directive(directives, &mut findings);
     check_broad_sources(directives, &mut findings);
     check_strict_dynamic(directives, &mut findings);
+    check_insecure_scheme(directives, &mut findings);
     check_missing_directives(directives, &mut findings, &mut missing);
 
     (findings, missing)
+}
+
+/// Detect `http:` scheme in any directive (not just script-src).
+pub fn check_insecure_scheme(directives: &[CspDirective], findings: &mut Vec<CspFinding>) {
+    for d in directives {
+        if d.values.iter().any(|v| v == "http:") {
+            findings.push(CspFinding {
+                directive: d.name.clone(),
+                description: format!(
+                    "Insecure http: scheme in {} allows downgrade attacks",
+                    d.name
+                ),
+                severity: Severity::Medium,
+            });
+        }
+    }
+}
+
+/// Check if `report-uri` or `report-to` is configured (informational).
+pub fn has_reporting(directives: &[CspDirective]) -> bool {
+    directives
+        .iter()
+        .any(|d| d.name == "report-uri" || d.name == "report-to")
 }
 
 fn check_unsafe_inline(directives: &[CspDirective], findings: &mut Vec<CspFinding>) {
@@ -32,7 +56,7 @@ fn check_unsafe_inline(directives: &[CspDirective], findings: &mut Vec<CspFindin
     }
 }
 
-fn check_unsafe_eval(directives: &[CspDirective], findings: &mut Vec<CspFinding>) {
+fn check_unsafe_eval_directive(directives: &[CspDirective], findings: &mut Vec<CspFinding>) {
     let script_vals = get_script_src_values(directives);
     if let Some(vals) = script_vals {
         // Detect 'unsafe-eval' which allows dynamic code execution
