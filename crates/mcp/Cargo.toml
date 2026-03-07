@@ -11,6 +11,7 @@ url = "2"
 ox-http = { path = "../http" }
 ox-core = { path = "../core" }
 ox-security = { path = "../security" }
+ox-imagesearch = { path = "../imagesearch" }
 axum = "0.8"
 tokio.workspace = true
 tracing.workspace = true

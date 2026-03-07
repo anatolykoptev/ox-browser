@@ -7,6 +7,7 @@ edition.workspace = true
 ox-http = { path = "../http" }
 ox-intelligence = { path = "../intelligence" }
 ox-security = { path = "../security" }
+ox-imagesearch = { path = "../imagesearch" }
 ox-core = { path = "../core" }
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }

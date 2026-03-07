@@ -4,6 +4,7 @@ mod analyze;
 pub mod analyze_types;
 mod fetch;
 mod fetch_smart;
+mod image_search;
 mod security;
 
 use std::collections::HashMap;
@@ -58,6 +59,7 @@ pub fn router(state: AppState) -> Router {
         .route("/fetch-smart", post(fetch_smart::fetch_smart))
         .route("/analyze", post(analyze::analyze))
         .route("/security", post(security::security_scan))
+        .route("/images/search", post(image_search::image_search))
         .with_state(state)
 }
 

@@ -2,6 +2,7 @@
 
 mod analyze;
 mod fetch;
+mod image_search;
 mod security;
 mod solve;
 
@@ -16,6 +17,7 @@ use rmcp::{tool, tool_router};
 
 pub use analyze::AnalyzeInput;
 pub use fetch::{FetchInput, FetchSmartInput};
+pub use image_search::ImageSearchInput;
 pub use security::SecurityScanInput;
 pub use solve::SolveCfInput;
 
@@ -98,5 +100,16 @@ impl OxMcpServer {
         Parameters(input): Parameters<SecurityScanInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_security_scan(input).await
+    }
+
+    #[tool(
+        name = "image_search",
+        description = "Search for images across multiple engines (Bing, DDG) with stealth TLS fingerprinting and proxy rotation. Returns image URLs, thumbnails, and source pages. Results are fused and deduplicated across engines."
+    )]
+    async fn image_search(
+        &self,
+        Parameters(input): Parameters<ImageSearchInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_image_search(input).await
     }
 }
