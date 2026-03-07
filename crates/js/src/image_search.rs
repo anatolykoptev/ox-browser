@@ -54,8 +54,7 @@ pub async fn image_search(
     if use_all || req.engines.iter().any(|e| e == "ddg") {
         engines.push(Arc::new(DdgImages));
     }
-    // API-based engines: opt-in only (proxied requests may be blocked by API providers)
-    if req.engines.iter().any(|e| e == "openverse") {
+    if use_all || req.engines.iter().any(|e| e == "openverse") {
         engines.push(Arc::new(OpenverseImages));
     }
     if req.engines.iter().any(|e| e == "pexels") {

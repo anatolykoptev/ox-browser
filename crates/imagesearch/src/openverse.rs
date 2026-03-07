@@ -26,7 +26,9 @@ impl ImageEngine for OpenverseImages {
             urlencoding::encode(query),
             page_size,
         );
-        let resp = client.get(&url).await?;
+        let resp = client
+            .get_with_headers(&url, &[("Accept", "application/json")])
+            .await?;
         if resp.status != 200 {
             return Err(Error::Parse(format!(
                 "openverse status {}",

@@ -24,7 +24,7 @@ use super::OxMcpServer;
 pub struct ImageSearchInput {
     /// Search query for images.
     pub query: String,
-    /// Engines to use: "bing", "ddg", "openverse", "pexels", "brave". Default: bing+ddg.
+    /// Engines to use: "bing", "ddg", "openverse", "pexels", "brave". Default: bing+ddg+openverse.
     #[serde(default)]
     pub engines: Vec<String>,
     /// Maximum results to return. Default: 10.
@@ -58,8 +58,7 @@ impl OxMcpServer {
         if use_all || input.engines.iter().any(|e| e == "ddg") {
             engines.push(Arc::new(DdgImages));
         }
-        // API-based engines: opt-in only (proxied requests may be blocked by API providers)
-        if input.engines.iter().any(|e| e == "openverse") {
+        if use_all || input.engines.iter().any(|e| e == "openverse") {
             engines.push(Arc::new(OpenverseImages));
         }
         if input.engines.iter().any(|e| e == "pexels") {

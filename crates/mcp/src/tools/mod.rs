@@ -104,7 +104,7 @@ impl OxMcpServer {
 
     #[tool(
         name = "image_search",
-        description = "Search for images across multiple engines with stealth TLS fingerprinting and proxy rotation. Default: bing+ddg. Opt-in: openverse, pexels (needs PEXELS_API_KEY), brave. API engines (openverse, pexels) may fail through proxy — prefer Go-side providers for those. Returns image URLs, thumbnails, and source pages. Results are fused and deduplicated."
+        description = "Search for images across multiple engines with stealth TLS fingerprinting and proxy rotation. Default: bing+ddg+openverse. Opt-in: pexels (needs PEXELS_API_KEY), brave. Returns image URLs, thumbnails, and source pages. Results are fused and deduplicated."
     )]
     async fn image_search(
         &self,
