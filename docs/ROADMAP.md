@@ -242,13 +242,15 @@ See `docs/plans/2026-03-06-phase5-imagesearch-design.md` for full design.
 - [x] `ox-imagesearch` crate with `ImageResult` + `ImageEngine` trait
 - [x] Bing Images engine (`/images/async` endpoint parser)
 - [x] DDG Images engine (vqd token + `/i.js` JSON API)
+- [x] Openverse engine (Creative Commons API, no auth)
+- [x] Pexels engine (stock photo API, requires `PEXELS_API_KEY`)
+- [x] Brave Images engine (SvelteKit SPA scraper with cookie injection)
 - [x] `ImageSearchEngine` fusion: parallel engines + WRR merge + dedup
 - [x] `POST /images/search` REST endpoint + `image_search` MCP tool
-- [x] 13 unit tests (bing, ddg, fusion)
-- [ ] Yandex Images engine (future)
-- [ ] Brave Images engine (future)
+- [x] 25 unit tests (bing 4, ddg 4, fusion 5, openverse 4, pexels 4, brave 4)
+- [ ] Yandex Images engine (requires headless browser, out of scope)
 
-**Result:** Multi-engine image search with stealth scraping. ~700 LOC, 13 tests.
+**Result:** 5-engine image search with stealth scraping. ~1400 LOC, 25 tests.
 **Depends on:** Phase 2
 
 ## Phase 5: Crawler
