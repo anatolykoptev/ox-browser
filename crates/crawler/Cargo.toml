@@ -2,3 +2,22 @@
 name = "ox-crawler"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+ox-http = { path = "../http" }
+ox-core = { path = "../core" }
+tokio = { workspace = true }
+url = "2"
+regex = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+blake3 = "1"
+texting_robots = "0.2"
+htmd = "0.5"
+dom_query = "0.12"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+toml = "0.8"
