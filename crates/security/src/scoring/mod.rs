@@ -1,6 +1,7 @@
 //! Security scoring and aggregate report (Observatory-compatible).
 
 mod aggregate;
+mod bonuses;
 
 use serde::Serialize;
 
@@ -12,6 +13,7 @@ use super::dangerous_js::DangerousJsReport;
 use super::headers::HeadersReport;
 use super::info_disclosure::InfoDisclosureReport;
 use super::mixed_content::MixedContentReport;
+use super::redirect::RedirectReport;
 use super::sri::SriReport;
 use super::supply_chain::SupplyChainReport;
 use super::vuln_js::VulnJsReport;
@@ -34,6 +36,7 @@ pub struct SecurityReport {
     pub body_scan: BodyScanReport,
     pub vuln_js: VulnJsReport,
     pub dangerous_js: DangerousJsReport,
+    pub redirect: RedirectReport,
     pub findings_summary: FindingsSummary,
 }
 
@@ -165,5 +168,24 @@ mod tests {
         let r = analyze_security("https://example.com", &hdrs, &[], "");
         assert!(r.score >= 30 && r.score <= 85, "score={}", r.score);
         assert!(r.grade != "F" && r.grade != "A+", "grade={}", r.grade);
+    }
+
+    #[test]
+    fn test_referrer_policy_bonus_scoring() {
+        let base = [
+            ("strict-transport-security", "max-age=63072000; includeSubDomains; preload"),
+            ("content-security-policy", "default-src 'none'; script-src 'self'"),
+            ("x-content-type-options", "nosniff"),
+            ("x-frame-options", "DENY"),
+        ];
+        let mut bonus_h = h(&base);
+        bonus_h.insert("referrer-policy".into(), "no-referrer".into());
+        let r_bonus = analyze_security("https://example.com", &bonus_h, &[], "");
+
+        let mut no_bonus_h = h(&base);
+        no_bonus_h.insert("referrer-policy".into(), "strict-origin-when-cross-origin".into());
+        let r_no = analyze_security("https://example.com", &no_bonus_h, &[], "");
+
+        assert!(r_bonus.score > r_no.score, "bonus={} no_bonus={}", r_bonus.score, r_no.score);
     }
 }

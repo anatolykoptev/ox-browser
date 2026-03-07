@@ -120,3 +120,21 @@ fn test_no_source_map() {
     let r = scan_body(html, URL);
     assert!(r.findings.iter().all(|f| f.check != "exposed_source_map"));
 }
+#[test]
+fn test_post_form_without_csrf() {
+    let html = r#"<form method="post" action="/login"><input type="text" name="user"><input type="password" name="pass"></form>"#;
+    let report = scan_body(html, URL);
+    assert!(report.findings.iter().any(|f| f.check == "form_no_csrf_token"));
+}
+#[test]
+fn test_post_form_with_csrf() {
+    let html = r#"<form method="POST" action="/login"><input type="hidden" name="csrf_token" value="abc123"><input type="text" name="user"></form>"#;
+    let report = scan_body(html, URL);
+    assert!(report.findings.iter().all(|f| f.check != "form_no_csrf_token"));
+}
+#[test]
+fn test_get_form_no_csrf_needed() {
+    let html = r#"<form method="get" action="/search"><input type="text" name="q"></form>"#;
+    let report = scan_body(html, URL);
+    assert!(report.findings.iter().all(|f| f.check != "form_no_csrf_token"));
+}

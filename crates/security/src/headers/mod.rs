@@ -1,6 +1,7 @@
 //! Security headers analyzer — checks 16+ HTTP security headers.
 
 mod checks;
+mod checks_ext;
 
 use std::collections::HashMap;
 
@@ -39,7 +40,7 @@ pub struct HeadersReport {
 }
 
 /// Analyze HTTP response headers for security issues.
-pub fn analyze_headers(headers: &HashMap<String, String>) -> HeadersReport {
+pub fn analyze_headers(headers: &HashMap<String, String>, page_url: &str) -> HeadersReport {
     let mut findings = Vec::new();
 
     checks::check_hsts(headers, &mut findings);
@@ -50,15 +51,16 @@ pub fn analyze_headers(headers: &HashMap<String, String>) -> HeadersReport {
     checks::check_permissions_policy(headers, &mut findings);
     checks::check_coop(headers, &mut findings);
     checks::check_coep(headers, &mut findings);
-    checks::check_corp(headers, &mut findings);
-    checks::check_xss_protection(headers, &mut findings);
-    checks::check_reporting_endpoints(headers, &mut findings);
-    checks::check_nel(headers, &mut findings);
-    checks::check_cross_domain_policies(headers, &mut findings);
-    checks::check_dns_prefetch(headers, &mut findings);
-    checks::check_cache_control(headers, &mut findings);
-    checks::check_clear_site_data(headers, &mut findings);
-    if let Some(f) = checks::check_content_type_charset(headers) {
+    checks_ext::check_corp(headers, &mut findings);
+    checks_ext::check_xss_protection(headers, &mut findings);
+    checks_ext::check_reporting_endpoints(headers, &mut findings);
+    checks_ext::check_nel(headers, &mut findings);
+    checks_ext::check_cross_domain_policies(headers, &mut findings);
+    checks_ext::check_dns_prefetch(headers, &mut findings);
+    checks_ext::check_cache_control(headers, &mut findings);
+    checks_ext::check_clear_site_data(headers, &mut findings);
+    checks_ext::check_basic_auth(headers, page_url, &mut findings);
+    if let Some(f) = checks_ext::check_content_type_charset(headers) {
         findings.push(f);
     }
 

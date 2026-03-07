@@ -9,6 +9,7 @@ use super::super::csp::{self, CspReport};
 use super::super::headers::{self, HeaderStatus, HeadersReport};
 use super::super::info_disclosure;
 use super::super::mixed_content;
+use super::super::redirect;
 use super::super::dangerous_js;
 use super::super::vuln_js;
 use super::super::sri::{self, SriReport};
@@ -23,7 +24,7 @@ pub fn analyze_security(
     set_cookie_headers: &[String],
     html: &str,
 ) -> SecurityReport {
-    let headers_report = headers::analyze_headers(resp_headers);
+    let headers_report = headers::analyze_headers(resp_headers, url);
     let csp_header = resp_headers
         .get("content-security-policy")
         .cloned()
@@ -44,8 +45,10 @@ pub fn analyze_security(
     let body = body_scan::scan_body(html, url);
     let vuln = vuln_js::detect_vulnerable_js(html);
     let dangerous = dangerous_js::analyze_dangerous_js(html);
+    let redirect_report = redirect::analyze_redirect(url, resp_headers);
 
     let score = compute_score(
+        resp_headers,
         &headers_report,
         &csp_report,
         &cookies_report,
@@ -55,6 +58,7 @@ pub fn analyze_security(
         &body,
         &vuln,
         &dangerous,
+        &redirect_report,
     );
     let grade = score_to_grade(score);
     let findings_summary = count_findings(
@@ -69,6 +73,7 @@ pub fn analyze_security(
         &body,
         &vuln,
         &dangerous,
+        &redirect_report,
     );
 
     SecurityReport {
@@ -86,6 +91,7 @@ pub fn analyze_security(
         body_scan: body,
         vuln_js: vuln,
         dangerous_js: dangerous,
+        redirect: redirect_report,
         findings_summary,
     }
 }
@@ -103,6 +109,7 @@ fn extract_domain(url: &str) -> String {
 }
 
 fn compute_score(
+    resp_headers: &HashMap<String, String>,
     headers_report: &HeadersReport,
     csp_report: &Option<CspReport>,
     cookies_report: &CookieReport,
@@ -112,6 +119,7 @@ fn compute_score(
     body: &body_scan::BodyScanReport,
     vuln: &vuln_js::VulnJsReport,
     dangerous: &dangerous_js::DangerousJsReport,
+    redirect: &redirect::RedirectReport,
 ) -> i32 {
     let mut score: i32 = 100;
 
@@ -127,6 +135,7 @@ fn compute_score(
     score += body.score_modifier;
     score += vuln.score_modifier;
     score += dangerous.score_modifier;
+    score += redirect.score_modifier;
 
     for f in &headers_report.findings {
         match f.header.as_str() {
@@ -143,6 +152,8 @@ fn compute_score(
         }
     }
 
+    let score = super::bonuses::apply_bonuses(score, resp_headers);
+
     score.max(0)
 }
 
@@ -158,6 +169,7 @@ fn count_findings(
     body: &body_scan::BodyScanReport,
     vuln: &vuln_js::VulnJsReport,
     dangerous: &dangerous_js::DangerousJsReport,
+    redirect: &redirect::RedirectReport,
 ) -> FindingsSummary {
     let mut sevs: Vec<Severity> = Vec::new();
 
@@ -174,6 +186,7 @@ fn count_findings(
     sevs.extend(body.findings.iter().map(|f| f.severity));
     sevs.extend(vuln.findings.iter().map(|f| f.severity));
     sevs.extend(dangerous.findings.iter().map(|f| f.severity));
+    sevs.extend(redirect.findings.iter().map(|f| f.severity));
 
     let total = sevs.len();
     FindingsSummary {

@@ -9,6 +9,7 @@ pub mod fingerprint;
 pub mod headers;
 pub mod info_disclosure;
 pub mod mixed_content;
+pub mod redirect;
 pub mod scoring;
 pub mod sri;
 pub mod supply_chain;

@@ -44,6 +44,7 @@ lazy_re!(RE_INSECURE_FORM, r#"(?i)<form\s[^>]*action\s*=\s*["']http://[^"']*["']
 lazy_re!(RE_EVENT_HANDLER, r#"(?i)\bon\w+\s*=\s*["']"#);
 lazy_re!(RE_JS_URL, r#"(?i)javascript\s*:"#);
 lazy_re!(RE_SOURCE_MAP, r"//[#@]\s*sourceMappingURL\s*=\s*(\S+)");
+lazy_re!(RE_POST_FORM, r#"(?i)<form\b[^>]*method\s*=\s*["']?post["']?[^>]*>([\s\S]*?)</form>"#);
 
 fn severity_penalty(sev: Severity) -> i32 {
     match sev {
@@ -102,6 +103,8 @@ pub fn scan_body(html: &str, page_url: &str) -> BodyScanReport {
     f.extend(check_xss_patterns(html));
     // 10. Exposed source maps
     f.extend(check_source_maps(html));
+    // 11. POST forms without CSRF token
+    f.extend(check_csrf_in_forms(html));
     let raw: i32 = f.iter().map(|x| severity_penalty(x.severity)).sum();
     BodyScanReport { findings: f, score_modifier: raw.max(-30) }
 }
@@ -130,6 +133,34 @@ fn check_xss_patterns(html: &str) -> Vec<BodyScanFinding> {
         ));
     }
 
+    findings
+}
+
+/// Detect POST forms without hidden CSRF token fields.
+fn check_csrf_in_forms(html: &str) -> Vec<BodyScanFinding> {
+    let mut findings = Vec::new();
+    const CSRF_NAMES: &[&str] = &[
+        "csrf", "xsrf", "_token", "authenticity_token",
+        "__requestverificationtoken", "csrfmiddlewaretoken",
+    ];
+    let hidden_re = Regex::new(
+        r#"(?i)<input\b[^>]*type\s*=\s*["']?hidden["']?[^>]*name\s*=\s*["']([^"']+)["']"#,
+    ).unwrap();
+    for cap in RE_POST_FORM.captures_iter(html) {
+        let form_body = &cap[1];
+        let has_csrf = hidden_re.captures_iter(form_body).any(|input_cap| {
+            let name = input_cap[1].to_lowercase();
+            CSRF_NAMES.iter().any(|p| name.contains(p))
+        });
+        if !has_csrf {
+            findings.push(finding(
+                "form_no_csrf_token",
+                "POST form without apparent CSRF token field",
+                Severity::Medium,
+            ));
+            break;
+        }
+    }
     findings
 }
 
