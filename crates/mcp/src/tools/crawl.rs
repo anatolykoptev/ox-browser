@@ -103,7 +103,7 @@ impl OxMcpServer {
         };
 
         let crawler = Crawler::new(Arc::clone(&self.http_client), config);
-        let mut rx = crawler.crawl(&input.url);
+        let (mut rx, _discovery) = crawler.crawl(&input.url).await;
 
         let mut pages = Vec::new();
         let mut error_count = 0usize;

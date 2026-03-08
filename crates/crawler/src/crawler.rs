@@ -11,10 +11,11 @@ use url::Url;
 use crate::budget::Budget;
 use crate::config::CrawlConfig;
 use crate::dedup::{is_cycle, normalize_url, ContentDedup, UrlDedup};
-use crate::frontier::Frontier;
+use crate::frontier::{EntrySource, Frontier};
 use crate::markdown::html_to_fit_markdown;
 use crate::result::CrawlResult;
 use crate::robots::RobotsCache;
+use crate::sitemap::SitemapEntry;
 
 /// Site crawler with streaming results via mpsc channel.
 pub struct Crawler {
@@ -27,20 +28,38 @@ impl Crawler {
         Self { http, config }
     }
 
-    /// Start crawling from a seed URL. Returns a receiver for streaming results.
-    pub fn crawl(&self, seed_url: &str) -> mpsc::Receiver<CrawlResult> {
+    /// Start crawling from a seed URL.
+    ///
+    /// Runs the discovery phase (sitemap/hybrid) before spawning the BFS loop.
+    /// Returns a receiver for streaming results and the discovery stats.
+    pub async fn crawl(
+        &self,
+        seed_url: &str,
+    ) -> (mpsc::Receiver<CrawlResult>, crate::discovery::DiscoveryResult) {
         let (tx, rx) = mpsc::channel(self.config.concurrency * 2);
         let seed = seed_url.to_string();
         let http = Arc::clone(&self.http);
         let config = self.config.clone();
 
+        // Discovery phase (runs before the BFS loop)
+        let discovery = if config.discovery == "sitemap" || config.discovery == "hybrid" {
+            crate::discovery::discover_and_resolve(&seed, &config, &http).await
+        } else {
+            crate::discovery::DiscoveryResult::default()
+        };
+
+        let discovery_entries = discovery.entries.clone();
+        let follow_links = config.discovery != "sitemap";
+
         tokio::spawn(async move {
-            if let Err(e) = run_crawl(seed, http, config, tx).await {
+            if let Err(e) =
+                run_crawl(seed, http, config, tx, discovery_entries, follow_links).await
+            {
                 tracing::error!("crawl failed: {e}");
             }
         });
 
-        rx
+        (rx, discovery)
     }
 }
 
@@ -49,6 +68,8 @@ async fn run_crawl(
     http: Arc<HttpClient>,
     config: CrawlConfig,
     tx: mpsc::Sender<CrawlResult>,
+    discovery_entries: Vec<SitemapEntry>,
+    follow_links: bool,
 ) -> anyhow::Result<()> {
     let seed_url = Url::parse(&seed)?;
     let frontier = Arc::new(Mutex::new(Frontier::new(config.max_pages * 10)));
@@ -66,6 +87,23 @@ async fn run_crawl(
         d.insert(&normalized);
         let mut f = frontier.lock().await;
         f.push(seed, 0);
+    }
+
+    // Seed sitemap entries into frontier
+    if !discovery_entries.is_empty() {
+        let mut f = frontier.lock().await;
+        let mut d = dedup.lock().await;
+        for entry in &discovery_entries {
+            if let Some(normalized) = normalize_url(&entry.url) {
+                if d.insert(&normalized) {
+                    let priority = entry.priority.unwrap_or(0.5);
+                    let source = EntrySource::Sitemap {
+                        lastmod: entry.lastmod.clone(),
+                    };
+                    f.push_with_priority(normalized, 0, priority, source);
+                }
+            }
+        }
     }
 
     loop {
@@ -112,6 +150,7 @@ async fn run_crawl(
         let seed_url = seed_url.clone();
         let task_config = config.clone();
         let pages_crawled = Arc::clone(&pages_crawled);
+        let entry_source = entry.source.clone();
 
         tokio::spawn(async move {
             let _permit = permit;
@@ -132,6 +171,8 @@ async fn run_crawl(
                 &content_dedup,
                 &robots,
                 &budget,
+                &entry_source,
+                follow_links,
             )
             .await;
 
@@ -169,6 +210,8 @@ async fn process_page(
     content_dedup: &Mutex<ContentDedup>,
     robots: &Mutex<RobotsCache>,
     budget: &Mutex<Budget>,
+    entry_source: &EntrySource,
+    follow_links: bool,
 ) -> anyhow::Result<CrawlResult> {
     let start = Instant::now();
 
@@ -261,7 +304,7 @@ async fn process_page(
     let links_found = links.len();
 
     // Enqueue discovered links (depth check BEFORE dedup — katana pattern)
-    if depth < config.max_depth {
+    if follow_links && depth < config.max_depth {
         for link in &links {
             if let Some(resolved) = resolve_url(url_str, &link.href) {
                 if let Some(normalized) = normalize_url(&resolved) {
@@ -312,8 +355,14 @@ async fn process_page(
         links_found,
         elapsed_ms: start.elapsed().as_millis() as u64,
         error: None,
-        source: None,
-        sitemap_lastmod: None,
+        source: Some(match entry_source {
+            EntrySource::Bfs => "bfs".into(),
+            EntrySource::Sitemap { .. } => "sitemap".into(),
+        }),
+        sitemap_lastmod: match entry_source {
+            EntrySource::Sitemap { lastmod } => lastmod.clone(),
+            _ => None,
+        },
         sitemap_priority: None,
         file_path: None,
     })

@@ -72,7 +72,7 @@ pub async fn crawl(
     };
 
     let crawler = Crawler::new(Arc::clone(&state.http_client), config);
-    let mut rx = crawler.crawl(&req.url);
+    let (mut rx, _discovery) = crawler.crawl(&req.url).await;
     let start = std::time::Instant::now();
 
     let stream = async_stream::stream! {
