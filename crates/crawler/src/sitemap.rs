@@ -1,6 +1,8 @@
 //! Sitemap XML parser and auto-discovery.
 
 use anyhow::Result;
+use flate2::read::GzDecoder;
+use std::io::Read;
 
 /// A single URL entry from a sitemap urlset.
 #[derive(Debug, Clone)]
@@ -25,7 +27,19 @@ pub fn parse_sitemap(xml: &[u8]) -> Result<SitemapContent> {
     use quick_xml::events::Event;
     use quick_xml::Reader;
 
-    let mut reader = Reader::from_reader(xml);
+    // Detect gzip (magic bytes 0x1f, 0x8b)
+    let data = if xml.len() >= 2 && xml[0] == 0x1f && xml[1] == 0x8b {
+        let mut decoder = GzDecoder::new(xml);
+        let mut decompressed = Vec::new();
+        decoder
+            .read_to_end(&mut decompressed)
+            .map_err(|e| anyhow::anyhow!("gzip decompression failed: {e}"))?;
+        decompressed
+    } else {
+        xml.to_vec()
+    };
+
+    let mut reader = Reader::from_reader(data.as_slice());
     reader.config_mut().trim_text(true);
 
     let mut buf = Vec::new();
@@ -238,6 +252,31 @@ mod tests {
         let result = parse_sitemap(xml).unwrap();
         match result {
             SitemapContent::UrlSet(entries) => assert!(entries.is_empty()),
+            _ => panic!("expected UrlSet"),
+        }
+    }
+
+    #[test]
+    fn parse_gzipped_urlset() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let xml = br#"<?xml version="1.0"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <url><loc>https://example.com/gz-page</loc></url>
+        </urlset>"#;
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(xml).unwrap();
+        let gzipped = encoder.finish().unwrap();
+
+        let result = parse_sitemap(&gzipped).unwrap();
+        match result {
+            SitemapContent::UrlSet(entries) => {
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0].url, "https://example.com/gz-page");
+            }
             _ => panic!("expected UrlSet"),
         }
     }
