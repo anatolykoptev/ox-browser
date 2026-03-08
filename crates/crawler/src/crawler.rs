@@ -106,6 +106,20 @@ async fn run_crawl(
         }
     }
 
+    let output_dir = if config.save_to_file {
+        let domain = seed_url.host_str().unwrap_or("unknown");
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let dir = format!("/tmp/ox-browser/crawl/{}_{}", domain, ts);
+        std::fs::create_dir_all(&dir).ok();
+        Some(dir)
+    } else {
+        None
+    };
+    let page_counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
     loop {
         // Stop if receiver dropped (client disconnected).
         if tx.is_closed() {
@@ -151,6 +165,8 @@ async fn run_crawl(
         let task_config = config.clone();
         let pages_crawled = Arc::clone(&pages_crawled);
         let entry_source = entry.source.clone();
+        let output_dir_clone = output_dir.clone();
+        let page_counter = Arc::clone(&page_counter);
 
         tokio::spawn(async move {
             let _permit = permit;
@@ -173,6 +189,8 @@ async fn run_crawl(
                 &budget,
                 &entry_source,
                 follow_links,
+                output_dir_clone,
+                page_counter,
             )
             .await;
 
@@ -212,6 +230,8 @@ async fn process_page(
     budget: &Mutex<Budget>,
     entry_source: &EntrySource,
     follow_links: bool,
+    output_dir: Option<String>,
+    page_counter: Arc<std::sync::atomic::AtomicUsize>,
 ) -> anyhow::Result<CrawlResult> {
     let start = Instant::now();
 
@@ -338,6 +358,10 @@ async fn process_page(
         }
     }
 
+    // Capture status before consuming resp for markdown
+    let status = resp.status;
+    let content_length = resp.body.len();
+
     // Convert to markdown
     let markdown = if config.include_markdown {
         html_to_fit_markdown(&resp.body)
@@ -345,13 +369,51 @@ async fn process_page(
         String::new()
     };
 
+    // Save to file when output_dir is set
+    use std::io::Write;
+
+    let file_path = if let Some(ref dir) = output_dir {
+        if !markdown.is_empty() {
+            let seq = page_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let filename = format!("page_{:04}.md", seq);
+            let path = format!("{}/{}", dir, filename);
+            if std::fs::write(&path, &markdown).is_ok() {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(format!("{}/index.jsonl", dir))
+                {
+                    let _ = writeln!(
+                        f,
+                        r#"{{"url":"{}","file":"{}","status":{}}}"#,
+                        url_str, filename, status
+                    );
+                }
+                Some(path)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // When saved to file, clear inline markdown
+    let result_markdown = if file_path.is_some() {
+        String::new()
+    } else {
+        markdown
+    };
+
     Ok(CrawlResult {
         url: url_str.to_string(),
-        status: resp.status,
+        status,
         depth,
         title,
-        markdown,
-        content_length: resp.body.len(),
+        markdown: result_markdown,
+        content_length,
         links_found,
         elapsed_ms: start.elapsed().as_millis() as u64,
         error: None,
@@ -364,7 +426,7 @@ async fn process_page(
             _ => None,
         },
         sitemap_priority: None,
-        file_path: None,
+        file_path,
     })
 }
 
