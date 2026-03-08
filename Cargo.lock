@@ -2137,6 +2137,7 @@ dependencies = [
  "ox-crawler",
  "ox-http",
  "ox-imagesearch",
+ "ox-intelligence",
  "ox-js",
  "ox-security",
  "readabilityrs",

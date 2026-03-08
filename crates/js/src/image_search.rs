@@ -20,14 +20,10 @@ use super::AppState;
 #[derive(Deserialize)]
 pub struct ImageSearchRequest {
     pub query: String,
-    #[serde(default = "default_max")]
-    pub max_results: usize,
+    /// Max results. If not set, uses server config default.
+    pub max_results: Option<usize>,
     #[serde(default)]
     pub engines: Vec<String>,
-}
-
-fn default_max() -> usize {
-    10
 }
 
 #[derive(Serialize)]
@@ -66,10 +62,11 @@ pub async fn image_search(
         engines.push(Arc::new(BraveImages));
     }
 
+    let max_results = req.max_results.unwrap_or(state.defaults.image_max_results);
     let engine_names: Vec<String> = engines.iter().map(|e| e.name().to_owned()).collect();
     let search = ImageSearchEngine::new(engines);
     let results = search
-        .search(state.http_client.clone(), &req.query, req.max_results)
+        .search(state.http_client.clone(), &req.query, max_results)
         .await;
 
     (

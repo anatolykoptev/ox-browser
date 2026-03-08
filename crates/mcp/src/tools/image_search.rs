@@ -27,13 +27,8 @@ pub struct ImageSearchInput {
     /// Engines to use: "bing", "ddg", "openverse", "pexels", "brave". Default: bing+ddg+openverse.
     #[serde(default)]
     pub engines: Vec<String>,
-    /// Maximum results to return. Default: 10.
-    #[serde(default = "default_max")]
-    pub max_results: usize,
-}
-
-fn default_max() -> usize {
-    10
+    /// Maximum results to return. If not set, uses server config default.
+    pub max_results: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -72,9 +67,10 @@ impl OxMcpServer {
 
         let engine_names: Vec<String> =
             engines.iter().map(|e| e.name().to_owned()).collect();
+        let max_results = input.max_results.unwrap_or(self.defaults.image_max_results);
         let search = ImageSearchEngine::new(engines);
         let images = search
-            .search(self.http_client.clone(), &input.query, input.max_results)
+            .search(self.http_client.clone(), &input.query, max_results)
             .await;
 
         let result = ImageSearchResult {

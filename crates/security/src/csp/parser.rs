@@ -43,9 +43,9 @@ pub fn get_directive_values<'a>(
     directives.iter().find(|d| d.name == name).map(|d| &d.values)
 }
 
-pub fn get_script_src_values<'a>(
-    directives: &'a [CspDirective],
-) -> Option<&'a Vec<String>> {
+pub fn get_script_src_values(
+    directives: &[CspDirective],
+) -> Option<&Vec<String>> {
     get_directive_values(directives, "script-src")
         .or_else(|| get_directive_values(directives, "default-src"))
 }

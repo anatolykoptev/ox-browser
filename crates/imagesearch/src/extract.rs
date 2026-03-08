@@ -185,7 +185,7 @@ fn best_srcset_url(srcset: &Option<String>, base: &Option<Url>) -> Option<String
     let mut best_w: u32 = 0;
 
     for candidate in srcset.split(',') {
-        let parts: Vec<&str> = candidate.trim().split_whitespace().collect();
+        let parts: Vec<&str> = candidate.split_whitespace().collect();
         if parts.is_empty() {
             continue;
         }

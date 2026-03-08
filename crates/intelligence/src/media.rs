@@ -130,13 +130,13 @@ pub fn analyze(html: &str) -> MediaReport {
             videos.push(VideoInfo { src, platform });
         } else {
             // Check first <source> child.
-            node.select("source[src]").iter().next().map(|s| {
+            if let Some(s) = node.select("source[src]").iter().next() {
                 if let Some(src) = s.attr("src") {
                     let src = src.to_string();
                     let platform = classify_video(&src).to_string();
                     videos.push(VideoInfo { src, platform });
                 }
-            });
+            }
         }
     });
 
@@ -147,14 +147,12 @@ pub fn analyze(html: &str) -> MediaReport {
             let src = src.to_string();
             let platform = classify_audio(&src).to_string();
             audio.push(AudioInfo { src, platform });
-        } else {
-            node.select("source[src]").iter().next().map(|s| {
-                if let Some(src) = s.attr("src") {
-                    let src = src.to_string();
-                    let platform = classify_audio(&src).to_string();
-                    audio.push(AudioInfo { src, platform });
-                }
-            });
+        } else if let Some(s) = node.select("source[src]").iter().next() {
+            if let Some(src) = s.attr("src") {
+                let src = src.to_string();
+                let platform = classify_audio(&src).to_string();
+                audio.push(AudioInfo { src, platform });
+            }
         }
     });
 

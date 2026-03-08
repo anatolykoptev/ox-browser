@@ -18,13 +18,8 @@ use super::OxMcpServer;
 pub struct ImageExtractInput {
     /// URL of the page to extract images from.
     pub url: String,
-    /// Minimum image width in pixels. Images with unknown width are kept. Default: 400.
-    #[serde(default = "default_min_width")]
-    pub min_width: u32,
-}
-
-fn default_min_width() -> u32 {
-    400
+    /// Minimum image width in pixels. Images with unknown width are kept.
+    pub min_width: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -57,9 +52,10 @@ impl OxMcpServer {
         let all = extract_images(&resp.body, &input.url);
         let total_on_page = all.len();
 
+        let min_width = input.min_width.unwrap_or(self.defaults.image_min_width);
         let filtered: Vec<ImageResult> = all
             .into_iter()
-            .filter(|img| img.width == 0 || img.width >= input.min_width)
+            .filter(|img| img.width == 0 || img.width >= min_width)
             .collect();
 
         let result = ImageExtractResult {

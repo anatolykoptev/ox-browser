@@ -17,12 +17,8 @@ pub struct FetchRequest {
     pub url: String,
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    #[serde(default = "default_timeout")]
-    pub timeout: u64,
-}
-
-fn default_timeout() -> u64 {
-    15
+    /// Timeout in seconds. If not set, uses server config default.
+    pub timeout: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -95,7 +91,7 @@ mod tests {
         let json = r#"{"url": "https://example.com"}"#;
         let req: FetchRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.url, "https://example.com");
-        assert_eq!(req.timeout, 15);
+        assert!(req.timeout.is_none());
         assert!(req.headers.is_empty());
     }
 

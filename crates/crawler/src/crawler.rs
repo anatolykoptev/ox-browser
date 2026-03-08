@@ -69,6 +69,12 @@ async fn run_crawl(
     }
 
     loop {
+        // Stop if receiver dropped (client disconnected).
+        if tx.is_closed() {
+            tracing::info!("receiver dropped, stopping crawl");
+            break;
+        }
+
         // Check page limit
         let crawled = pages_crawled.load(std::sync::atomic::Ordering::Relaxed);
         if crawled >= config.max_pages {
@@ -109,6 +115,12 @@ async fn run_crawl(
 
         tokio::spawn(async move {
             let _permit = permit;
+
+            // Skip work if receiver already dropped.
+            if tx.is_closed() {
+                return;
+            }
+
             let result = process_page(
                 &entry.url,
                 entry.depth,

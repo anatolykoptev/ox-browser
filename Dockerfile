@@ -21,8 +21,9 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/ox-browser /usr/local/bin/ox-browser
 
+WORKDIR /app
 ENV RUST_LOG=info
 EXPOSE 8901
 
 ENTRYPOINT ["ox-browser"]
-CMD ["serve", "--port", "8901"]
+CMD ["serve", "--config", "/app/config.toml"]

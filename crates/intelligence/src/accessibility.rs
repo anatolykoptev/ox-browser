@@ -27,12 +27,24 @@ pub struct AccessibilityReport {
 /// Analyze HTML for accessibility attributes and compute a 0–100 score.
 pub fn analyze(html: &str) -> AccessibilityReport {
     let doc = Document::from(html);
-    let mut r = AccessibilityReport::default();
-    r.lang = extract_lang(&doc);
-    (r.images_with_alt, r.images_empty_alt, r.images_no_alt) = count_images(&doc);
-    (r.headings, r.h1_count, r.heading_skip) = analyze_headings(&doc);
-    r.landmarks = count_landmarks(&doc);
-    (r.inputs_total, r.inputs_with_label) = count_labeled_inputs(&doc);
+    let lang = extract_lang(&doc);
+    let (images_with_alt, images_empty_alt, images_no_alt) = count_images(&doc);
+    let (headings, h1_count, heading_skip) = analyze_headings(&doc);
+    let landmarks = count_landmarks(&doc);
+    let (inputs_total, inputs_with_label) = count_labeled_inputs(&doc);
+    let mut r = AccessibilityReport {
+        lang,
+        images_with_alt,
+        images_empty_alt,
+        images_no_alt,
+        headings,
+        h1_count,
+        heading_skip,
+        landmarks,
+        inputs_total,
+        inputs_with_label,
+        score: 0,
+    };
     r.score = compute_score(&r);
     r
 }

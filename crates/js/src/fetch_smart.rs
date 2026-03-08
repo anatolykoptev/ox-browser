@@ -15,12 +15,8 @@ use crate::AppState;
 #[allow(dead_code)]
 pub struct FetchSmartRequest {
     pub url: String,
-    #[serde(default = "default_timeout")]
-    pub timeout: u64,
-}
-
-fn default_timeout() -> u64 {
-    30
+    /// Timeout in seconds. If not set, uses server config default.
+    pub timeout: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -153,7 +149,7 @@ mod tests {
     fn fetch_smart_request_defaults() {
         let json = r#"{"url": "https://example.com"}"#;
         let req: FetchSmartRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.timeout, 30);
+        assert!(req.timeout.is_none());
     }
 
     #[test]

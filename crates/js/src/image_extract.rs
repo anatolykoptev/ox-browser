@@ -14,13 +14,8 @@ use super::AppState;
 #[derive(Deserialize)]
 pub struct ImageExtractRequest {
     pub url: String,
-    /// Minimum width in pixels. Default: 400.
-    #[serde(default = "default_min_width")]
-    pub min_width: u32,
-}
-
-fn default_min_width() -> u32 {
-    400
+    /// Minimum width in pixels. If not set, uses server config default.
+    pub min_width: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -68,10 +63,11 @@ pub async fn image_extract(
     let all = extract_images(&resp.body, &req.url);
     let total_on_page = all.len();
 
+    let min_width = req.min_width.unwrap_or(state.defaults.image_min_width);
     // Filter by min_width if dimensions are known
     let filtered: Vec<ImageResult> = all
         .into_iter()
-        .filter(|img| img.width == 0 || img.width >= req.min_width)
+        .filter(|img| img.width == 0 || img.width >= min_width)
         .collect();
 
     (
