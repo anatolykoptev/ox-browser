@@ -7,6 +7,7 @@ mod markdown;
 mod result;
 mod robots;
 mod scope;
+pub mod sitemap;
 
 pub use budget::Budget;
 pub use config::{CrawlConfig, CrawlerSection};
@@ -17,3 +18,4 @@ pub use markdown::{html_to_fit_markdown, html_to_markdown};
 pub use result::{CrawlResult, CrawlStats};
 pub use robots::RobotsCache;
 pub use scope::CrawlScope;
+pub use sitemap::{SitemapContent, SitemapEntry};

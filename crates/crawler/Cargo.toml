@@ -16,6 +16,7 @@ htmd = "0.5"
 dom_query = "0.12"
 tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
+quick-xml = { version = "0.37", features = ["serialize"] }
 anyhow = { workspace = true }
 
 [dev-dependencies]
