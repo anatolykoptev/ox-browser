@@ -147,7 +147,7 @@ impl OxMcpServer {
 
     #[tool(
         name = "crawl",
-        description = "BFS site crawler. Starts from a seed URL and discovers pages up to max_depth. Respects robots.txt, deduplicates URLs and content, converts HTML to markdown. Returns all crawled pages with titles, content, and link counts. Use for site-wide content extraction, documentation crawling, or site mapping."
+        description = "Site crawler with BFS, sitemap, or hybrid discovery. Starts from seed URL, discovers pages via links or sitemap.xml. Respects robots.txt, deduplicates URLs and content, converts HTML to markdown. Supports sitemap filtering, date-based filtering, and file output."
     )]
     async fn crawl(
         &self,
