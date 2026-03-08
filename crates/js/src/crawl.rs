@@ -100,7 +100,7 @@ pub async fn crawl(
 
     let discovery_mode = config.discovery.clone();
     let crawler = Crawler::new(Arc::clone(&state.http_client), config);
-    let (mut rx, discovery) = crawler.crawl(&req.url).await;
+    let (mut rx, discovery, output_dir) = crawler.crawl(&req.url).await;
     let start = std::time::Instant::now();
 
     let stream = async_stream::stream! {
@@ -135,7 +135,7 @@ pub async fn crawl(
             elapsed_ms: start.elapsed().as_millis() as u64,
             discovery: if discovery_mode != "bfs" { Some(discovery_mode.clone()) } else { None },
             sitemaps_found: if discovery.sitemaps_found > 0 { Some(discovery.sitemaps_found) } else { None },
-            output_dir: None,
+            output_dir,
         };
         if let Ok(json) = serde_json::to_string(&summary) {
             yield Ok(Event::default().event("done").data(json));

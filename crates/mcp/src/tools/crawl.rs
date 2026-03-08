@@ -136,7 +136,7 @@ impl OxMcpServer {
 
         let discovery_mode = config.discovery.clone();
         let crawler = Crawler::new(Arc::clone(&self.http_client), config);
-        let (mut rx, discovery) = crawler.crawl(&input.url).await;
+        let (mut rx, discovery, output_dir) = crawler.crawl(&input.url).await;
 
         let mut pages = Vec::new();
         let mut error_count = 0usize;
@@ -154,7 +154,7 @@ impl OxMcpServer {
             elapsed_ms: start.elapsed().as_millis() as u64,
             discovery: if discovery_mode != "bfs" { Some(discovery_mode) } else { None },
             sitemaps_found: if discovery.sitemaps_found > 0 { Some(discovery.sitemaps_found) } else { None },
-            output_dir: None,
+            output_dir,
             pages,
         };
 

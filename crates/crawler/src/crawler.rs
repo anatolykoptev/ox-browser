@@ -35,7 +35,11 @@ impl Crawler {
     pub async fn crawl(
         &self,
         seed_url: &str,
-    ) -> (mpsc::Receiver<CrawlResult>, crate::discovery::DiscoveryResult) {
+    ) -> (
+        mpsc::Receiver<CrawlResult>,
+        crate::discovery::DiscoveryResult,
+        Option<String>,
+    ) {
         let (tx, rx) = mpsc::channel(self.config.concurrency * 2);
         let seed = seed_url.to_string();
         let http = Arc::clone(&self.http);
@@ -51,15 +55,41 @@ impl Crawler {
         let discovery_entries = discovery.entries.clone();
         let follow_links = config.discovery != "sitemap";
 
+        // Create output directory before spawning so callers can access it
+        let output_dir = if config.save_to_file {
+            let domain = url::Url::parse(&seed)
+                .ok()
+                .and_then(|u| u.host_str().map(String::from))
+                .unwrap_or_else(|| "unknown".into());
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let dir = format!("/tmp/ox-browser/crawl/{}_{}", domain, ts);
+            std::fs::create_dir_all(&dir).ok();
+            Some(dir)
+        } else {
+            None
+        };
+
+        let output_dir_clone = output_dir.clone();
         tokio::spawn(async move {
-            if let Err(e) =
-                run_crawl(seed, http, config, tx, discovery_entries, follow_links).await
+            if let Err(e) = run_crawl(
+                seed,
+                http,
+                config,
+                tx,
+                discovery_entries,
+                follow_links,
+                output_dir_clone,
+            )
+            .await
             {
                 tracing::error!("crawl failed: {e}");
             }
         });
 
-        (rx, discovery)
+        (rx, discovery, output_dir)
     }
 }
 
@@ -70,6 +100,7 @@ async fn run_crawl(
     tx: mpsc::Sender<CrawlResult>,
     discovery_entries: Vec<SitemapEntry>,
     follow_links: bool,
+    output_dir: Option<String>,
 ) -> anyhow::Result<()> {
     let seed_url = Url::parse(&seed)?;
     let frontier = Arc::new(Mutex::new(Frontier::new(config.max_pages * 10)));
@@ -106,18 +137,6 @@ async fn run_crawl(
         }
     }
 
-    let output_dir = if config.save_to_file {
-        let domain = seed_url.host_str().unwrap_or("unknown");
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let dir = format!("/tmp/ox-browser/crawl/{}_{}", domain, ts);
-        std::fs::create_dir_all(&dir).ok();
-        Some(dir)
-    } else {
-        None
-    };
     let page_counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     loop {
