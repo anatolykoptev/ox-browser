@@ -28,6 +28,20 @@ pub struct CrawlRequest {
     pub include_markdown: Option<bool>,
     #[serde(default)]
     pub budget: Option<HashMap<String, usize>>,
+    #[serde(default)]
+    pub discovery: Option<String>,
+    #[serde(default)]
+    pub sitemap_url: Option<String>,
+    #[serde(default)]
+    pub sitemap_filter: Option<Vec<String>>,
+    #[serde(default)]
+    pub sitemap_since: Option<String>,
+    #[serde(default)]
+    pub sitemap_max_depth: Option<u32>,
+    #[serde(default)]
+    pub sitemap_max_files: Option<usize>,
+    #[serde(default)]
+    pub save_to_file: Option<bool>,
 }
 
 fn default_max_depth() -> u32 {
@@ -43,6 +57,12 @@ pub struct CrawlSummary {
     pub pages_crawled: usize,
     pub errors: usize,
     pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sitemaps_found: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_dir: Option<String>,
 }
 
 pub async fn crawl(
@@ -68,14 +88,33 @@ pub async fn crawl(
         scope,
         include_markdown,
         budget: req.budget.unwrap_or_default(),
+        discovery: req.discovery.unwrap_or_else(|| "bfs".into()),
+        sitemap_url: req.sitemap_url,
+        sitemap_filter: req.sitemap_filter.unwrap_or_default(),
+        sitemap_since: req.sitemap_since,
+        sitemap_max_depth: req.sitemap_max_depth.unwrap_or(3),
+        sitemap_max_files: req.sitemap_max_files.unwrap_or(50),
+        save_to_file: req.save_to_file.unwrap_or(false),
         ..Default::default()
     };
 
+    let discovery_mode = config.discovery.clone();
     let crawler = Crawler::new(Arc::clone(&state.http_client), config);
-    let (mut rx, _discovery) = crawler.crawl(&req.url).await;
+    let (mut rx, discovery) = crawler.crawl(&req.url).await;
     let start = std::time::Instant::now();
 
     let stream = async_stream::stream! {
+        // Emit sitemap discovery event if applicable
+        if discovery.sitemaps_found > 0 {
+            let sitemap_json = serde_json::json!({
+                "phase": "discover",
+                "sitemaps_found": discovery.sitemaps_found,
+                "urls_found": discovery.urls_total,
+                "urls_filtered": discovery.urls_filtered,
+            });
+            yield Ok::<_, Infallible>(Event::default().event("sitemap").data(sitemap_json.to_string()));
+        }
+
         let mut pages = 0usize;
         let mut errors = 0usize;
 
@@ -94,6 +133,9 @@ pub async fn crawl(
             pages_crawled: pages,
             errors,
             elapsed_ms: start.elapsed().as_millis() as u64,
+            discovery: if discovery_mode != "bfs" { Some(discovery_mode.clone()) } else { None },
+            sitemaps_found: if discovery.sitemaps_found > 0 { Some(discovery.sitemaps_found) } else { None },
+            output_dir: None,
         };
         if let Ok(json) = serde_json::to_string(&summary) {
             yield Ok(Event::default().event("done").data(json));
@@ -145,10 +187,31 @@ mod tests {
             pages_crawled: 42,
             errors: 3,
             elapsed_ms: 5000,
+            discovery: None,
+            sitemaps_found: None,
+            output_dir: None,
         };
         let json = serde_json::to_value(&summary).unwrap();
         assert_eq!(json["pages_crawled"], 42);
         assert_eq!(json["errors"], 3);
         assert_eq!(json["elapsed_ms"], 5000);
+        // Optional fields omitted when None
+        assert!(json.get("discovery").is_none());
+        assert!(json.get("sitemaps_found").is_none());
+    }
+
+    #[test]
+    fn crawl_request_sitemap_params() {
+        let json = r#"{
+            "url": "https://example.com",
+            "discovery": "sitemap",
+            "sitemap_filter": ["posts"],
+            "sitemap_since": "2026-01-01",
+            "save_to_file": true
+        }"#;
+        let req: CrawlRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.discovery.as_deref(), Some("sitemap"));
+        assert_eq!(req.sitemap_filter.as_ref().unwrap()[0], "posts");
+        assert_eq!(req.save_to_file, Some(true));
     }
 }
