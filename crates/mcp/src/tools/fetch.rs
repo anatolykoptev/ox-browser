@@ -27,6 +27,14 @@ pub struct FetchInput {
 pub struct FetchSmartInput {
     /// The URL to fetch with automatic CF bypass.
     pub url: String,
+    /// Save response body to file and return path instead of inline body.
+    /// Default: true. Set to false to get body inline.
+    #[serde(default = "default_true")]
+    pub save_to_file: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Serialize)]
@@ -45,7 +53,10 @@ struct FetchResult {
 #[derive(Serialize)]
 struct FetchSmartResult {
     status: u16,
-    body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_path: Option<String>,
     method: String,
     cf_detected: bool,
     elapsed_ms: u64,
@@ -110,6 +121,8 @@ impl OxMcpServer {
         input: FetchSmartInput,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
+        let save = input.save_to_file;
+        let url = input.url.clone();
         let domain = Url::parse(&input.url)
             .ok()
             .and_then(|u| u.host_str().map(String::from))
@@ -125,14 +138,14 @@ impl OxMcpServer {
 
         let cf = detect_cloudflare(&resp);
         if cf.is_none() {
-            return Ok(smart_ok(resp.status, resp.body, "direct", false, start));
+            return Ok(smart_ok(resp.status, resp.body, "direct", false, start, save, &url));
         }
 
         let challenge = cf.unwrap();
         tracing::info!(domain, challenge = %challenge.challenge_type, "CF detected");
 
         if challenge.challenge_type == ChallengeType::Block {
-            return Ok(smart_ok(resp.status, resp.body, "direct", true, start));
+            return Ok(smart_ok(resp.status, resp.body, "direct", true, start, save, &url));
         }
 
         // Stage 2: Headless solve -> retry with cookies.
@@ -146,6 +159,8 @@ impl OxMcpServer {
                         "solved",
                         true,
                         start,
+                        save,
+                        &url,
                     )),
                     Err(e) => Ok(smart_error(start, &format!("retry failed: {e}"))),
                 }
@@ -161,10 +176,25 @@ fn smart_ok(
     method: &str,
     cf: bool,
     start: Instant,
+    save: bool,
+    url: &str,
 ) -> CallToolResult {
+    let (body_field, file_path) = if save {
+        match ox_core::save::save_response(url, &body) {
+            Ok(path) => (None, Some(path.display().to_string())),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to save response, returning inline");
+                (Some(body), None)
+            }
+        }
+    } else {
+        (Some(body), None)
+    };
+
     let r = FetchSmartResult {
         status,
-        body,
+        body: body_field,
+        file_path,
         method: method.into(),
         cf_detected: cf,
         elapsed_ms: start.elapsed().as_millis() as u64,
@@ -177,7 +207,8 @@ fn smart_ok(
 fn smart_error(start: Instant, msg: &str) -> CallToolResult {
     let r = FetchSmartResult {
         status: 0,
-        body: String::new(),
+        body: None,
+        file_path: None,
         method: "direct".into(),
         cf_detected: false,
         elapsed_ms: start.elapsed().as_millis() as u64,

@@ -5,6 +5,7 @@ mod form;
 mod navigation;
 mod page;
 mod pool;
+pub mod save;
 mod session;
 
 pub use browser::Browser;
