@@ -80,8 +80,8 @@ async fn run_crawl(
     let pages_crawled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let sem = Arc::new(Semaphore::new(config.concurrency));
 
-    // Seed the frontier
-    {
+    // Seed the frontier (skip in sitemap-only mode when we have sitemap entries)
+    if follow_links || discovery_entries.is_empty() {
         let normalized = normalize_url(&seed).unwrap_or_else(|| seed.clone());
         let mut d = dedup.lock().await;
         d.insert(&normalized);
@@ -512,5 +512,43 @@ mod tests {
         assert_eq!(frontier.len(), 3);
         assert!(content_dedup.insert(b"page content"));
         assert!(!content_dedup.insert(b"page content"));
+    }
+
+    #[tokio::test]
+    async fn sitemap_mode_skips_seed_when_entries_exist() {
+        let frontier = Frontier::new(100);
+        let dedup = UrlDedup::new();
+        let mut f = frontier;
+        let mut d = dedup;
+
+        let follow_links = false;
+        let discovery_entries = vec![crate::sitemap::SitemapEntry {
+            url: "https://example.com/page1".into(),
+            lastmod: None,
+            priority: Some(0.8),
+            changefreq: None,
+        }];
+
+        if follow_links {
+            d.insert("https://example.com/");
+            f.push("https://example.com/".into(), 0);
+        }
+
+        for entry in &discovery_entries {
+            if let Some(normalized) = normalize_url(&entry.url) {
+                if d.insert(&normalized) {
+                    f.push_with_priority(
+                        normalized, 0,
+                        entry.priority.unwrap_or(0.5),
+                        EntrySource::Sitemap { lastmod: entry.lastmod.clone() },
+                    );
+                }
+            }
+        }
+
+        assert_eq!(f.len(), 1);
+        let e = f.pop().unwrap();
+        assert!(e.url.contains("page1"));
+        assert!(matches!(e.source, EntrySource::Sitemap { .. }));
     }
 }
