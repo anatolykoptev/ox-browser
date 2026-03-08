@@ -200,6 +200,10 @@ async fn process_page(
                     links_found: 0,
                     elapsed_ms: start.elapsed().as_millis() as u64,
                     error: Some("blocked by robots.txt".into()),
+                    source: None,
+                    sitemap_lastmod: None,
+                    sitemap_priority: None,
+                    file_path: None,
                 });
             }
         }
@@ -219,6 +223,10 @@ async fn process_page(
                 links_found: 0,
                 elapsed_ms: start.elapsed().as_millis() as u64,
                 error: Some(format!("fetch error: {e}")),
+                source: None,
+                sitemap_lastmod: None,
+                sitemap_priority: None,
+                file_path: None,
             });
         }
     };
@@ -237,6 +245,10 @@ async fn process_page(
                 links_found: 0,
                 elapsed_ms: start.elapsed().as_millis() as u64,
                 error: Some("duplicate content".into()),
+                source: None,
+                sitemap_lastmod: None,
+                sitemap_priority: None,
+                file_path: None,
             });
         }
     }
@@ -300,6 +312,10 @@ async fn process_page(
         links_found,
         elapsed_ms: start.elapsed().as_millis() as u64,
         error: None,
+        source: None,
+        sitemap_lastmod: None,
+        sitemap_priority: None,
+        file_path: None,
     })
 }
 

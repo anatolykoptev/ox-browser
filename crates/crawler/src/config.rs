@@ -25,6 +25,20 @@ pub struct CrawlConfig {
     pub include_markdown: bool,
     /// Polite delay between requests in milliseconds.
     pub delay_ms: u64,
+    /// Discovery mode: "bfs", "sitemap", or "hybrid".
+    pub discovery: String,
+    /// Explicit sitemap URL. None = auto-discover.
+    pub sitemap_url: Option<String>,
+    /// Filter sitemap index entries by name (contains match).
+    pub sitemap_filter: Vec<String>,
+    /// Only include URLs with lastmod >= this ISO date.
+    pub sitemap_since: Option<String>,
+    /// Max recursion depth for sitemap index (default 3, 0 = unlimited).
+    pub sitemap_max_depth: u32,
+    /// Max number of sitemap files to process (default 50).
+    pub sitemap_max_files: usize,
+    /// Save page content to files instead of inline.
+    pub save_to_file: bool,
 }
 
 impl Default for CrawlConfig {
@@ -38,6 +52,13 @@ impl Default for CrawlConfig {
             respect_robots: true,
             include_markdown: true,
             delay_ms: 200,
+            discovery: "bfs".into(),
+            sitemap_url: None,
+            sitemap_filter: Vec::new(),
+            sitemap_since: None,
+            sitemap_max_depth: 3,
+            sitemap_max_files: 50,
+            save_to_file: false,
         }
     }
 }
