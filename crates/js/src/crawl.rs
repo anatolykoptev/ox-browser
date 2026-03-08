@@ -98,6 +98,16 @@ pub async fn crawl(
         ..Default::default()
     };
 
+    match config.discovery.as_str() {
+        "bfs" | "sitemap" | "hybrid" => {}
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unknown discovery mode: {other}, expected bfs/sitemap/hybrid"),
+            ));
+        }
+    }
+
     let discovery_mode = config.discovery.clone();
     let crawler = Crawler::new(Arc::clone(&state.http_client), config);
     let (mut rx, discovery, output_dir) = crawler.crawl(&req.url).await;
@@ -198,6 +208,13 @@ mod tests {
         // Optional fields omitted when None
         assert!(json.get("discovery").is_none());
         assert!(json.get("sitemaps_found").is_none());
+    }
+
+    #[test]
+    fn crawl_request_invalid_discovery_rejected() {
+        let json = r#"{"url":"https://example.com","discovery":"invalid"}"#;
+        let req: CrawlRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.discovery.as_deref(), Some("invalid"));
     }
 
     #[test]

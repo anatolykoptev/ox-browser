@@ -134,6 +134,16 @@ impl OxMcpServer {
             ..Default::default()
         };
 
+        match config.discovery.as_str() {
+            "bfs" | "sitemap" | "hybrid" => {}
+            other => {
+                return Err(McpError::invalid_params(
+                    format!("unknown discovery mode: {other}, expected bfs/sitemap/hybrid"),
+                    None,
+                ));
+            }
+        }
+
         let discovery_mode = config.discovery.clone();
         let crawler = Crawler::new(Arc::clone(&self.http_client), config);
         let (mut rx, discovery, output_dir) = crawler.crawl(&input.url).await;
