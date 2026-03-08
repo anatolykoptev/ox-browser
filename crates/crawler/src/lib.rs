@@ -16,6 +16,6 @@ pub use dedup::{is_cycle, normalize_url, ContentDedup, UrlDedup};
 pub use frontier::{EntrySource, Frontier, FrontierEntry};
 pub use markdown::{html_to_fit_markdown, html_to_markdown};
 pub use result::{CrawlResult, CrawlStats};
-pub use robots::RobotsCache;
+pub use robots::{extract_sitemaps, RobotsCache};
 pub use scope::CrawlScope;
 pub use sitemap::{SitemapContent, SitemapEntry};

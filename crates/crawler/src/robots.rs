@@ -72,6 +72,22 @@ impl RobotsCache {
     }
 }
 
+/// Extract `Sitemap:` URLs from a robots.txt body.
+pub fn extract_sitemaps(robots_txt: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(robots_txt);
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.len() > 8 && line[..8].eq_ignore_ascii_case("sitemap:") {
+                Some(line[8..].trim().to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|url| !url.is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +143,21 @@ mod tests {
         let body = b"User-agent: *\nAllow: /\n";
         cache.insert("example.com", body);
         assert!(cache.crawl_delay("example.com").is_none());
+    }
+
+    #[test]
+    fn extracts_sitemap_urls() {
+        let body = b"User-agent: *\nAllow: /\nSitemap: https://example.com/sitemap.xml\nSitemap: https://example.com/sitemap2.xml\n";
+        let urls = extract_sitemaps(body);
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[0], "https://example.com/sitemap.xml");
+        assert_eq!(urls[1], "https://example.com/sitemap2.xml");
+    }
+
+    #[test]
+    fn no_sitemaps_in_robots() {
+        let body = b"User-agent: *\nDisallow: /private/\n";
+        let urls = extract_sitemaps(body);
+        assert!(urls.is_empty());
     }
 }
