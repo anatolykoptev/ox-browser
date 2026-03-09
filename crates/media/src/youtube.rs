@@ -3,7 +3,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerResponse {
-    pub video_details: VideoDetails,
+    pub video_details: Option<VideoDetails>,
     pub streaming_data: Option<StreamingData>,
     pub playability_status: Option<PlayabilityStatus>,
 }
@@ -80,7 +80,12 @@ fn is_audio(f: &PlayerFormat) -> bool {
 }
 
 pub fn build_video_info(pr: &PlayerResponse, max_height: u32) -> YouTubeVideoInfo {
-    let vd = &pr.video_details;
+    let empty_vd = VideoDetails {
+        title: String::new(), author: String::new(),
+        short_description: String::new(), length_seconds: String::new(),
+        view_count: String::new(),
+    };
+    let vd = pr.video_details.as_ref().unwrap_or(&empty_vd);
     let duration = vd.length_seconds.parse::<u64>().ok();
     let views = vd.view_count.parse::<i64>().unwrap_or(0);
     let desc = if vd.short_description.is_empty() { None } else { Some(vd.short_description.clone()) };

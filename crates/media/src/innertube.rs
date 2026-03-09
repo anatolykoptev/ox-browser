@@ -126,6 +126,11 @@ pub async fn fetch_player_response(
 
     if let Some(ref ps) = pr.playability_status {
         tracing::debug!(status = %ps.status, reason = %ps.reason, "innertube playability");
+        if ps.status == "LOGIN_REQUIRED" {
+            return Err(MediaError::FetchFailed(format!(
+                "YouTube bot detection: {}", ps.reason
+            )));
+        }
     }
 
     if has_usable_streams(&pr) {
