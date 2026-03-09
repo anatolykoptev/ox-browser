@@ -9,6 +9,7 @@ members = [
     "crates/crawler",
     "crates/imagesearch",
     "crates/mcp",
+    "crates/media",
 ]
 
 [workspace.package]
