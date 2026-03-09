@@ -93,11 +93,31 @@ pub fn analyze(html: &str) -> SeoReport {
         .select("script[type=\"application/ld+json\"]")
         .iter()
         .map(|n| {
-            let raw = n.text().to_string();
-            let schema_type = serde_json::from_str::<serde_json::Value>(&raw)
+            let raw_full = n.text().to_string();
+            let schema_type = serde_json::from_str::<serde_json::Value>(&raw_full)
                 .ok()
-                .and_then(|v| v.get("@type").and_then(|t| t.as_str()).map(String::from))
+                .and_then(|v| {
+                    v.get("@type").and_then(|t| t.as_str()).map(String::from)
+                        .or_else(|| {
+                            v.get("@graph")
+                                .and_then(|g| g.as_array())
+                                .and_then(|arr| arr.first())
+                                .and_then(|item| item.get("@type"))
+                                .and_then(|t| t.as_str())
+                                .map(String::from)
+                        })
+                })
                 .unwrap_or_default();
+            let raw = if raw_full.len() > 2048 {
+                let end = raw_full.char_indices()
+                    .take_while(|(i, _)| *i <= 2048)
+                    .last()
+                    .map(|(i, c)| i + c.len_utf8())
+                    .unwrap_or(0);
+                format!("{}... ({} bytes truncated)", &raw_full[..end], raw_full.len() - end)
+            } else {
+                raw_full
+            };
             JsonLd { schema_type, raw }
         })
         .collect();
@@ -223,6 +243,30 @@ mod tests {
         </head></html>"#;
         let r = analyze(html);
         assert_eq!(r.score, 100);
+    }
+
+    #[test]
+    fn jsonld_raw_truncated() {
+        let big_json = format!(
+            r#"{{"@context":"https://schema.org","@type":"Article","text":"{}"}}"#,
+            "x".repeat(5000)
+        );
+        let html = format!(
+            r#"<html><head><script type="application/ld+json">{big_json}</script></head></html>"#
+        );
+        let r = analyze(&html);
+        assert_eq!(r.json_ld.len(), 1);
+        assert_eq!(r.json_ld[0].schema_type, "Article");
+        assert!(r.json_ld[0].raw.len() <= 2100, "raw should be truncated, got {}", r.json_ld[0].raw.len());
+    }
+
+    #[test]
+    fn jsonld_graph_type_extraction() {
+        let html = r#"<html><head><script type="application/ld+json">
+            {"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"Test"}]}
+        </script></head></html>"#;
+        let r = analyze(html);
+        assert_eq!(r.json_ld[0].schema_type, "Organization");
     }
 
     #[test]

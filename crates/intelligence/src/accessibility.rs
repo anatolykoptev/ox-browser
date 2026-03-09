@@ -86,6 +86,9 @@ fn analyze_headings(doc: &Document) -> (Vec<HeadingInfo>, u32, bool) {
     levels.dedup();
     let heading_skip = levels.windows(2).any(|w| w[1] > w[0] + 1);
 
+    // Cap output to prevent bloated responses
+    headings.truncate(50);
+
     (headings, h1_count, heading_skip)
 }
 
@@ -181,6 +184,18 @@ mod tests {
             <input type="text">
         </form></body></html>"#);
         assert_eq!((r.inputs_total, r.inputs_with_label), (3, 2));
+    }
+
+    #[test]
+    fn headings_capped_at_50() {
+        let headings_html: String = (0..100)
+            .map(|i| format!("<h2>Heading {i}</h2>"))
+            .collect();
+        let html = format!("<html lang=\"en\"><body><h1>Main</h1>{headings_html}</body></html>");
+        let r = analyze(&html);
+        assert!(r.headings.len() <= 50, "got {} headings", r.headings.len());
+        assert_eq!(r.h1_count, 1);
+        assert!(!r.heading_skip);
     }
 
     #[test]
