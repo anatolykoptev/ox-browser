@@ -1,5 +1,6 @@
 pub mod detect;
 pub mod extract;
+pub mod youtube;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
