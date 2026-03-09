@@ -4,6 +4,10 @@ use crate::pot::{self, PotData};
 use crate::youtube::{PlayerFormat, PlayerResponse};
 use crate::{MediaConfig, MediaError};
 
+/// Mobile User-Agent for MWEB client (iPad Safari).
+const MWEB_USER_AGENT: &str = "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) \
+    AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1";
+
 /// Build JSON request body for the Innertube MWEB client.
 /// When `pot` is provided, includes `visitorData` in client context
 /// and `poToken` in `serviceIntegrityDimensions`.
@@ -84,7 +88,7 @@ pub fn has_usable_streams(pr: &PlayerResponse) -> bool {
 ///
 /// Strategy:
 /// 1. Get session-bound PO Token + visitor data from bgutil-pot
-/// 2. Try MWEB with PO Token + visitor data
+/// 2. Try MWEB with PO Token + visitor data + proper headers
 /// 3. Fall back to MWEB without PO Token
 pub async fn fetch_player_response(
     http_client: &ox_http::HttpClient,
@@ -97,13 +101,19 @@ pub async fn fetch_player_response(
             Ok(pot_data) => {
                 tracing::debug!(video_id, "got session POT, trying MWEB+POT");
                 let body = build_mweb_body(video_id, config, Some(&pot_data));
-                match try_innertube(http_client, &config.innertube_url, &body).await {
+                match try_innertube_with_headers(
+                    &config.innertube_url,
+                    &body,
+                    &pot_data.visitor_data,
+                )
+                .await
+                {
                     Ok(pr) if has_usable_streams(&pr) => {
                         tracing::info!(video_id, "MWEB+POT success");
                         return Ok(pr);
                     }
                     Ok(_) => tracing::debug!(video_id, "MWEB+POT: no usable streams"),
-                    Err(e) => tracing::debug!(video_id, error = %e, "MWEB+POT request failed"),
+                    Err(e) => tracing::debug!(video_id, error = %e, "MWEB+POT failed"),
                 }
             }
             Err(e) => {
@@ -112,9 +122,9 @@ pub async fn fetch_player_response(
         }
     }
 
-    // Fallback: MWEB without PO Token
+    // Fallback: MWEB without PO Token (via ox-http)
     let body = build_mweb_body(video_id, config, None);
-    let pr = try_innertube(http_client, &config.innertube_url, &body).await?;
+    let pr = try_innertube_simple(http_client, &config.innertube_url, &body).await?;
     if has_usable_streams(&pr) {
         tracing::info!(video_id, "MWEB (no POT) success");
         return Ok(pr);
@@ -123,7 +133,47 @@ pub async fn fetch_player_response(
     Err(MediaError::NoVideoFound)
 }
 
-async fn try_innertube(
+/// Innertube call with full YouTube headers (visitor ID, mobile UA).
+/// Uses wreq directly to set headers ox-http can't.
+async fn try_innertube_with_headers(
+    innertube_url: &str,
+    body: &str,
+    visitor_data: &str,
+) -> Result<PlayerResponse, MediaError> {
+    let client = wreq::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| MediaError::FetchFailed(format!("innertube client: {e}")))?;
+
+    let resp = client
+        .post(innertube_url)
+        .header("Content-Type", "application/json")
+        .header("User-Agent", MWEB_USER_AGENT)
+        .header("X-Goog-Visitor-Id", visitor_data)
+        .header("Origin", "https://m.youtube.com")
+        .header("Referer", "https://m.youtube.com/")
+        .body(body.to_owned())
+        .send()
+        .await
+        .map_err(|e| MediaError::FetchFailed(format!("innertube: {e}")))?;
+
+    if !resp.status().is_success() {
+        return Err(MediaError::FetchFailed(format!(
+            "innertube HTTP {}",
+            resp.status()
+        )));
+    }
+
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| MediaError::FetchFailed(format!("innertube read: {e}")))?;
+
+    parse_player_response(&text)
+}
+
+/// Simple innertube call via ox-http (no custom headers).
+async fn try_innertube_simple(
     http_client: &ox_http::HttpClient,
     innertube_url: &str,
     body: &str,
@@ -134,10 +184,17 @@ async fn try_innertube(
         .map_err(|e| MediaError::FetchFailed(format!("innertube: {e}")))?;
 
     if resp.status != 200 {
-        return Err(MediaError::FetchFailed(format!("innertube HTTP {}", resp.status)));
+        return Err(MediaError::FetchFailed(format!(
+            "innertube HTTP {}",
+            resp.status
+        )));
     }
 
-    let pr = serde_json::from_str::<PlayerResponse>(&resp.body)
+    parse_player_response(&resp.body)
+}
+
+fn parse_player_response(text: &str) -> Result<PlayerResponse, MediaError> {
+    let pr = serde_json::from_str::<PlayerResponse>(text)
         .map_err(|e| MediaError::FetchFailed(format!("innertube parse: {e}")))?;
     if let Some(ref ps) = pr.playability_status {
         tracing::debug!(status = %ps.status, reason = %ps.reason, "innertube playability");

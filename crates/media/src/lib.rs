@@ -38,7 +38,7 @@ impl Default for MediaConfig {
             default_max_size_mb: 50.0,
             default_max_results: 1,
             innertube_url: "https://www.youtube.com/youtubei/v1/player".into(),
-            mweb_version: "2.20240304.08.00".into(),
+            mweb_version: "2.20260115.01.00".into(),
             pot_url: String::new(),
         }
     }
