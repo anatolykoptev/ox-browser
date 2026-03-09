@@ -1,10 +1,4 @@
-use regex::Regex;
 use serde::Deserialize;
-use std::sync::LazyLock;
-
-static PLAYER_RESPONSE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"ytInitialPlayerResponse\s*=\s*\{").unwrap()
-});
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,50 +65,6 @@ pub struct YouTubeVideoInfo {
     pub audio_url: Option<String>,
     pub width: u32,
     pub height: u32,
-}
-
-/// Extract balanced JSON object starting at `start` in `s`.
-fn extract_balanced_braces(s: &str, start: usize) -> Option<&str> {
-    let bytes = s.as_bytes();
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut escape = false;
-    for i in start..bytes.len() {
-        let ch = bytes[i];
-        if escape {
-            escape = false;
-            continue;
-        }
-        if ch == b'\\' && in_string {
-            escape = true;
-            continue;
-        }
-        if ch == b'"' {
-            in_string = !in_string;
-            continue;
-        }
-        if in_string {
-            continue;
-        }
-        match ch {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&s[start..=i]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-pub fn find_player_response(html: &str) -> Option<PlayerResponse> {
-    let m = PLAYER_RESPONSE_RE.find(html)?;
-    let json_start = m.start() + m.as_str().find('{').unwrap_or(0);
-    let json_str = extract_balanced_braces(html, json_start)?;
-    serde_json::from_str(json_str).ok()
 }
 
 fn has_direct_url(f: &PlayerFormat) -> bool {
@@ -216,14 +166,6 @@ mod tests {
         let pr: PlayerResponse = serde_json::from_str(json).unwrap();
         let info = build_video_info(&pr, 1080);
         assert!(info.video_url.is_none());
-    }
-
-    #[test]
-    fn extract_player_response_from_html() {
-        let html = r#"<html><script>var ytInitialPlayerResponse = {"videoDetails":{"title":"Found","author":"Me","shortDescription":"","lengthSeconds":"10","viewCount":"1"},"streamingData":{"formats":[{"itag":18,"url":"https://cdn/v.mp4","mimeType":"video/mp4","width":640,"height":360,"bitrate":500000}]}};</script></html>"#;
-        let pr = find_player_response(html);
-        assert!(pr.is_some());
-        assert_eq!(pr.unwrap().video_details.title, "Found");
     }
 
     #[test]
