@@ -49,6 +49,7 @@ pub struct AppState {
     pub cache: Arc<CookieCache>,
     pub http_client: Arc<HttpClient>,
     pub defaults: EndpointDefaults,
+    pub media_config: ox_media::MediaConfig,
 }
 
 /// Incoming solve request body.
@@ -201,6 +202,7 @@ mod tests {
                 HttpClient::new(HttpConfig::default()).unwrap(),
             ),
             defaults: EndpointDefaults::default(),
+            media_config: ox_media::MediaConfig::default(),
         }
     }
 

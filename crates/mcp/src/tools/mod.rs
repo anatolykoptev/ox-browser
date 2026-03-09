@@ -37,6 +37,7 @@ pub struct OxMcpServer {
     pub(crate) cache: Arc<CookieCache>,
     pub(crate) http_client: Arc<HttpClient>,
     pub(crate) defaults: EndpointDefaults,
+    pub(crate) media_config: ox_media::MediaConfig,
     pub(crate) tool_router: ToolRouter<Self>,
 }
 
@@ -46,12 +47,14 @@ impl OxMcpServer {
         cache: Arc<CookieCache>,
         http_client: Arc<HttpClient>,
         defaults: EndpointDefaults,
+        media_config: ox_media::MediaConfig,
     ) -> Self {
         Self {
             provider,
             cache,
             http_client,
             defaults,
+            media_config,
             tool_router: Self::tool_router(),
         }
     }

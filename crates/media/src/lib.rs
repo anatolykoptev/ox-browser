@@ -12,6 +12,37 @@ pub use orchestrator::download;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Media download configuration — externalized constants.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MediaConfig {
+    /// Default max video height when not specified in request (pixels).
+    pub default_max_height: u32,
+    /// Default max file size when not specified in request (MB).
+    pub default_max_size_mb: f64,
+    /// Default max results for generic extraction.
+    pub default_max_results: usize,
+    /// Innertube API endpoint URL.
+    pub innertube_url: String,
+    /// TVHTML5_SIMPLY_EMBEDDED_PLAYER client version.
+    pub tv_embedded_version: String,
+    /// MWEB client version.
+    pub mweb_version: String,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            default_max_height: 1080,
+            default_max_size_mb: 50.0,
+            default_max_results: 1,
+            innertube_url: "https://www.youtube.com/youtubei/v1/player".into(),
+            tv_embedded_version: "2.0".into(),
+            mweb_version: "2.20240304.08.00".into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaRequest {
     pub url: String,

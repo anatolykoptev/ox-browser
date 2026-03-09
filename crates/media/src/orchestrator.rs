@@ -6,43 +6,46 @@ use tracing::{debug, info};
 use crate::detect::{detect_platform, Platform};
 use crate::download::{download_to_file, media_path};
 use crate::extract::{extract_media, MediaKind};
+use crate::innertube;
 use crate::merge::merge_dash;
-use crate::youtube::{build_video_info, find_player_response};
-use crate::{MediaError, MediaFile, MediaRequest, MediaResult, MediaStats, MediaType, Quality};
+use crate::youtube::build_video_info;
+use crate::{MediaConfig, MediaError, MediaFile, MediaRequest, MediaResult, MediaStats, MediaType, Quality};
 
-const DEFAULT_MAX_HEIGHT: u32 = 1080;
-const DEFAULT_MAX_SIZE_MB: f64 = 50.0;
-const DEFAULT_MAX_RESULTS: usize = 1;
-
-/// Main entry point: detect platform, fetch HTML, extract/download media.
+/// Main entry point: detect platform, extract/download media.
 pub async fn download(
     http_client: &ox_http::HttpClient,
     req: &MediaRequest,
+    config: &MediaConfig,
 ) -> Result<MediaResult, MediaError> {
     let platform = detect_platform(&req.url);
-    let max_bytes = (req.max_size_mb.unwrap_or(DEFAULT_MAX_SIZE_MB) * 1_048_576.0) as u64;
+    let max_bytes = (req.max_size_mb.unwrap_or(config.default_max_size_mb) * 1_048_576.0) as u64;
     info!(url = %req.url, ?platform, "starting media download");
 
-    let resp = http_client
-        .get(&req.url)
-        .await
-        .map_err(|e| MediaError::FetchFailed(e.to_string()))?;
-    if resp.status >= 400 {
-        return Err(MediaError::FetchFailed(format!("HTTP {}", resp.status)));
-    }
-
     match platform {
-        Platform::YouTube => download_youtube(&resp.body, &req.url, req, max_bytes).await,
-        Platform::Generic => download_generic(&resp.body, &resp.url, req, max_bytes).await,
+        Platform::YouTube => download_youtube(http_client, &req.url, req, max_bytes, config).await,
+        Platform::Generic => {
+            let resp = http_client
+                .get(&req.url)
+                .await
+                .map_err(|e| MediaError::FetchFailed(e.to_string()))?;
+            if resp.status >= 400 {
+                return Err(MediaError::FetchFailed(format!("HTTP {}", resp.status)));
+            }
+            download_generic(&resp.body, &resp.url, req, max_bytes, config).await
+        }
     }
 }
 
-/// YouTube: parse playerResponse, download video (+ audio if DASH), merge.
+/// YouTube: call Innertube API, download video (+ audio if DASH), merge.
 async fn download_youtube(
-    html: &str, url: &str, req: &MediaRequest, max_bytes: u64,
+    http_client: &ox_http::HttpClient,
+    url: &str, req: &MediaRequest, max_bytes: u64, config: &MediaConfig,
 ) -> Result<MediaResult, MediaError> {
-    let pr = find_player_response(html).ok_or(MediaError::NoVideoFound)?;
-    let info = build_video_info(&pr, req.max_height.unwrap_or(DEFAULT_MAX_HEIGHT));
+    let video_id = innertube::extract_video_id(url)
+        .ok_or_else(|| MediaError::FetchFailed("no video ID in URL".into()))?;
+
+    let pr = innertube::fetch_player_response(http_client, video_id, config).await?;
+    let info = build_video_info(&pr, req.max_height.unwrap_or(config.default_max_height));
     let video_url = info.video_url.as_deref().ok_or(MediaError::NoVideoFound)?;
     debug!(video_url, audio = info.audio_url.is_some(), "YouTube streams found");
 
@@ -86,7 +89,7 @@ async fn download_youtube(
 
 /// Generic: extract media from HTML, filter, download.
 async fn download_generic(
-    html: &str, base_url: &str, req: &MediaRequest, max_bytes: u64,
+    html: &str, base_url: &str, req: &MediaRequest, max_bytes: u64, config: &MediaConfig,
 ) -> Result<MediaResult, MediaError> {
     let mut items = extract_media(html, base_url);
 
@@ -113,7 +116,7 @@ async fn download_generic(
             area(b).cmp(&area(a))
         })
     });
-    items.truncate(req.max_results.unwrap_or(DEFAULT_MAX_RESULTS));
+    items.truncate(req.max_results.unwrap_or(config.default_max_results));
     debug!(count = items.len(), "downloading generic media items");
 
     let mut files = Vec::with_capacity(items.len());

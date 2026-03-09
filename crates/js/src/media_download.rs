@@ -11,7 +11,7 @@ pub async fn media_download(
     State(state): State<AppState>,
     Json(req): Json<MediaRequest>,
 ) -> Result<Json<MediaResult>, (StatusCode, Json<serde_json::Value>)> {
-    match ox_media::download(&state.http_client, &req).await {
+    match ox_media::download(&state.http_client, &req, &state.media_config).await {
         Ok(result) => Ok(Json(result)),
         Err(e) => {
             let status = match &e {

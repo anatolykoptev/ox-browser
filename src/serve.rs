@@ -34,12 +34,15 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         image_min_width: config.images.default_min_width,
     };
 
+    let media_config = config.media.to_media_config();
+
     let http_client = Arc::new(HttpClient::new(http_config)?);
     let state = ox_js::AppState {
         provider,
         cache,
         http_client,
         defaults: defaults.clone(),
+        media_config: media_config.clone(),
     };
     let rest_router = ox_js::router(state.clone());
     let mcp_router = ox_mcp::build_mcp_router(
@@ -47,6 +50,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         state.cache.clone(),
         state.http_client.clone(),
         defaults,
+        media_config,
     );
     let app = rest_router.merge(mcp_router);
 

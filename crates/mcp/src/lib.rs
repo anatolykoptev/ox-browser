@@ -39,8 +39,9 @@ pub fn build_mcp_router(
     cache: Arc<CookieCache>,
     http_client: Arc<HttpClient>,
     defaults: EndpointDefaults,
+    media_config: ox_media::MediaConfig,
 ) -> Router {
-    let server = OxMcpServer::new(provider, cache, http_client, defaults);
+    let server = OxMcpServer::new(provider, cache, http_client, defaults, media_config);
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
         LocalSessionManager::default().into(),

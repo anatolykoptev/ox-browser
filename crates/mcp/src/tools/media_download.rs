@@ -47,7 +47,7 @@ impl OxMcpServer {
             min_width: input.min_width,
         };
 
-        let result = ox_media::download(&self.http_client, &req)
+        let result = ox_media::download(&self.http_client, &req, &self.media_config)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 

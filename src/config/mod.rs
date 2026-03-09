@@ -21,6 +21,7 @@ mod fetch;
 mod http;
 mod images;
 mod log;
+mod media;
 mod proxy;
 mod retry;
 mod server;
@@ -33,6 +34,7 @@ pub use fetch::FetchSection;
 pub use http::HttpSection;
 pub use images::ImagesSection;
 pub use log::LogSection;
+pub use media::MediaSection;
 pub use proxy::ProxySection;
 pub use retry::RetrySection;
 pub use server::ServerSection;
@@ -63,6 +65,7 @@ pub struct ServerConfig {
     pub fetch: FetchSection,
     pub images: ImagesSection,
     pub crawler: CrawlerSection,
+    pub media: MediaSection,
 }
 
 impl ServerConfig {

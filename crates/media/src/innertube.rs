@@ -1,7 +1,5 @@
-use crate::MediaError;
+use crate::{MediaConfig, MediaError};
 use crate::youtube::{PlayerFormat, PlayerResponse};
-
-const INNERTUBE_URL: &str = "https://www.youtube.com/youtubei/v1/player";
 
 /// Innertube API client variants for fallback chain.
 #[derive(Debug, Clone, Copy)]
@@ -69,19 +67,27 @@ fn extract_param<'a>(url: &'a str, key: &str) -> Option<&'a str> {
 }
 
 /// Build JSON request body for the Innertube API.
-pub fn build_request_body(video_id: &str, client: InnertubeClient) -> String {
+pub fn build_request_body(video_id: &str, client: InnertubeClient, config: &MediaConfig) -> String {
     match client {
         InnertubeClient::TvEmbedded => format!(
-            r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"TVHTML5_SIMPLY_EMBEDDED_PLAYER","clientVersion":"2.0","clientScreen":"EMBED"}}}}}}"#
+            r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"TVHTML5_SIMPLY_EMBEDDED_PLAYER","clientVersion":"{}","clientScreen":"EMBED"}}}}}}"#,
+            config.tv_embedded_version,
         ),
         InnertubeClient::MWeb => format!(
-            r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"MWEB","clientVersion":"2.20240304.08.00"}}}}}}"#
+            r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"MWEB","clientVersion":"{}"}}}}}}"#,
+            config.mweb_version,
         ),
     }
 }
 
 /// Check whether a `PlayerResponse` has usable streams with direct URLs.
 pub fn has_usable_streams(pr: &PlayerResponse) -> bool {
+    // Reject non-OK playability (UNPLAYABLE, LOGIN_REQUIRED, ERROR)
+    if let Some(ref ps) = pr.playability_status {
+        if ps.status != "OK" {
+            return false;
+        }
+    }
     let Some(sd) = &pr.streaming_data else {
         return false;
     };
@@ -94,11 +100,12 @@ pub fn has_usable_streams(pr: &PlayerResponse) -> bool {
 pub async fn fetch_player_response(
     http_client: &ox_http::HttpClient,
     video_id: &str,
+    config: &MediaConfig,
 ) -> Result<PlayerResponse, MediaError> {
     for &client in FALLBACK_CHAIN {
-        let body = build_request_body(video_id, client);
+        let body = build_request_body(video_id, client, config);
         let resp = http_client
-            .post(INNERTUBE_URL, &body, "application/json")
+            .post(&config.innertube_url, &body, "application/json")
             .await
             .map_err(|e| MediaError::FetchFailed(e.to_string()))?;
 
@@ -161,14 +168,16 @@ mod tests {
 
     #[test]
     fn build_body_tv_embedded() {
-        let body = build_request_body("testid12345", InnertubeClient::TvEmbedded);
+        let cfg = MediaConfig::default();
+        let body = build_request_body("testid12345", InnertubeClient::TvEmbedded, &cfg);
         assert!(body.contains("TVHTML5_SIMPLY_EMBEDDED_PLAYER"));
         assert!(body.contains("testid12345"));
     }
 
     #[test]
     fn build_body_mweb() {
-        let body = build_request_body("testid12345", InnertubeClient::MWeb);
+        let cfg = MediaConfig::default();
+        let body = build_request_body("testid12345", InnertubeClient::MWeb, &cfg);
         assert!(body.contains("MWEB"));
         assert!(body.contains("testid12345"));
     }

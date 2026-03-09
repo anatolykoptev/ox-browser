@@ -11,6 +11,15 @@ static PLAYER_RESPONSE_RE: LazyLock<Regex> = LazyLock::new(|| {
 pub struct PlayerResponse {
     pub video_details: VideoDetails,
     pub streaming_data: Option<StreamingData>,
+    pub playability_status: Option<PlayabilityStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayabilityStatus {
+    pub status: String,
+    #[serde(default)]
+    pub reason: String,
 }
 
 #[derive(Debug, Deserialize)]
