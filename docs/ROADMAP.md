@@ -105,7 +105,7 @@ media, fonts, PWA, API discovery. One `POST /analyze` -> complete intelligence r
 - [x] Media: image formats, video/audio, srcset, CDN detection
 - [x] Fonts: Google Fonts, Adobe Fonts, @font-face
 - [x] PWA: manifest, service worker, theme-color
-- [x] API Discovery: fetch/axios endpoints, GraphQL, WebSocket, __NEXT_DATA__
+- [x] API Discovery: fetch/axios endpoints, GraphQL, WebSocket, __NEXT_DATA__, WebMCP, public API
 
 **Depends on:** Phase 2
 
@@ -326,6 +326,42 @@ See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
 **Result:** Full site crawler with 3 discovery modes, SSE streaming, markdown output, sitemap support, gzip. Output denoised for MCP consumption. ~2000 LOC, 272 tests total.
 **Depends on:** Phase 1, Phase 4.7
 
+## Phase 5.6: WebMCP + Public API + SSRF Protection (v0.7.0) ✅
+
+**Goal:** Detect WebMCP (W3C) support and public API surfaces, fix SSRF vulnerability.
+
+### WebMCP Detection ✅
+
+- [x] Declarative: `<form toolname="..." tooldescription="...">` → tool name, description, inputs
+- [x] Imperative: `navigator.modelContext` / `modelContext.registerTool` in scripts
+- [x] `WebMcpReport`: supported, declarative_tools, imperative_detected, tool_count
+- [x] 3 tests (declarative, imperative, no false positives)
+
+### Public API Detection ✅
+
+- [x] `<link rel="api|service|service-desc|describedby">` detection
+- [x] `<a>` links matching swagger/openapi/redoc/rapidoc patterns
+- [x] OpenAPI/Swagger config objects in HTML (SwaggerUI, "openapi": "3")
+- [x] `.well-known/` paths: openid-configuration, ai-plugin.json, mcp.json, host-meta
+- [x] GraphQL playground hints (graphiql, graphql-playground)
+- [x] `PublicApiReport`: detected, openapi_url, api_links, well_known, hints
+- [x] 4 tests (OpenAPI link, well-known, Swagger UI, GraphQL playground, no false positives)
+
+### SSRF Protection ✅
+
+- [x] `middleware_ssrf`: outermost middleware blocking private/reserved IPs
+- [x] DNS resolution before check (blocks Docker service names like `redis`, `postgres`)
+- [x] Blocked ranges: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 (CGNAT), ::1, fc00::/7, fe80::/10, broadcast, documentation
+- [x] Scheme validation (only http/https)
+- [x] 10 tests
+
+### Module Split ✅
+
+- [x] `api_discovery.rs` (476 lines) → directory module: mod.rs (122), webmcp.rs (64), public_api.rs (77), tests.rs (212)
+
+**Result:** WebMCP + public API detection, SSRF fix. 17 new tests, ~360 new LOC.
+**Depends on:** Phase 2.5
+
 ## Phase 6: Polish (v1.0.0)
 
 **Goal:** Production-ready quality.
@@ -342,7 +378,7 @@ See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
 ```
 ox-browser/crates/
 ├── core/           — Page, DOM (dom_query), forms, navigation, URL resolution
-├── http/           — HTTP client (wreq+BoringSSL), proxy, cookies, CF detection, middleware
+├── http/           — HTTP client (wreq+BoringSSL), proxy, cookies, CF detection, SSRF protection, middleware
 ├── intelligence/   — Web intelligence: fingerprint, SEO, perf, a11y, content, media, fonts, PWA, API
 ├── security/       — Security: 14 modules, Observatory scoring, AST analysis, 6 crate integrations
 ├── imagesearch/    — Image search: Bing, DDG parsers + WRR fusion (13 tests)
