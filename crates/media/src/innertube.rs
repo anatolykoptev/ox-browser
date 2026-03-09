@@ -1,18 +1,22 @@
 //! YouTube Innertube API client — direct player requests with PO Token support.
 
-use crate::pot;
+use crate::pot::{self, PotData};
 use crate::youtube::{PlayerFormat, PlayerResponse};
 use crate::{MediaConfig, MediaError};
 
 /// Build JSON request body for the Innertube MWEB client.
-/// Includes PO Token in `serviceIntegrityDimensions` when provided.
-pub fn build_mweb_body(video_id: &str, config: &MediaConfig, po_token: Option<&str>) -> String {
-    let pot_field = po_token
-        .map(|t| format!(r#","serviceIntegrityDimensions":{{"poToken":"{t}"}}"#))
+/// When `pot` is provided, includes `visitorData` in client context
+/// and `poToken` in `serviceIntegrityDimensions`.
+pub fn build_mweb_body(video_id: &str, config: &MediaConfig, pot: Option<&PotData>) -> String {
+    let visitor = pot
+        .map(|p| format!(r#","visitorData":"{}""#, p.visitor_data))
+        .unwrap_or_default();
+    let sid = pot
+        .map(|p| format!(r#","serviceIntegrityDimensions":{{"poToken":"{}"}}"#, p.po_token))
         .unwrap_or_default();
 
     format!(
-        r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"MWEB","clientVersion":"{}"}}}}{pot_field}}}"#,
+        r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"MWEB","clientVersion":"{}"{visitor}}}}}{sid}}}"#,
         config.mweb_version,
     )
 }
@@ -79,29 +83,31 @@ pub fn has_usable_streams(pr: &PlayerResponse) -> bool {
 /// Fetch player response from YouTube Innertube API.
 ///
 /// Strategy:
-/// 1. If bgutil-pot URL is configured, get PO Token and try MWEB with it
-/// 2. Try MWEB without PO Token as fallback
+/// 1. Get session-bound PO Token + visitor data from bgutil-pot
+/// 2. Try MWEB with PO Token + visitor data
+/// 3. Fall back to MWEB without PO Token
 pub async fn fetch_player_response(
     http_client: &ox_http::HttpClient,
     video_id: &str,
     config: &MediaConfig,
 ) -> Result<PlayerResponse, MediaError> {
-    // Try with PO Token first if bgutil-pot is configured
+    // Try with session-bound PO Token if bgutil-pot is configured
     if !config.pot_url.is_empty() {
-        match pot::fetch_po_token(&config.pot_url, video_id).await {
-            Ok(token) => {
-                tracing::debug!(video_id, "got PO token, trying MWEB+POT");
-                let body = build_mweb_body(video_id, config, Some(&token));
-                if let Ok(pr) = try_innertube(http_client, &config.innertube_url, &body).await {
-                    if has_usable_streams(&pr) {
+        match pot::fetch_pot_session(&config.pot_url).await {
+            Ok(pot_data) => {
+                tracing::debug!(video_id, "got session POT, trying MWEB+POT");
+                let body = build_mweb_body(video_id, config, Some(&pot_data));
+                match try_innertube(http_client, &config.innertube_url, &body).await {
+                    Ok(pr) if has_usable_streams(&pr) => {
                         tracing::info!(video_id, "MWEB+POT success");
                         return Ok(pr);
                     }
-                    tracing::debug!(video_id, "MWEB+POT: no usable streams");
+                    Ok(_) => tracing::debug!(video_id, "MWEB+POT: no usable streams"),
+                    Err(e) => tracing::debug!(video_id, error = %e, "MWEB+POT request failed"),
                 }
             }
             Err(e) => {
-                tracing::warn!(video_id, error = %e, "PO token generation failed, trying without");
+                tracing::warn!(video_id, error = %e, "POT session failed, trying without");
             }
         }
     }
@@ -131,8 +137,12 @@ async fn try_innertube(
         return Err(MediaError::FetchFailed(format!("innertube HTTP {}", resp.status)));
     }
 
-    serde_json::from_str::<PlayerResponse>(&resp.body)
-        .map_err(|e| MediaError::FetchFailed(format!("innertube parse: {e}")))
+    let pr = serde_json::from_str::<PlayerResponse>(&resp.body)
+        .map_err(|e| MediaError::FetchFailed(format!("innertube parse: {e}")))?;
+    if let Some(ref ps) = pr.playability_status {
+        tracing::debug!(status = %ps.status, reason = %ps.reason, "innertube playability");
+    }
+    Ok(pr)
 }
 
 #[cfg(test)]
@@ -156,16 +166,23 @@ mod tests {
         assert!(body.contains("MWEB"));
         assert!(body.contains("testid12345"));
         assert!(!body.contains("poToken"));
+        assert!(!body.contains("visitorData"));
     }
 
     #[test]
     fn build_body_mweb_with_pot() {
         let cfg = MediaConfig::default();
-        let body = build_mweb_body("testid12345", &cfg, Some("tok_abc123"));
+        let pot = PotData {
+            po_token: "tok_abc123".into(),
+            visitor_data: "visitor_xyz".into(),
+        };
+        let body = build_mweb_body("testid12345", &cfg, Some(&pot));
         assert!(body.contains("MWEB"));
         assert!(body.contains("testid12345"));
         assert!(body.contains("tok_abc123"));
         assert!(body.contains("poToken"));
+        assert!(body.contains("visitor_xyz"));
+        assert!(body.contains("visitorData"));
     }
 
     #[test]
