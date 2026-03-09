@@ -1,4 +1,5 @@
 pub mod detect;
+pub mod download;
 pub mod extract;
 pub mod youtube;
 
