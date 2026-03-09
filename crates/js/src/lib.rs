@@ -9,6 +9,7 @@ mod image_extract;
 mod image_search;
 mod readability;
 mod security;
+mod site_audit;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -87,6 +88,7 @@ pub fn router(state: AppState) -> Router {
         .route("/images/extract", post(image_extract::image_extract))
         .route("/readability", post(readability::readability))
         .route("/crawl", post(crawl::crawl))
+        .route("/site-audit", post(site_audit::site_audit))
         .with_state(state)
 }
 
