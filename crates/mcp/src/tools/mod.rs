@@ -7,6 +7,7 @@ mod image_extract;
 mod image_search;
 mod readability;
 mod security;
+mod site_audit;
 mod solve;
 
 use std::sync::Arc;
@@ -26,6 +27,7 @@ pub use image_search::ImageSearchInput;
 pub use readability::ReadabilityInput;
 pub use security::SecurityScanInput;
 pub use crawl::CrawlInput;
+pub use site_audit::SiteAuditInput;
 pub use solve::SolveCfInput;
 
 /// MCP server exposing ox-browser capabilities as tools.
@@ -154,5 +156,16 @@ impl OxMcpServer {
         Parameters(input): Parameters<CrawlInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_crawl(input).await
+    }
+
+    #[tool(
+        name = "site_audit",
+        description = "Comprehensive site audit with scores and actionable recommendations. Analyzes SEO (meta tags, OG, structured data), performance (compression, caching, lazy loading), accessibility (lang, alt text, headings, ARIA), and security (headers, CSP, cookies, CORS). Returns overall score (0-100), per-category grades (A+ to F), prioritized findings with fix instructions. Use focus parameter to narrow: \"seo\", \"performance\", \"accessibility\", \"security\", or \"all\" (default)."
+    )]
+    async fn site_audit(
+        &self,
+        Parameters(input): Parameters<SiteAuditInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_site_audit(input).await
     }
 }
