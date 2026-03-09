@@ -36,6 +36,7 @@ ox-core = { path = "crates/core" }
 ox-http = { path = "crates/http" }
 ox-js = { path = "crates/js" }
 ox-crawler = { path = "crates/crawler" }
+ox-media = { path = "crates/media" }
 ox-mcp = { path = "crates/mcp" }
 axum = "0.8"
 async-trait = "0.1"

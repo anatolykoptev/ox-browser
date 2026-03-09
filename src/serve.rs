@@ -50,6 +50,9 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     );
     let app = rest_router.merge(mcp_router);
 
+    // Background task: clean up media files older than 7 days (runs every 24h)
+    ox_media::cleanup::spawn_cleanup_task();
+
     let addr = format!("{}:{}", config.server.bind, config.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("ox-browser server listening on {addr} (REST + MCP)");
