@@ -1,27 +1,19 @@
-//! YouTube Innertube API client — direct player requests with PO Token support.
+//! YouTube Innertube API client — direct player requests via ANDROID_VR.
 
-use crate::pot::{self, PotData};
 use crate::youtube::{PlayerFormat, PlayerResponse};
 use crate::{MediaConfig, MediaError};
 
-/// Mobile User-Agent for MWEB client (iPad Safari).
-const MWEB_USER_AGENT: &str = "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) \
-    AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1";
+/// Android VR User-Agent (Oculus).
+const ANDROID_VR_UA: &str = "com.google.android.apps.youtube.vr.oculus/1.60.19 \
+    (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
 
-/// Build JSON request body for the Innertube MWEB client.
-/// When `pot` is provided, includes `visitorData` in client context
-/// and `poToken` in `serviceIntegrityDimensions`.
-pub fn build_mweb_body(video_id: &str, config: &MediaConfig, pot: Option<&PotData>) -> String {
-    let visitor = pot
-        .map(|p| format!(r#","visitorData":"{}""#, p.visitor_data))
-        .unwrap_or_default();
-    let sid = pot
-        .map(|p| format!(r#","serviceIntegrityDimensions":{{"poToken":"{}"}}"#, p.po_token))
-        .unwrap_or_default();
-
+/// Build JSON request body for the Innertube ANDROID_VR client.
+/// This client returns direct URLs without signature cipher,
+/// doesn't require PO Tokens, and works from datacenter IPs via proxy.
+pub fn build_android_vr_body(video_id: &str, config: &MediaConfig) -> String {
     format!(
-        r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"MWEB","clientVersion":"{}"{visitor}}}}}{sid}}}"#,
-        config.mweb_version,
+        r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"ANDROID_VR","clientVersion":"{}","androidSdkVersion":32}}}}}}"#,
+        config.android_vr_version,
     )
 }
 
@@ -84,75 +76,35 @@ pub fn has_usable_streams(pr: &PlayerResponse) -> bool {
     sd.formats.iter().any(has_direct) || sd.adaptive_formats.iter().any(has_direct)
 }
 
-/// Fetch player response from YouTube Innertube API.
+/// Fetch player response from YouTube Innertube API using ANDROID_VR client.
 ///
-/// Strategy:
-/// 1. Get session-bound PO Token + visitor data from bgutil-pot
-/// 2. Try MWEB with PO Token + visitor data + proper headers
-/// 3. Fall back to MWEB without PO Token
+/// ANDROID_VR doesn't require PO Tokens and returns direct stream URLs.
+/// Uses wreq with proxy support since datacenter IPs are blocked by YouTube.
+/// `proxy_url` overrides config proxy (used for sticky sessions).
 pub async fn fetch_player_response(
-    http_client: &ox_http::HttpClient,
     video_id: &str,
     config: &MediaConfig,
+    proxy_url: &str,
 ) -> Result<PlayerResponse, MediaError> {
-    // Try with session-bound PO Token if bgutil-pot is configured
-    if !config.pot_url.is_empty() {
-        match pot::fetch_pot_session(&config.pot_url).await {
-            Ok(pot_data) => {
-                tracing::debug!(video_id, "got session POT, trying MWEB+POT");
-                let body = build_mweb_body(video_id, config, Some(&pot_data));
-                match try_innertube_with_headers(
-                    &config.innertube_url,
-                    &body,
-                    &pot_data.visitor_data,
-                )
-                .await
-                {
-                    Ok(pr) if has_usable_streams(&pr) => {
-                        tracing::info!(video_id, "MWEB+POT success");
-                        return Ok(pr);
-                    }
-                    Ok(_) => tracing::debug!(video_id, "MWEB+POT: no usable streams"),
-                    Err(e) => tracing::debug!(video_id, error = %e, "MWEB+POT failed"),
-                }
-            }
-            Err(e) => {
-                tracing::warn!(video_id, error = %e, "POT session failed, trying without");
-            }
-        }
+    let body = build_android_vr_body(video_id, config);
+    let mut builder = wreq::Client::builder()
+        .timeout(std::time::Duration::from_secs(20));
+
+    if !proxy_url.is_empty() {
+        let proxy = wreq::Proxy::all(proxy_url)
+            .map_err(|e| MediaError::FetchFailed(format!("proxy: {e}")))?;
+        builder = builder.proxy(proxy);
     }
 
-    // Fallback: MWEB without PO Token (via ox-http)
-    let body = build_mweb_body(video_id, config, None);
-    let pr = try_innertube_simple(http_client, &config.innertube_url, &body).await?;
-    if has_usable_streams(&pr) {
-        tracing::info!(video_id, "MWEB (no POT) success");
-        return Ok(pr);
-    }
-
-    Err(MediaError::NoVideoFound)
-}
-
-/// Innertube call with full YouTube headers (visitor ID, mobile UA).
-/// Uses wreq directly to set headers ox-http can't.
-async fn try_innertube_with_headers(
-    innertube_url: &str,
-    body: &str,
-    visitor_data: &str,
-) -> Result<PlayerResponse, MediaError> {
-    let client = wreq::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
+    let client = builder
         .build()
         .map_err(|e| MediaError::FetchFailed(format!("innertube client: {e}")))?;
 
     let resp = client
-        .post(innertube_url)
+        .post(&config.innertube_url)
         .header("Content-Type", "application/json")
-        .header("User-Agent", MWEB_USER_AGENT)
-        .header("X-Goog-Visitor-Id", visitor_data)
-        .header("Origin", "https://m.youtube.com")
-        .header("Referer", "https://m.youtube.com/")
-        .body(body.to_owned())
+        .header("User-Agent", ANDROID_VR_UA)
+        .body(body)
         .send()
         .await
         .map_err(|e| MediaError::FetchFailed(format!("innertube: {e}")))?;
@@ -169,37 +121,19 @@ async fn try_innertube_with_headers(
         .await
         .map_err(|e| MediaError::FetchFailed(format!("innertube read: {e}")))?;
 
-    parse_player_response(&text)
-}
-
-/// Simple innertube call via ox-http (no custom headers).
-async fn try_innertube_simple(
-    http_client: &ox_http::HttpClient,
-    innertube_url: &str,
-    body: &str,
-) -> Result<PlayerResponse, MediaError> {
-    let resp = http_client
-        .post(innertube_url, body, "application/json")
-        .await
-        .map_err(|e| MediaError::FetchFailed(format!("innertube: {e}")))?;
-
-    if resp.status != 200 {
-        return Err(MediaError::FetchFailed(format!(
-            "innertube HTTP {}",
-            resp.status
-        )));
-    }
-
-    parse_player_response(&resp.body)
-}
-
-fn parse_player_response(text: &str) -> Result<PlayerResponse, MediaError> {
-    let pr = serde_json::from_str::<PlayerResponse>(text)
+    let pr = serde_json::from_str::<PlayerResponse>(&text)
         .map_err(|e| MediaError::FetchFailed(format!("innertube parse: {e}")))?;
+
     if let Some(ref ps) = pr.playability_status {
         tracing::debug!(status = %ps.status, reason = %ps.reason, "innertube playability");
     }
-    Ok(pr)
+
+    if has_usable_streams(&pr) {
+        tracing::info!(video_id, "ANDROID_VR success");
+        return Ok(pr);
+    }
+
+    Err(MediaError::NoVideoFound)
 }
 
 #[cfg(test)]
@@ -217,29 +151,12 @@ mod tests {
     }
 
     #[test]
-    fn build_body_mweb_no_pot() {
+    fn build_body_android_vr() {
         let cfg = MediaConfig::default();
-        let body = build_mweb_body("testid12345", &cfg, None);
-        assert!(body.contains("MWEB"));
+        let body = build_android_vr_body("testid12345", &cfg);
+        assert!(body.contains("ANDROID_VR"));
         assert!(body.contains("testid12345"));
-        assert!(!body.contains("poToken"));
-        assert!(!body.contains("visitorData"));
-    }
-
-    #[test]
-    fn build_body_mweb_with_pot() {
-        let cfg = MediaConfig::default();
-        let pot = PotData {
-            po_token: "tok_abc123".into(),
-            visitor_data: "visitor_xyz".into(),
-        };
-        let body = build_mweb_body("testid12345", &cfg, Some(&pot));
-        assert!(body.contains("MWEB"));
-        assert!(body.contains("testid12345"));
-        assert!(body.contains("tok_abc123"));
-        assert!(body.contains("poToken"));
-        assert!(body.contains("visitor_xyz"));
-        assert!(body.contains("visitorData"));
+        assert!(body.contains("androidSdkVersion"));
     }
 
     #[test]

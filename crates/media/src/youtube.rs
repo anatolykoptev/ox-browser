@@ -91,32 +91,34 @@ pub fn build_video_info(pr: &PlayerResponse, max_height: u32) -> YouTubeVideoInf
     let mut height = 0u32;
 
     if let Some(sd) = &pr.streaming_data {
-        // Try combined formats first (video+audio in one stream)
         let best_combined = sd.formats.iter()
             .filter(|f| has_direct_url(f) && is_video(f) && f.height <= max_height)
             .max_by_key(|f| (f.height, f.bitrate));
 
-        if let Some(f) = best_combined {
-            video_url = f.url.clone();
-            width = f.width;
-            height = f.height;
-        } else {
-            // Fallback to adaptive (DASH) formats
-            let best_video = sd.adaptive_formats.iter()
-                .filter(|f| has_direct_url(f) && is_video(f) && f.height <= max_height)
-                .max_by_key(|f| (f.height, f.bitrate));
-            let best_audio = sd.adaptive_formats.iter()
-                .filter(|f| has_direct_url(f) && is_audio(f))
-                .max_by_key(|f| f.bitrate);
+        let best_adaptive = sd.adaptive_formats.iter()
+            .filter(|f| has_direct_url(f) && is_video(f) && f.height <= max_height)
+            .max_by_key(|f| (f.height, f.bitrate));
 
-            if let Some(v) = best_video {
+        // Prefer DASH adaptive if it offers higher resolution than combined.
+        let combined_h = best_combined.map_or(0, |f| f.height);
+        let adaptive_h = best_adaptive.map_or(0, |f| f.height);
+
+        if adaptive_h > combined_h {
+            if let Some(v) = best_adaptive {
                 video_url = v.url.clone();
                 width = v.width;
                 height = v.height;
             }
+            let best_audio = sd.adaptive_formats.iter()
+                .filter(|f| has_direct_url(f) && is_audio(f))
+                .max_by_key(|f| f.bitrate);
             if let Some(a) = best_audio {
                 audio_url = a.url.clone();
             }
+        } else if let Some(f) = best_combined {
+            video_url = f.url.clone();
+            width = f.width;
+            height = f.height;
         }
     }
 

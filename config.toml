@@ -54,8 +54,8 @@
 # default_max_size_mb = 50.0       # max file size (MB)
 # default_max_results = 1          # max results for generic extraction
 # innertube_url = "https://www.youtube.com/youtubei/v1/player"
-# mweb_version = "2.20240304.08.00"
-pot_url = "http://bgutil-pot:4416" # bgutil-pot sidecar for YouTube PO Tokens
+# android_vr_version = "1.60.19"   # ANDROID_VR client version
+# proxy_url = ""                   # set via MEDIA_PROXY_URL env var
 
 [log]
 # level = "info"                   # info, debug, warn, error, trace

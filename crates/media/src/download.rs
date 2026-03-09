@@ -27,11 +27,13 @@ pub fn media_path(platform: &str, url: &str, ext: &str) -> PathBuf {
 /// Streaming download with size limit.
 ///
 /// Downloads to a `.part` file first, renames on success, cleans up on error.
+/// Optional `proxy_url` for sites that block datacenter IPs.
 /// Returns total bytes written.
 pub async fn download_to_file(
     url: &str,
     dest: &Path,
     max_size_bytes: u64,
+    proxy_url: &str,
 ) -> Result<u64, MediaError> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
@@ -41,8 +43,14 @@ pub async fn download_to_file(
 
     let part_path = dest.with_extension("part");
 
-    let client = wreq::Client::builder()
-        .timeout(DOWNLOAD_TIMEOUT)
+    let mut builder = wreq::Client::builder()
+        .timeout(DOWNLOAD_TIMEOUT);
+    if !proxy_url.is_empty() {
+        let proxy = wreq::Proxy::all(proxy_url)
+            .map_err(|e| MediaError::DownloadFailed(format!("proxy: {e}")))?;
+        builder = builder.proxy(proxy);
+    }
+    let client = builder
         .build()
         .map_err(|e| MediaError::DownloadFailed(format!("client: {e}")))?;
 

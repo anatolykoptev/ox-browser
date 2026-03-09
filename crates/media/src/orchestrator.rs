@@ -11,6 +11,7 @@ use crate::merge::merge_dash;
 use crate::youtube::build_video_info;
 use crate::{MediaConfig, MediaError, MediaFile, MediaRequest, MediaResult, MediaStats, MediaType, Quality};
 
+
 /// Main entry point: detect platform, extract/download media.
 pub async fn download(
     http_client: &ox_http::HttpClient,
@@ -22,7 +23,7 @@ pub async fn download(
     info!(url = %req.url, ?platform, "starting media download");
 
     match platform {
-        Platform::YouTube => download_youtube(http_client, &req.url, req, max_bytes, config).await,
+        Platform::YouTube => download_youtube(&req.url, req, max_bytes, config).await,
         Platform::Generic => {
             let resp = http_client
                 .get(&req.url)
@@ -38,23 +39,22 @@ pub async fn download(
 
 /// YouTube: call Innertube API, download video (+ audio if DASH), merge.
 async fn download_youtube(
-    http_client: &ox_http::HttpClient,
     url: &str, req: &MediaRequest, max_bytes: u64, config: &MediaConfig,
 ) -> Result<MediaResult, MediaError> {
     let video_id = innertube::extract_video_id(url)
         .ok_or_else(|| MediaError::FetchFailed("no video ID in URL".into()))?;
 
-    let pr = innertube::fetch_player_response(http_client, video_id, config).await?;
+    let proxy = &config.proxy_url;
+    let pr = innertube::fetch_player_response(video_id, config, proxy).await?;
     let info = build_video_info(&pr, req.max_height.unwrap_or(config.default_max_height));
     let video_url = info.video_url.as_deref().ok_or(MediaError::NoVideoFound)?;
     debug!(video_url, audio = info.audio_url.is_some(), "YouTube streams found");
-
     let video_dest = media_path("yt", url, "mp4");
-    let video_size = download_to_file(video_url, &video_dest, max_bytes).await?;
+    let video_size = download_to_file(video_url, &video_dest, max_bytes, proxy).await?;
 
     let (final_path, final_size, merged) = if let Some(ref audio_url) = info.audio_url {
         let audio_dest = media_path("yt", &format!("{url}_audio"), "m4a");
-        download_to_file(audio_url, &audio_dest, max_bytes).await?;
+        download_to_file(audio_url, &audio_dest, max_bytes, proxy).await?;
         let merged_dest = media_path("yt", &format!("{url}_merged"), "mp4");
         merge_dash(&video_dest, &audio_dest, &merged_dest)
             .map_err(|e| MediaError::MergeFailed(e.to_string()))?;
@@ -123,7 +123,7 @@ async fn download_generic(
     for item in &items {
         let ext = url_extension(&item.url, item.media_kind);
         let dest = media_path("generic", &item.url, ext);
-        let size = download_to_file(&item.url, &dest, max_bytes).await?;
+        let size = download_to_file(&item.url, &dest, max_bytes, "").await?;
         files.push(MediaFile {
             path: dest.to_string_lossy().into_owned(),
             size_bytes: size,

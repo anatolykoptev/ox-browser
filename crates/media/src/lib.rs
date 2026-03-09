@@ -5,7 +5,6 @@ pub mod extract;
 pub mod innertube;
 pub mod merge;
 pub mod orchestrator;
-pub mod pot;
 pub mod youtube;
 
 pub use orchestrator::download;
@@ -25,10 +24,10 @@ pub struct MediaConfig {
     pub default_max_results: usize,
     /// Innertube API endpoint URL.
     pub innertube_url: String,
-    /// MWEB client version.
-    pub mweb_version: String,
-    /// bgutil-pot sidecar URL for PO Token generation (empty = disabled).
-    pub pot_url: String,
+    /// ANDROID_VR client version for Innertube.
+    pub android_vr_version: String,
+    /// Rotating proxy URL for YouTube API (empty = direct).
+    pub proxy_url: String,
 }
 
 impl Default for MediaConfig {
@@ -38,8 +37,8 @@ impl Default for MediaConfig {
             default_max_size_mb: 50.0,
             default_max_results: 1,
             innertube_url: "https://www.youtube.com/youtubei/v1/player".into(),
-            mweb_version: "2.20260115.01.00".into(),
-            pot_url: String::new(),
+            android_vr_version: "1.60.19".into(),
+            proxy_url: String::new(),
         }
     }
 }
