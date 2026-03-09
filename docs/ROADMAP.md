@@ -323,7 +323,7 @@ See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
 - [x] JSON-LD raw truncated to 2KB (UTF-8-safe) with @graph type extraction
 - [x] Headings capped at 50 (scoring computed on full set)
 
-**Result:** Full site crawler with 3 discovery modes, SSE streaming, markdown output, sitemap support, gzip. Output denoised for MCP consumption. ~2000 LOC, 272 tests total.
+**Result:** Full site crawler with 3 discovery modes, SSE streaming, markdown output, sitemap support, gzip. Output denoised for MCP consumption. ~2000 LOC.
 **Depends on:** Phase 1, Phase 4.7
 
 ## Phase 5.6: WebMCP + Public API + SSRF Protection (v0.7.0) ✅
@@ -362,14 +362,21 @@ See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
 **Result:** WebMCP + public API detection, SSRF fix. 17 new tests, ~360 new LOC.
 **Depends on:** Phase 2.5
 
+### Rust Edition 2024 ✅
+
+- [x] Upgraded from edition 2021 to 2024 (Rust 1.93)
+- [x] Fixed implicit borrowing patterns (`ref` removal)
+- [x] Wrapped `set_var`/`remove_var` in `unsafe` blocks (process-wide mutation)
+- [x] 584 tests pass
+
 ## Phase 6: Polish (v1.0.0)
 
 **Goal:** Production-ready quality.
 
-- [ ] CI/CD: GitHub Actions (test, lint, build, release)
+- [x] CI/CD: GitHub Actions (test, lint, build, release) — `release.yml` builds x86_64+aarch64
 - [ ] Benchmarks (parsing, analysis, CF solve time)
 - [ ] Crate documentation (rustdoc, 60%+ coverage)
-- [ ] GoReleaser-style binary releases
+- [x] Binary releases via GitHub Actions (cross-compiled, 2 targets)
 
 **Depends on:** Phases 1-5
 
@@ -383,7 +390,7 @@ ox-browser/crates/
 ├── security/       — Security: 14 modules, Observatory scoring, AST analysis, 6 crate integrations
 ├── imagesearch/    — Image search: Bing, DDG parsers + WRR fusion (13 tests)
 ├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze, /security, /images/search
-├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 6 tools)
+├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 9 tools)
 ├── crawler/        — Site crawler (BFS/DFS, robots.txt, rate limiting, markdown output)
 └── src/            — Binary: CLI + server startup
 ```
@@ -407,7 +414,7 @@ ox-browser/crates/
 | Tech detection | 7,000+ (rswappalyzer) | No | No |
 | Web intelligence | 9 modules (SEO, perf, a11y, ...) | No | No |
 | Security audit | 14 modules, 135 tests, Observatory | No | No |
-| MCP server | 8 tools, Streamable HTTP | No | No |
+| MCP server | 9 tools, Streamable HTTP | No | No |
 | HTTP API | /fetch, /analyze, /security | No | No |
 
 **Ecosystem:**
