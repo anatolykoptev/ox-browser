@@ -49,5 +49,13 @@
 # min_dimension = 200              # extraction filter: skip images < this (px)
 # rrf_k = 60.0                    # Reciprocal Rank Fusion constant
 
+[media]
+# default_max_height = 1080        # max video height (px)
+# default_max_size_mb = 50.0       # max file size (MB)
+# default_max_results = 1          # max results for generic extraction
+# innertube_url = "https://www.youtube.com/youtubei/v1/player"
+# mweb_version = "2.20240304.08.00"
+pot_url = "http://bgutil-pot:4416" # bgutil-pot sidecar for YouTube PO Tokens
+
 [log]
 # level = "info"                   # info, debug, warn, error, trace

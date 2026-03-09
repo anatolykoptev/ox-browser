@@ -1,22 +1,24 @@
-use crate::{MediaConfig, MediaError};
+//! YouTube Innertube API client — direct player requests with PO Token support.
+
+use crate::pot;
 use crate::youtube::{PlayerFormat, PlayerResponse};
+use crate::{MediaConfig, MediaError};
 
-/// Innertube API client variants for fallback chain.
-#[derive(Debug, Clone, Copy)]
-pub enum InnertubeClient {
-    TvEmbedded,
-    MWeb,
+/// Build JSON request body for the Innertube MWEB client.
+/// Includes PO Token in `serviceIntegrityDimensions` when provided.
+pub fn build_mweb_body(video_id: &str, config: &MediaConfig, po_token: Option<&str>) -> String {
+    let pot_field = po_token
+        .map(|t| format!(r#","serviceIntegrityDimensions":{{"poToken":"{t}"}}"#))
+        .unwrap_or_default();
+
+    format!(
+        r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"MWEB","clientVersion":"{}"}}}}{pot_field}}}"#,
+        config.mweb_version,
+    )
 }
-
-/// Ordered fallback chain of clients to try.
-pub const FALLBACK_CHAIN: &[InnertubeClient] = &[
-    InnertubeClient::TvEmbedded,
-    InnertubeClient::MWeb,
-];
 
 /// Extract 11-char video ID from any YouTube URL format.
 pub fn extract_video_id(url: &str) -> Option<&str> {
-    // youtu.be/ID
     if let Some(rest) = url
         .strip_prefix("https://youtu.be/")
         .or_else(|| url.strip_prefix("http://youtu.be/"))
@@ -24,16 +26,13 @@ pub fn extract_video_id(url: &str) -> Option<&str> {
         return take_video_id(rest);
     }
 
-    // Find the path portion after the host
     let path_start = url.find("youtube.com")?;
     let after_host = &url[path_start + "youtube.com".len()..];
 
-    // /watch?v=ID or /watch#...?v=ID
     if after_host.starts_with("/watch") {
         return extract_param(url, "v");
     }
 
-    // /embed/ID, /shorts/ID, /v/ID
     for prefix in &["/embed/", "/shorts/", "/v/"] {
         if let Some(rest) = after_host.strip_prefix(prefix) {
             return take_video_id(rest);
@@ -43,7 +42,6 @@ pub fn extract_video_id(url: &str) -> Option<&str> {
     None
 }
 
-/// Take up to 11 alphanumeric/dash/underscore chars as video ID.
 fn take_video_id(s: &str) -> Option<&str> {
     let end = s
         .find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
@@ -53,36 +51,19 @@ fn take_video_id(s: &str) -> Option<&str> {
     if id.len() == 11 { Some(id) } else { None }
 }
 
-/// Extract a query parameter value from a URL.
 fn extract_param<'a>(url: &'a str, key: &str) -> Option<&'a str> {
     let query_start = url.find('?')?;
     let query = &url[query_start + 1..];
     for pair in query.split('&') {
-        if let Some(val) = pair.strip_prefix(key).and_then(|r| r.strip_prefix('='))
-        {
+        if let Some(val) = pair.strip_prefix(key).and_then(|r| r.strip_prefix('=')) {
             return take_video_id(val);
         }
     }
     None
 }
 
-/// Build JSON request body for the Innertube API.
-pub fn build_request_body(video_id: &str, client: InnertubeClient, config: &MediaConfig) -> String {
-    match client {
-        InnertubeClient::TvEmbedded => format!(
-            r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"TVHTML5_SIMPLY_EMBEDDED_PLAYER","clientVersion":"{}","clientScreen":"EMBED"}}}}}}"#,
-            config.tv_embedded_version,
-        ),
-        InnertubeClient::MWeb => format!(
-            r#"{{"videoId":"{video_id}","context":{{"client":{{"clientName":"MWEB","clientVersion":"{}"}}}}}}"#,
-            config.mweb_version,
-        ),
-    }
-}
-
 /// Check whether a `PlayerResponse` has usable streams with direct URLs.
 pub fn has_usable_streams(pr: &PlayerResponse) -> bool {
-    // Reject non-OK playability (UNPLAYABLE, LOGIN_REQUIRED, ERROR)
     if let Some(ref ps) = pr.playability_status {
         if ps.status != "OK" {
             return false;
@@ -95,41 +76,63 @@ pub fn has_usable_streams(pr: &PlayerResponse) -> bool {
     sd.formats.iter().any(has_direct) || sd.adaptive_formats.iter().any(has_direct)
 }
 
-/// Try each Innertube client in the fallback chain and return the first
-/// `PlayerResponse` with usable (directly downloadable) streams.
+/// Fetch player response from YouTube Innertube API.
+///
+/// Strategy:
+/// 1. If bgutil-pot URL is configured, get PO Token and try MWEB with it
+/// 2. Try MWEB without PO Token as fallback
 pub async fn fetch_player_response(
     http_client: &ox_http::HttpClient,
     video_id: &str,
     config: &MediaConfig,
 ) -> Result<PlayerResponse, MediaError> {
-    for &client in FALLBACK_CHAIN {
-        let body = build_request_body(video_id, client, config);
-        let resp = http_client
-            .post(&config.innertube_url, &body, "application/json")
-            .await
-            .map_err(|e| MediaError::FetchFailed(e.to_string()))?;
-
-        if resp.status != 200 {
-            tracing::debug!(
-                ?client,
-                status = resp.status,
-                "innertube client returned non-200"
-            );
-            continue;
-        }
-
-        match serde_json::from_str::<PlayerResponse>(&resp.body) {
-            Ok(pr) if has_usable_streams(&pr) => return Ok(pr),
-            Ok(_) => {
-                tracing::debug!(?client, "no usable streams");
+    // Try with PO Token first if bgutil-pot is configured
+    if !config.pot_url.is_empty() {
+        match pot::fetch_po_token(&config.pot_url, video_id).await {
+            Ok(token) => {
+                tracing::debug!(video_id, "got PO token, trying MWEB+POT");
+                let body = build_mweb_body(video_id, config, Some(&token));
+                if let Ok(pr) = try_innertube(http_client, &config.innertube_url, &body).await {
+                    if has_usable_streams(&pr) {
+                        tracing::info!(video_id, "MWEB+POT success");
+                        return Ok(pr);
+                    }
+                    tracing::debug!(video_id, "MWEB+POT: no usable streams");
+                }
             }
             Err(e) => {
-                tracing::debug!(?client, %e, "failed to parse player response");
+                tracing::warn!(video_id, error = %e, "PO token generation failed, trying without");
             }
         }
     }
 
+    // Fallback: MWEB without PO Token
+    let body = build_mweb_body(video_id, config, None);
+    let pr = try_innertube(http_client, &config.innertube_url, &body).await?;
+    if has_usable_streams(&pr) {
+        tracing::info!(video_id, "MWEB (no POT) success");
+        return Ok(pr);
+    }
+
     Err(MediaError::NoVideoFound)
+}
+
+async fn try_innertube(
+    http_client: &ox_http::HttpClient,
+    innertube_url: &str,
+    body: &str,
+) -> Result<PlayerResponse, MediaError> {
+    let resp = http_client
+        .post(innertube_url, body, "application/json")
+        .await
+        .map_err(|e| MediaError::FetchFailed(format!("innertube: {e}")))?;
+
+    if resp.status != 200 {
+        return Err(MediaError::FetchFailed(format!("innertube HTTP {}", resp.status)));
+    }
+
+    serde_json::from_str::<PlayerResponse>(&resp.body)
+        .map_err(|e| MediaError::FetchFailed(format!("innertube parse: {e}")))
 }
 
 #[cfg(test)]
@@ -137,49 +140,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extract_video_id_watch() {
-        let url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
-        assert_eq!(extract_video_id(url), Some("dQw4w9WgXcQ"));
-    }
-
-    #[test]
-    fn extract_video_id_short_url() {
-        let url = "https://youtu.be/dQw4w9WgXcQ";
-        assert_eq!(extract_video_id(url), Some("dQw4w9WgXcQ"));
-    }
-
-    #[test]
-    fn extract_video_id_embed() {
-        let url = "https://www.youtube.com/embed/dQw4w9WgXcQ";
-        assert_eq!(extract_video_id(url), Some("dQw4w9WgXcQ"));
-    }
-
-    #[test]
-    fn extract_video_id_shorts() {
-        let url = "https://www.youtube.com/shorts/dQw4w9WgXcQ";
-        assert_eq!(extract_video_id(url), Some("dQw4w9WgXcQ"));
-    }
-
-    #[test]
-    fn extract_video_id_none() {
+    fn extract_video_id_all_formats() {
+        assert_eq!(extract_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
+        assert_eq!(extract_video_id("https://youtu.be/dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
+        assert_eq!(extract_video_id("https://www.youtube.com/embed/dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
+        assert_eq!(extract_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
         assert_eq!(extract_video_id("https://www.youtube.com/"), None);
         assert_eq!(extract_video_id("https://example.com"), None);
     }
 
     #[test]
-    fn build_body_tv_embedded() {
+    fn build_body_mweb_no_pot() {
         let cfg = MediaConfig::default();
-        let body = build_request_body("testid12345", InnertubeClient::TvEmbedded, &cfg);
-        assert!(body.contains("TVHTML5_SIMPLY_EMBEDDED_PLAYER"));
+        let body = build_mweb_body("testid12345", &cfg, None);
+        assert!(body.contains("MWEB"));
         assert!(body.contains("testid12345"));
+        assert!(!body.contains("poToken"));
     }
 
     #[test]
-    fn build_body_mweb() {
+    fn build_body_mweb_with_pot() {
         let cfg = MediaConfig::default();
-        let body = build_request_body("testid12345", InnertubeClient::MWeb, &cfg);
+        let body = build_mweb_body("testid12345", &cfg, Some("tok_abc123"));
         assert!(body.contains("MWEB"));
         assert!(body.contains("testid12345"));
+        assert!(body.contains("tok_abc123"));
+        assert!(body.contains("poToken"));
     }
 
     #[test]
@@ -192,6 +178,13 @@ mod tests {
     #[test]
     fn no_usable_streams_signature_cipher_only() {
         let json = r#"{"videoDetails":{"title":"T","author":"A","shortDescription":"","lengthSeconds":"60","viewCount":"1"},"streamingData":{"formats":[{"itag":18,"signatureCipher":"s=xxx&url=https://cdn/v.mp4","mimeType":"video/mp4","width":640,"height":360,"bitrate":500000}]}}"#;
+        let pr: PlayerResponse = serde_json::from_str(json).unwrap();
+        assert!(!has_usable_streams(&pr));
+    }
+
+    #[test]
+    fn unplayable_status_returns_false() {
+        let json = r#"{"videoDetails":{"title":"T","author":"","shortDescription":"","lengthSeconds":"0","viewCount":"0"},"streamingData":{"formats":[{"itag":18,"url":"https://cdn/v.mp4","mimeType":"video/mp4","width":640,"height":360,"bitrate":500000}]},"playabilityStatus":{"status":"UNPLAYABLE","reason":"blocked"}}"#;
         let pr: PlayerResponse = serde_json::from_str(json).unwrap();
         assert!(!has_usable_streams(&pr));
     }

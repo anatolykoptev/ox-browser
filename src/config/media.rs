@@ -1,4 +1,4 @@
-//! Media download settings — YouTube Innertube client versions, defaults.
+//! Media download settings — YouTube Innertube client versions, PO Token, defaults.
 
 use serde::Deserialize;
 
@@ -13,10 +13,10 @@ pub struct MediaSection {
     pub default_max_results: usize,
     /// Innertube API endpoint URL.
     pub innertube_url: String,
-    /// TVHTML5_SIMPLY_EMBEDDED_PLAYER client version.
-    pub tv_embedded_version: String,
     /// MWEB client version.
     pub mweb_version: String,
+    /// bgutil-pot sidecar URL for PO Token generation (empty = disabled).
+    pub pot_url: String,
 }
 
 impl Default for MediaSection {
@@ -27,8 +27,8 @@ impl Default for MediaSection {
             default_max_size_mb: cfg.default_max_size_mb,
             default_max_results: cfg.default_max_results,
             innertube_url: cfg.innertube_url,
-            tv_embedded_version: cfg.tv_embedded_version,
             mweb_version: cfg.mweb_version,
+            pot_url: cfg.pot_url,
         }
     }
 }
@@ -41,8 +41,8 @@ impl MediaSection {
             default_max_size_mb: self.default_max_size_mb,
             default_max_results: self.default_max_results,
             innertube_url: self.innertube_url.clone(),
-            tv_embedded_version: self.tv_embedded_version.clone(),
             mweb_version: self.mweb_version.clone(),
+            pot_url: self.pot_url.clone(),
         }
     }
 }
