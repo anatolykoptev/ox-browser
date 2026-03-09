@@ -5,6 +5,7 @@ mod crawl;
 mod fetch;
 mod image_extract;
 mod image_search;
+mod media_download;
 mod readability;
 mod security;
 mod site_audit;
@@ -23,6 +24,7 @@ use rmcp::{tool, tool_router};
 pub use analyze::AnalyzeInput;
 pub use fetch::{FetchInput, FetchSmartInput};
 pub use image_extract::ImageExtractInput;
+pub use media_download::MediaDownloadInput;
 pub use image_search::ImageSearchInput;
 pub use readability::ReadabilityInput;
 pub use security::SecurityScanInput;
@@ -156,6 +158,17 @@ impl OxMcpServer {
         Parameters(input): Parameters<CrawlInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_crawl(input).await
+    }
+
+    #[tool(
+        name = "media_download",
+        description = "Download video or extract images from any URL. Fetches the page, finds media (video tags, og:video, og:image, img tags, JSON-LD, inline JS), downloads files. For YouTube: parses player data for direct video URLs. Returns file paths and metadata."
+    )]
+    async fn media_download(
+        &self,
+        Parameters(input): Parameters<MediaDownloadInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_media_download(input).await
     }
 
     #[tool(

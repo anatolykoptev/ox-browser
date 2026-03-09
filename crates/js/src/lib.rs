@@ -7,6 +7,7 @@ mod fetch;
 mod fetch_smart;
 mod image_extract;
 mod image_search;
+mod media_download;
 mod readability;
 mod security;
 mod site_audit;
@@ -86,6 +87,7 @@ pub fn router(state: AppState) -> Router {
         .route("/security", post(security::security_scan))
         .route("/images/search", post(image_search::image_search))
         .route("/images/extract", post(image_extract::image_extract))
+        .route("/media/download", post(media_download::media_download))
         .route("/readability", post(readability::readability))
         .route("/crawl", post(crawl::crawl))
         .route("/site-audit", post(site_audit::site_audit))
