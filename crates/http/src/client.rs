@@ -57,7 +57,7 @@ impl HttpClient {
         }
 
         // CF solver (between retry and cloudflare_detect).
-        if let (Some(ref provider), Some(ref cache)) = (&config.cookie_provider, &config.cookie_cache) {
+        if let (Some(provider), Some(cache)) = (&config.cookie_provider, &config.cookie_cache) {
             middlewares.push(solver_middleware(Arc::clone(provider), Arc::clone(cache)));
         }
 

@@ -54,14 +54,16 @@ mod tests {
     #[test]
     fn save_and_read_back() {
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("OUTPUT_DIR", dir.path());
+        // SAFETY: test runs single-threaded, no concurrent env access.
+        unsafe { std::env::set_var("OUTPUT_DIR", dir.path()) };
 
         let path = save_response("https://example.com/page", "<html>test</html>").unwrap();
         assert!(path.exists());
         assert_eq!(fs::read_to_string(&path).unwrap(), "<html>test</html>");
         assert!(path.file_name().unwrap().to_str().unwrap().starts_with("example.com_"));
 
-        std::env::remove_var("OUTPUT_DIR");
+        // SAFETY: test runs single-threaded, no concurrent env access.
+        unsafe { std::env::remove_var("OUTPUT_DIR") };
     }
 
     #[test]
