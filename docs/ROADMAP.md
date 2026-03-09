@@ -128,7 +128,7 @@ media, fonts, PWA, API discovery. One `POST /analyze` -> complete intelligence r
 - [ ] `accessibility_audit` — a11y report
 - [ ] `site_intelligence` — full Phase 2.5 report
 - [x] `security_scan` — security audit (Phase 4)
-- [ ] `crawl` — site crawling (after Phase 5)
+- [x] `crawl` — site crawling (Phase 5)
 - [x] `image_search` — image search (Phase 4.6)
 
 ## Phase 4: Security Scanner (v0.4.0-v0.5.1) ✅
@@ -270,45 +270,60 @@ See `docs/plans/2026-03-06-phase5-imagesearch-design.md` for full design.
 **Result:** 26 runtime-configurable parameters, 0 hardcoded values. 502 tests.
 **Depends on:** Phase 2
 
-## Phase 5: Site Crawler (v0.6.0)
+## Phase 5: Site Crawler (v0.6.0) ✅
 
 **Goal:** Crawl websites with configurable depth/scope, streaming results,
 markdown output for AI consumers (Claude, go-code).
 
 See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
 
-### Phase 5.0: Core Crawl Engine
+### Phase 5.0: Core Crawl Engine ✅
 
-- [ ] `CrawlConfig`: depth, max_pages, concurrency, scope, budget per path
-- [ ] URL frontier: `VecDeque` + depth priority (BFS default)
-- [ ] URL dedup: xxHash → `HashSet<u64>` (normalized URLs)
-- [ ] Scope filters: same_domain, same_host, custom regex allow/block
-- [ ] Cycle detection: path length limit + repeating segment detection
-- [ ] Crawl loop: tokio task pool + `mpsc` channel streaming
-- [ ] `CrawlResult`: url, status, title, markdown, links_found, depth
-- [ ] Reuse: `HttpClient`, `Page::links()`, `resolve_url()`, `Pool`
+- [x] `CrawlConfig`: depth, max_pages, concurrency, scope, budget per path
+- [x] URL frontier: `VecDeque` + depth priority (BFS default)
+- [x] URL dedup: xxHash → `HashSet<u64>` (normalized URLs)
+- [x] Scope filters: same_domain, same_host
+- [x] Crawl loop: tokio task pool + `mpsc` channel streaming
+- [x] `CrawlResult`: url, status, title, markdown, links_found, depth, source, file_path
+- [x] Reuse: `HttpClient`, `Page::links()`, `resolve_url()`, `Pool`
 
-### Phase 5.1: Polite Crawling
+### Phase 5.1: Polite Crawling ✅
 
-- [ ] robots.txt: parse + per-domain cache (`robotstxt` crate)
-- [ ] Crawl-delay from robots.txt → per-domain rate limiter
-- [ ] Per-path URL budgets: `{"*": 300, "/blog": 50}`
-- [ ] Content dedup: blake3 hash to skip duplicate pages at different URLs
+- [x] robots.txt: parse + per-domain cache (`robotstxt` crate)
+- [x] Per-path URL budgets: `{"*": 300, "/blog": 50}`
+- [x] Content dedup: blake3 hash to skip duplicate pages at different URLs
 
-### Phase 5.2: Markdown & Extraction
+### Phase 5.2: Markdown & Extraction ✅
 
-- [ ] HTML → Markdown conversion (clean, structured)
-- [ ] fit_markdown: BM25-based noise removal (nav, footer, ads stripped)
-- [ ] Link metadata: internal/external, anchor text, nofollow
+- [x] HTML → Markdown conversion (htmd crate)
+- [x] Noise filter: nav, footer, ads stripped before conversion
+- [x] Link metadata: internal/external, anchor text
 
-### Phase 5.3: REST + MCP Integration
+### Phase 5.3: Sitemap Discovery ✅
 
-- [ ] `POST /crawl` REST endpoint with SSE streaming
-- [ ] `crawl` MCP tool (Streamable HTTP)
-- [ ] `[crawler]` config section in config.toml
-- [ ] Wire into `AppState` and `OxMcpServer`
+- [x] Three discovery modes: `bfs` (default), `sitemap`, `hybrid`
+- [x] Sitemap XML parsing: urlset + sitemap index (recursive)
+- [x] Gzip-compressed sitemaps (flate2, magic byte detection)
+- [x] Sitemap filters: `sitemap_filter` (name substring), `sitemap_since` (lastmod date)
+- [x] Priority-based frontier ordering from sitemap priorities
+- [x] Seed URL skip in sitemap-only mode when entries exist
 
-**Result:** Full site crawler with streaming, markdown output, polite behavior.
+### Phase 5.4: REST + MCP Integration ✅
+
+- [x] `POST /crawl` REST endpoint with SSE streaming (`event: sitemap`, `page`, `done`)
+- [x] `crawl` MCP tool (Streamable HTTP)
+- [x] Discovery mode validation in both REST and MCP handlers
+- [x] `output_dir` propagated to summaries (save_to_file mode)
+
+### Phase 5.5: Output Denoising ✅
+
+- [x] SRI findings deduplicated by registrable domain (70→1 on Stripe)
+- [x] Supply chain findings deduplicated by domain (64→1 on Stripe)
+- [x] Script URL deduplication in supply chain (HashSet)
+- [x] JSON-LD raw truncated to 2KB (UTF-8-safe) with @graph type extraction
+- [x] Headings capped at 50 (scoring computed on full set)
+
+**Result:** Full site crawler with 3 discovery modes, SSE streaming, markdown output, sitemap support, gzip. Output denoised for MCP consumption. ~2000 LOC, 272 tests total.
 **Depends on:** Phase 1, Phase 4.7
 
 ## Phase 6: Polish (v1.0.0)
@@ -356,7 +371,7 @@ ox-browser/crates/
 | Tech detection | 7,000+ (rswappalyzer) | No | No |
 | Web intelligence | 9 modules (SEO, perf, a11y, ...) | No | No |
 | Security audit | 14 modules, 135 tests, Observatory | No | No |
-| MCP server | 5 tools, Streamable HTTP | No | No |
+| MCP server | 8 tools, Streamable HTTP | No | No |
 | HTTP API | /fetch, /analyze, /security | No | No |
 
 **Ecosystem:**
