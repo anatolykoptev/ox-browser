@@ -10,6 +10,7 @@ use crate::middleware_logging::logging_middleware;
 use crate::middleware_ratelimit::rate_limit_middleware;
 use crate::middleware_retry::retry_middleware;
 use crate::middleware_solver::solver_middleware;
+use crate::middleware_ssrf::ssrf_middleware;
 use crate::profile_hints::browser_headers;
 use crate::{HttpConfig, HttpError, HttpResponse, Result};
 
@@ -37,7 +38,10 @@ impl HttpClient {
 
         let mut middlewares: Vec<MiddlewareFn> = Vec::new();
 
-        // Outermost: logging (only when debug enabled).
+        // Outermost: SSRF protection (before any other processing).
+        middlewares.push(ssrf_middleware());
+
+        // Logging (only when debug enabled).
         if config.debug {
             middlewares.push(logging_middleware());
         }
