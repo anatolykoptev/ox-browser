@@ -26,6 +26,7 @@ pub struct PerformanceReport {
     pub images_lazy: u32,
     pub inline_styles_count: u32,
     pub inline_styles_bytes: u32,
+    pub score: u8,
 }
 
 /// Analyze HTTP headers and HTML body for performance characteristics.
@@ -43,7 +44,24 @@ pub fn analyze(headers: &HashMap<String, String>, html: &str) -> PerformanceRepo
     };
 
     parse_html(html, &mut report);
+    report.score = compute_score(&report);
     report
+}
+
+fn compute_score(r: &PerformanceReport) -> u8 {
+    let mut score: u32 = 0;
+    if !r.compression.is_empty() { score += 15; }
+    if !r.cache_control.is_empty() { score += 15; }
+    if !r.etag.is_empty() || !r.expires.is_empty() { score += 15; }
+    if !r.preload.is_empty() { score += 10; }
+    if !r.preconnect.is_empty() { score += 10; }
+    let lazy_ratio = if r.images_total > 0 { r.images_lazy * 100 / r.images_total } else { 100 };
+    if lazy_ratio >= 50 { score += 10; }
+    if r.inline_styles_bytes < 10_000 { score += 10; }
+    if r.http3_supported { score += 5; }
+    if !r.prefetch.is_empty() { score += 5; }
+    if r.inline_styles_count == 0 { score += 5; }
+    score.min(100) as u8
 }
 
 fn header(headers: &HashMap<String, String>, key: &str) -> String {
@@ -169,6 +187,30 @@ mod tests {
         let r = analyze(&HashMap::new(), html);
         assert_eq!(r.images_total, 4);
         assert_eq!(r.images_lazy, 2);
+    }
+
+    #[test]
+    fn performance_score_full() {
+        let h = headers(&[
+            ("content-encoding", "br"),
+            ("cache-control", "max-age=3600"),
+            ("etag", "\"abc\""),
+            ("alt-svc", "h3=\":443\""),
+        ]);
+        let html = r#"
+            <link rel="preload" href="/f.woff2" as="font">
+            <link rel="prefetch" href="/next.js" as="script">
+            <link rel="preconnect" href="https://cdn.example.com">
+            <img src="a.jpg" loading="lazy">
+        "#;
+        let r = analyze(&h, html);
+        assert_eq!(r.score, 100);
+    }
+
+    #[test]
+    fn performance_score_empty() {
+        let r = analyze(&HashMap::new(), "");
+        assert_eq!(r.score, 25);
     }
 
     #[test]

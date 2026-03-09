@@ -1,4 +1,5 @@
 pub mod accessibility;
+pub mod audit;
 pub mod api_discovery;
 pub mod content;
 pub mod fingerprint;
