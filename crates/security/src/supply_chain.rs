@@ -1,5 +1,7 @@
 //! Third-party script supply chain risk analyzer.
 
+use std::collections::{HashMap, HashSet};
+
 use regex::Regex;
 use serde::Serialize;
 
@@ -63,12 +65,18 @@ pub fn analyze_supply_chain(html: &str, page_domain: &str) -> SupplyChainReport 
     let mut risky = Vec::new();
     let mut findings = Vec::new();
     let mut with_integrity = 0usize;
+    let mut seen_urls = HashSet::new();
+    let mut missing_sri_by_domain: HashMap<String, usize> = HashMap::new();
 
     for cap in script_re.captures_iter(html) {
         let attrs = &cap[1];
         let Some(src_cap) = src_re.captures(attrs) else { continue };
         let url = &src_cap[1];
         let Some(domain) = extract_domain(url) else { continue };
+
+        if !seen_urls.insert(url.to_string()) {
+            continue; // skip duplicate script URL
+        }
 
         if domain == page_domain_lower || domain.ends_with(&format!(".{page_domain_lower}")) {
             continue; // same origin
@@ -90,12 +98,7 @@ pub fn analyze_supply_chain(html: &str, page_domain: &str) -> SupplyChainReport 
         }
 
         if !has_integrity {
-            findings.push(SupplyChainFinding {
-                description: format!(
-                    "Third-party script from {domain} missing SRI integrity attribute"
-                ),
-                severity: Severity::Medium,
-            });
+            *missing_sri_by_domain.entry(domain.clone()).or_insert(0) += 1;
         }
 
         scripts.push(ThirdPartyScript {
@@ -103,6 +106,18 @@ pub fn analyze_supply_chain(html: &str, page_domain: &str) -> SupplyChainReport 
             domain,
             has_integrity,
             is_known_risky,
+        });
+    }
+
+    for (domain, count) in &missing_sri_by_domain {
+        let desc = if *count == 1 {
+            format!("Third-party script from {domain} missing SRI integrity attribute")
+        } else {
+            format!("{count} third-party scripts from {domain} missing SRI integrity attribute")
+        };
+        findings.push(SupplyChainFinding {
+            description: desc,
+            severity: Severity::Medium,
         });
     }
 
@@ -158,5 +173,31 @@ mod tests {
         let r = analyze_supply_chain(html, "other.com");
         assert_eq!(r.total_third_party, 1);
         assert!(r.findings.iter().any(|f| f.severity == Severity::Medium));
+    }
+
+    #[test]
+    fn test_findings_grouped_by_domain() {
+        let html = concat!(
+            r#"<script src="https://cdn.other.com/a.js"></script>"#,
+            r#"<script src="https://cdn.other.com/b.js"></script>"#,
+            r#"<script src="https://cdn.other.com/c.js"></script>"#,
+            r#"<script src="https://cdn.third.com/x.js"></script>"#,
+        );
+        let r = analyze_supply_chain(html, "example.com");
+        assert_eq!(r.total_third_party, 4);
+        // Findings grouped by domain, not per-script
+        assert_eq!(r.findings.len(), 2);
+        assert!(r.findings.iter().any(|f| f.description.contains("cdn.other.com") && f.description.contains("3")));
+    }
+
+    #[test]
+    fn test_duplicate_script_url_deduped() {
+        let html = concat!(
+            r#"<script src="https://cdn.other.com/app.js"></script>"#,
+            r#"<script src="https://cdn.other.com/app.js"></script>"#,
+        );
+        let r = analyze_supply_chain(html, "example.com");
+        assert_eq!(r.total_third_party, 1, "duplicate URL should be counted once");
+        assert_eq!(r.third_party_scripts.len(), 1);
     }
 }

@@ -1,5 +1,7 @@
 //! Subresource Integrity (SRI) analyzer.
 
+use std::collections::HashMap;
+
 use psl;
 use regex::Regex;
 use serde::Serialize;
@@ -80,6 +82,7 @@ pub fn analyze_sri(html: &str, page_url: &str) -> SriReport {
     let rel_ss_re = Regex::new(r#"rel=["']stylesheet["']"#).unwrap();
 
     let mut findings = Vec::new();
+    let mut missing_by_domain: HashMap<String, usize> = HashMap::new();
     let (mut ext_scripts, mut sri_scripts) = (0usize, 0usize);
     let (mut ext_styles, mut sri_styles) = (0usize, 0usize);
 
@@ -92,11 +95,15 @@ pub fn analyze_sri(html: &str, page_url: &str) -> SriReport {
                 if integrity_re.is_match(attrs) {
                     sri_scripts += 1;
                 } else {
-                    findings.push(SriFinding {
-                        resource: url.to_string(),
-                        description: "External script missing integrity attribute".into(),
-                        severity: Severity::Medium,
-                    });
+                    let domain = Url::parse(url)
+                        .or_else(|_| Url::parse(&format!("https:{url}")))
+                        .ok()
+                        .and_then(|u| {
+                            u.host_str()
+                                .map(|h| registrable_domain(h).unwrap_or_else(|| h.to_string()))
+                        })
+                        .unwrap_or_else(|| "unknown".into());
+                    *missing_by_domain.entry(domain).or_insert(0) += 1;
                 }
             }
         }
@@ -114,14 +121,31 @@ pub fn analyze_sri(html: &str, page_url: &str) -> SriReport {
                 if integrity_re.is_match(attrs) {
                     sri_styles += 1;
                 } else {
-                    findings.push(SriFinding {
-                        resource: url.to_string(),
-                        description: "External stylesheet missing integrity attribute".into(),
-                        severity: Severity::Medium,
-                    });
+                    let domain = Url::parse(url)
+                        .or_else(|_| Url::parse(&format!("https:{url}")))
+                        .ok()
+                        .and_then(|u| {
+                            u.host_str()
+                                .map(|h| registrable_domain(h).unwrap_or_else(|| h.to_string()))
+                        })
+                        .unwrap_or_else(|| "unknown".into());
+                    *missing_by_domain.entry(domain).or_insert(0) += 1;
                 }
             }
         }
+    }
+
+    for (domain, count) in &missing_by_domain {
+        let desc = if *count == 1 {
+            format!("External resource from {domain} missing integrity attribute")
+        } else {
+            format!("{count} external resources from {domain} missing integrity attribute")
+        };
+        findings.push(SriFinding {
+            resource: domain.clone(),
+            description: desc,
+            severity: Severity::Medium,
+        });
     }
 
     let total_ext = ext_scripts + ext_styles;
@@ -227,5 +251,21 @@ mod tests {
             r.total_external_scripts, 1,
             "different registrable domain should count as external"
         );
+    }
+
+    #[test]
+    fn test_findings_grouped_by_domain() {
+        let html = concat!(
+            r#"<script src="https://cdn.other.com/a.js"></script>"#,
+            r#"<script src="https://cdn.other.com/b.js"></script>"#,
+            r#"<script src="https://cdn.other.com/c.js"></script>"#,
+            r#"<script src="https://cdn.third.com/x.js"></script>"#,
+        );
+        let r = analyze_sri(html, "https://www.example.com/page");
+        assert_eq!(r.total_external_scripts, 4);
+        // Should be 2 findings (one per domain), not 4
+        assert_eq!(r.findings.len(), 2);
+        assert!(r.findings.iter().any(|f| f.description.contains("other.com") && f.description.contains("3")));
+        assert!(r.findings.iter().any(|f| f.description.contains("third.com")));
     }
 }
