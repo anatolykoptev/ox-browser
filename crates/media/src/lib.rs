@@ -1,6 +1,8 @@
+pub mod cleanup;
 pub mod detect;
 pub mod download;
 pub mod extract;
+pub mod merge;
 pub mod youtube;
 
 use serde::{Deserialize, Serialize};
