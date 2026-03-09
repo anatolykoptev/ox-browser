@@ -1,2 +1,3 @@
 # False positive: doc comment "fetch/axios/XHR" matched generic-api-key rule
 crates/intelligence/src/api_discovery.rs:generic-api-key:1
+crates/intelligence/src/api_discovery/mod.rs:generic-api-key:1
