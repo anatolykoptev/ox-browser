@@ -123,9 +123,7 @@ media, fonts, PWA, API discovery. One `POST /analyze` -> complete intelligence r
 
 ### Future MCP Tools (incremental)
 
-- [ ] `seo_audit` — SEO analysis report
-- [ ] `performance_audit` — performance metrics
-- [ ] `accessibility_audit` — a11y report
+- [x] `site_audit` — comprehensive audit with scores, findings, recommendations (replaces individual audit tools)
 - [ ] `site_intelligence` — full Phase 2.5 report
 - [x] `security_scan` — security audit (Phase 4)
 - [x] `crawl` — site crawling (Phase 5)
@@ -361,6 +359,17 @@ See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
 
 **Result:** WebMCP + public API detection, SSRF fix. 17 new tests, ~360 new LOC.
 **Depends on:** Phase 2.5
+
+### Phase 5.7: Site Audit Tool ✅
+
+- [x] Performance scoring (0-100, 10 criteria)
+- [x] Audit finding generators: SEO (8 rules), performance (7 rules), accessibility (7 rules), security (adapter)
+- [x] Grade system (A+ to F), overall weighted scoring, top issues collector
+- [x] `site_audit` MCP tool with `focus` parameter (all/seo/performance/accessibility/security)
+- [x] `POST /site-audit` REST endpoint
+- [x] 9 new tests, 593 total
+
+**Result:** Single audit tool replacing 3 planned individual tools. Rule-based, no LLM.
 
 ### Rust Edition 2024 ✅
 
