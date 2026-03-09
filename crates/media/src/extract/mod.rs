@@ -4,7 +4,7 @@
 //! `<video>`, `og:video`, `twitter:player:stream`, JSON-LD VideoObject,
 //! and inline JS video URL heuristics.
 
-mod helpers;
+pub(crate) mod helpers;
 mod image;
 mod video;
 

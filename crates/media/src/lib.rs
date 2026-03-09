@@ -3,7 +3,10 @@ pub mod detect;
 pub mod download;
 pub mod extract;
 pub mod merge;
+pub mod orchestrator;
 pub mod youtube;
+
+pub use orchestrator::download;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
