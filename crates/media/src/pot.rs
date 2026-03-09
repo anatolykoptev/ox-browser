@@ -10,6 +10,7 @@ struct PotRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PotResponse {
     po_token: Option<String>,
     error: Option<String>,
@@ -81,7 +82,7 @@ mod tests {
 
     #[test]
     fn pot_response_parses_success() {
-        let json = r#"{"po_token":"abc123"}"#;
+        let json = r#"{"poToken":"abc123","contentBinding":"vid","expiresAt":"2026-01-01T00:00:00Z"}"#;
         let resp: PotResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.po_token.as_deref(), Some("abc123"));
         assert!(resp.error.is_none());
