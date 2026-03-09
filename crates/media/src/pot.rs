@@ -32,7 +32,7 @@ pub async fn fetch_po_token(
         .build()
         .map_err(|e| MediaError::FetchFailed(format!("pot client: {e}")))?;
 
-    let url = format!("{pot_url}/generate");
+    let url = format!("{pot_url}/get_pot");
     let resp = client
         .post(&url)
         .header("Content-Type", "application/json")
