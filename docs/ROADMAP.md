@@ -378,7 +378,39 @@ See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
 - [x] Wrapped `set_var`/`remove_var` in `unsafe` blocks (process-wide mutation)
 - [x] 584 tests pass
 
-## Phase 6: Polish (v1.0.0)
+## Phase 6.5: Reverse Image Search (v0.8.0)
+
+**Goal:** Find where an image appears on the web — detect "laundered" stock photos
+with stripped metadata and renamed files. Primary consumer: go-imagefy.
+
+**Crate:** `ox-reverse` (new).
+
+### Phase 6.5a: Google Lens (URL mode)
+
+- [ ] `GET https://lens.google.com/uploadbyurl?url={encoded_url}` — single request
+- [ ] Parse `AF_initDataCallback` JSON from HTML response
+- [ ] Extract matching URLs, titles, similarity indicators
+- [ ] Stealth: wreq+BoringSSL, proxy rotation, CF bypass if needed
+
+### Phase 6.5b: Yandex Images (URL mode)
+
+- [ ] `GET https://yandex.com/images/search/?rpt=imageview&url={image_url}`
+- [ ] Parse `data-bem` JSON attributes for `serp-item` results
+- [ ] Client Hints injection (`sec-ch-ua`, `sec-ch-ua-platform`, `device-memory`, `ect`)
+- [ ] Good for Russian content and face matching
+
+### Phase 6.5c: REST + MCP Integration
+
+- [ ] `POST /images/reverse` REST endpoint: `{"url": "...", "engines": ["google_lens", "yandex"]}`
+- [ ] Response: `{"matches": [{"source_url", "title", "engine", "thumbnail"}], "is_stock": bool}`
+- [ ] `is_stock` auto-detection: check match URLs against go-imagefy `BlockedDomains` list
+- [ ] `reverse_image_search` MCP tool
+- [ ] Unit tests for HTML parsing (offline fixtures)
+
+**Depends on:** Phase 4.6 (image search infrastructure)
+**Consumers:** go-imagefy Phase 6 (Content Provenance)
+
+## Phase 7: Polish (v1.0.0)
 
 **Goal:** Production-ready quality.
 
@@ -387,7 +419,7 @@ See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
 - [ ] Crate documentation (rustdoc, 60%+ coverage)
 - [x] Binary releases via GitHub Actions (cross-compiled, 2 targets)
 
-**Depends on:** Phases 1-5
+**Depends on:** Phases 1-6.5
 
 ## Crate Architecture
 
@@ -398,6 +430,7 @@ ox-browser/crates/
 ├── intelligence/   — Web intelligence: fingerprint, SEO, perf, a11y, content, media, fonts, PWA, API
 ├── security/       — Security: 14 modules, Observatory scoring, AST analysis, 6 crate integrations
 ├── imagesearch/    — Image search: Bing, DDG parsers + WRR fusion (13 tests)
+├── reverse/        — Reverse image search: Google Lens, Yandex (planned)
 ├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze, /security, /images/search
 ├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 9 tools)
 ├── crawler/        — Site crawler (BFS/DFS, robots.txt, rate limiting, markdown output)

@@ -10,6 +10,7 @@ ox-security = { path = "../security" }
 ox-imagesearch = { path = "../imagesearch" }
 ox-core = { path = "../core" }
 ox-media = { path = "../media" }
+ox-reverse = { path = "../reverse" }
 ox-crawler = { path = "../crawler" }
 axum = "0.8"
 async-stream = "0.3"

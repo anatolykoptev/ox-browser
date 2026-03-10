@@ -32,6 +32,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         smart_timeout_secs: config.fetch.smart_timeout_secs,
         image_max_results: config.images.default_max_results,
         image_min_width: config.images.default_min_width,
+        reverse_max_results: 20,
     };
 
     let media_config = config.media.to_media_config();

@@ -92,11 +92,10 @@ pub fn is_stock_domain(domain: &str) -> bool {
     STOCK_DOMAINS.iter().any(|s| lower.contains(s))
 }
 
-// TODO: uncomment when engine modules are implemented
-// mod google_lens;
-// mod yandex;
-// mod fusion;
+mod google_lens;
+mod yandex;
+mod fusion;
 
-// pub use fusion::ReverseSearchEngine;
-// pub use google_lens::GoogleLens;
-// pub use yandex::YandexImages;
+pub use google_lens::GoogleLens;
+pub use yandex::YandexImages;
+pub use fusion::ReverseSearchEngine;

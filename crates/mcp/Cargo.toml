@@ -15,6 +15,7 @@ ox-core = { path = "../core" }
 ox-security = { path = "../security" }
 ox-intelligence = { path = "../intelligence" }
 ox-imagesearch = { path = "../imagesearch" }
+ox-reverse = { path = "../reverse" }
 ox-media = { path = "../media" }
 axum = "0.8"
 tokio.workspace = true

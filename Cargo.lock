@@ -2135,6 +2135,7 @@ dependencies = [
  "ox-imagesearch",
  "ox-intelligence",
  "ox-media",
+ "ox-reverse",
  "ox-security",
  "readabilityrs",
  "serde",
@@ -2158,6 +2159,7 @@ dependencies = [
  "ox-intelligence",
  "ox-js",
  "ox-media",
+ "ox-reverse",
  "ox-security",
  "readabilityrs",
  "rmcp",
@@ -2202,6 +2204,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "urlencoding",
 ]
 
 [[package]]

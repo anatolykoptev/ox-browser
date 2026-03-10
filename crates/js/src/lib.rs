@@ -8,6 +8,7 @@ mod fetch_smart;
 mod image_search;
 mod media_download;
 mod readability;
+mod reverse_search;
 mod security;
 mod site_audit;
 
@@ -29,6 +30,7 @@ pub struct EndpointDefaults {
     pub smart_timeout_secs: u64,
     pub image_max_results: usize,
     pub image_min_width: u32,
+    pub reverse_max_results: usize,
 }
 
 impl Default for EndpointDefaults {
@@ -38,6 +40,7 @@ impl Default for EndpointDefaults {
             smart_timeout_secs: 30,
             image_max_results: 10,
             image_min_width: 400,
+            reverse_max_results: 20,
         }
     }
 }
@@ -86,6 +89,7 @@ pub fn router(state: AppState) -> Router {
         .route("/analyze", post(analyze::analyze))
         .route("/security", post(security::security_scan))
         .route("/images/search", post(image_search::image_search))
+        .route("/images/reverse", post(reverse_search::reverse_search))
         .route("/media/download", post(media_download::media_download))
         .route("/readability", post(readability::readability))
         .route("/crawl", post(crawl::crawl))

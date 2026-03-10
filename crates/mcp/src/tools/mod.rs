@@ -6,6 +6,7 @@ mod fetch;
 mod image_search;
 mod media_download;
 mod readability;
+mod reverse_search;
 mod security;
 mod site_audit;
 mod solve;
@@ -25,6 +26,7 @@ pub use fetch::{FetchInput, FetchSmartInput};
 pub use media_download::MediaDownloadInput;
 pub use image_search::ImageSearchInput;
 pub use readability::ReadabilityInput;
+pub use reverse_search::ReverseSearchInput;
 pub use security::SecurityScanInput;
 pub use crawl::CrawlInput;
 pub use site_audit::SiteAuditInput;
@@ -159,6 +161,17 @@ impl OxMcpServer {
         Parameters(input): Parameters<MediaDownloadInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_media_download(input).await
+    }
+
+    #[tool(
+        name = "reverse_image_search",
+        description = "Reverse image search — find where an image appears on the web. Submit image URL, get matching pages. Detects stock photo sources. Engines: google_lens, yandex."
+    )]
+    async fn reverse_image_search(
+        &self,
+        Parameters(input): Parameters<ReverseSearchInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_reverse_search(input).await
     }
 
     #[tool(
