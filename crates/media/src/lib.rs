@@ -2,6 +2,7 @@ pub mod cleanup;
 pub mod detect;
 pub mod download;
 pub mod extract;
+pub mod http;
 pub mod innertube;
 pub mod merge;
 pub mod orchestrator;

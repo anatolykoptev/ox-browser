@@ -43,16 +43,7 @@ pub async fn download_to_file(
 
     let part_path = dest.with_extension("part");
 
-    let mut builder = wreq::Client::builder()
-        .timeout(DOWNLOAD_TIMEOUT);
-    if !proxy_url.is_empty() {
-        let proxy = wreq::Proxy::all(proxy_url)
-            .map_err(|e| MediaError::DownloadFailed(format!("proxy: {e}")))?;
-        builder = builder.proxy(proxy);
-    }
-    let client = builder
-        .build()
-        .map_err(|e| MediaError::DownloadFailed(format!("client: {e}")))?;
+    let client = crate::http::build_client(proxy_url, DOWNLOAD_TIMEOUT, "download")?;
 
     let response = client
         .get(url)

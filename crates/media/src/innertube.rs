@@ -87,18 +87,7 @@ pub async fn fetch_player_response(
     proxy_url: &str,
 ) -> Result<PlayerResponse, MediaError> {
     let body = build_android_vr_body(video_id, config);
-    let mut builder = wreq::Client::builder()
-        .timeout(std::time::Duration::from_secs(20));
-
-    if !proxy_url.is_empty() {
-        let proxy = wreq::Proxy::all(proxy_url)
-            .map_err(|e| MediaError::FetchFailed(format!("proxy: {e}")))?;
-        builder = builder.proxy(proxy);
-    }
-
-    let client = builder
-        .build()
-        .map_err(|e| MediaError::FetchFailed(format!("innertube client: {e}")))?;
+    let client = crate::http::build_client(proxy_url, std::time::Duration::from_secs(20), "innertube")?;
 
     let resp = client
         .post(&config.innertube_url)
