@@ -12,6 +12,21 @@ use std::collections::HashSet;
 use dom_query::Document;
 use url::Url;
 
+/// Shared context for all extraction methods.
+pub(crate) struct ExtractContext<'a> {
+    pub doc: &'a Document,
+    pub base_url: &'a str,
+    pub base: &'a Option<Url>,
+    pub seen: HashSet<String>,
+    pub results: Vec<ExtractedMedia>,
+}
+
+impl<'a> ExtractContext<'a> {
+    fn new(doc: &'a Document, base_url: &'a str, base: &'a Option<Url>) -> Self {
+        Self { doc, base_url, base, seen: HashSet::new(), results: Vec::new() }
+    }
+}
+
 /// A media item extracted from HTML.
 #[derive(Debug, Clone)]
 pub struct ExtractedMedia {
@@ -33,16 +48,15 @@ pub enum MediaKind {
 pub fn extract_media(html: &str, base_url: &str) -> Vec<ExtractedMedia> {
     let doc = Document::from(html);
     let base = Url::parse(base_url).ok();
-    let mut seen = HashSet::new();
-    let mut results = Vec::new();
+    let mut ctx = ExtractContext::new(&doc, base_url, &base);
 
     // Image extraction (methods 1-4)
-    image::extract_images(&doc, base_url, &base, &mut seen, &mut results);
+    image::extract_images(&mut ctx);
 
     // Video extraction (methods 5-9)
-    video::extract_videos(&doc, base_url, &base, &mut seen, &mut results);
+    video::extract_videos(&mut ctx);
 
-    results
+    ctx.results
 }
 
 /// Create a video `ExtractedMedia` with default dimensions.
