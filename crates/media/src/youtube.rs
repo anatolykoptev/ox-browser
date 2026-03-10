@@ -79,6 +79,47 @@ fn is_audio(f: &PlayerFormat) -> bool {
     f.mime_type.starts_with("audio/")
 }
 
+/// Selected video+audio stream URLs with dimensions.
+struct StreamSelection {
+    video_url: Option<String>,
+    audio_url: Option<String>,
+    width: u32,
+    height: u32,
+}
+
+/// Pick best video (+ optional audio) streams from streaming data.
+/// Prefers DASH adaptive if it offers higher resolution than combined.
+fn select_streams(sd: &StreamingData, max_height: u32) -> StreamSelection {
+    let best_combined = sd.formats.iter()
+        .filter(|f| has_direct_url(f) && is_video(f) && f.height <= max_height)
+        .max_by_key(|f| (f.height, f.bitrate));
+
+    let best_adaptive = sd.adaptive_formats.iter()
+        .filter(|f| has_direct_url(f) && is_video(f) && f.height <= max_height)
+        .max_by_key(|f| (f.height, f.bitrate));
+
+    let combined_h = best_combined.map_or(0, |f| f.height);
+    let adaptive_h = best_adaptive.map_or(0, |f| f.height);
+
+    if adaptive_h > combined_h {
+        let (video_url, width, height) = best_adaptive
+            .map(|v| (v.url.clone(), v.width, v.height))
+            .unwrap_or_default();
+        let audio_url = sd.adaptive_formats.iter()
+            .filter(|f| has_direct_url(f) && is_audio(f))
+            .max_by_key(|f| f.bitrate)
+            .and_then(|a| a.url.clone());
+        StreamSelection { video_url, audio_url, width, height }
+    } else if let Some(f) = best_combined {
+        StreamSelection {
+            video_url: f.url.clone(), audio_url: None,
+            width: f.width, height: f.height,
+        }
+    } else {
+        StreamSelection { video_url: None, audio_url: None, width: 0, height: 0 }
+    }
+}
+
 pub fn build_video_info(pr: &PlayerResponse, max_height: u32) -> YouTubeVideoInfo {
     let empty_vd = VideoDetails {
         title: String::new(), author: String::new(),
@@ -86,57 +127,21 @@ pub fn build_video_info(pr: &PlayerResponse, max_height: u32) -> YouTubeVideoInf
         view_count: String::new(),
     };
     let vd = pr.video_details.as_ref().unwrap_or(&empty_vd);
-    let duration = vd.length_seconds.parse::<u64>().ok();
-    let views = vd.view_count.parse::<i64>().unwrap_or(0);
-    let desc = if vd.short_description.is_empty() { None } else { Some(vd.short_description.clone()) };
 
-    let mut video_url = None;
-    let mut audio_url = None;
-    let mut width = 0u32;
-    let mut height = 0u32;
-
-    if let Some(sd) = &pr.streaming_data {
-        let best_combined = sd.formats.iter()
-            .filter(|f| has_direct_url(f) && is_video(f) && f.height <= max_height)
-            .max_by_key(|f| (f.height, f.bitrate));
-
-        let best_adaptive = sd.adaptive_formats.iter()
-            .filter(|f| has_direct_url(f) && is_video(f) && f.height <= max_height)
-            .max_by_key(|f| (f.height, f.bitrate));
-
-        // Prefer DASH adaptive if it offers higher resolution than combined.
-        let combined_h = best_combined.map_or(0, |f| f.height);
-        let adaptive_h = best_adaptive.map_or(0, |f| f.height);
-
-        if adaptive_h > combined_h {
-            if let Some(v) = best_adaptive {
-                video_url = v.url.clone();
-                width = v.width;
-                height = v.height;
-            }
-            let best_audio = sd.adaptive_formats.iter()
-                .filter(|f| has_direct_url(f) && is_audio(f))
-                .max_by_key(|f| f.bitrate);
-            if let Some(a) = best_audio {
-                audio_url = a.url.clone();
-            }
-        } else if let Some(f) = best_combined {
-            video_url = f.url.clone();
-            width = f.width;
-            height = f.height;
-        }
-    }
+    let streams = pr.streaming_data.as_ref()
+        .map(|sd| select_streams(sd, max_height))
+        .unwrap_or(StreamSelection { video_url: None, audio_url: None, width: 0, height: 0 });
 
     YouTubeVideoInfo {
         title: Some(vd.title.clone()),
         author: if vd.author.is_empty() { None } else { Some(vd.author.clone()) },
-        description: desc,
-        duration_secs: duration,
-        views,
-        video_url,
-        audio_url,
-        width,
-        height,
+        description: if vd.short_description.is_empty() { None } else { Some(vd.short_description.clone()) },
+        duration_secs: vd.length_seconds.parse::<u64>().ok(),
+        views: vd.view_count.parse::<i64>().unwrap_or(0),
+        video_url: streams.video_url,
+        audio_url: streams.audio_url,
+        width: streams.width,
+        height: streams.height,
     }
 }
 
