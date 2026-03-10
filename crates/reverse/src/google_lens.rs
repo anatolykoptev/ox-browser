@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 
 use crate::{Result, ReverseEngine, ReverseMatch};
 use ox_http::HttpClient;
+use wreq::header::HeaderMap;
 
 const LENS_URL: &str = "https://lens.google.com/uploadbyurl";
 
@@ -26,14 +27,29 @@ impl ReverseEngine for GoogleLens {
             urlencoding::encode(image_url),
         );
         let resp = client.get(&url).await?;
-        if resp.status != 200 {
-            tracing::warn!(
-                status = resp.status,
-                "google_lens: unexpected status"
-            );
+        // Google Lens returns 303 → google.com/search?...&udm=26
+        // Follow the redirect to get actual results.
+        let html = if resp.status == 303 || resp.status == 302 {
+            if let Some(location) = extract_redirect_url(&resp.body, &resp.headers) {
+                tracing::debug!(redirect = %location, "google_lens: following redirect");
+                match client.get(&location).await {
+                    Ok(r) => r.body,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "google_lens: redirect fetch failed");
+                        return Ok(Vec::new());
+                    }
+                }
+            } else {
+                tracing::warn!("google_lens: redirect with no location");
+                return Ok(Vec::new());
+            }
+        } else if resp.status == 200 {
+            resp.body
+        } else {
+            tracing::warn!(status = resp.status, "google_lens: unexpected status");
             return Ok(Vec::new());
-        }
-        let mut results = parse_lens_html(&resp.body);
+        };
+        let mut results = parse_lens_html(&html);
         results.truncate(max);
         Ok(results)
     }
@@ -41,6 +57,17 @@ impl ReverseEngine for GoogleLens {
     fn name(&self) -> &str {
         "google_lens"
     }
+}
+
+/// Extract redirect URL from response headers (Location header).
+fn extract_redirect_url(
+    _body: &str,
+    headers: &wreq::header::HeaderMap,
+) -> Option<String> {
+    headers
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned())
 }
 
 /// Matches `AF_initDataCallback({...data:[...]...})` blocks.

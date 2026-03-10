@@ -66,26 +66,52 @@ fn extract_domain(page_url: &str) -> String {
 
 /// Parse Yandex HTML response into reverse matches.
 fn parse_yandex_html(html: &str) -> Vec<ReverseMatch> {
-    let doc = dom_query::Document::from(html);
     let mut results = Vec::new();
     let mut seen = HashSet::new();
 
+    // Strategy 1: data-bem attributes with serp-item (classic format).
+    let doc = dom_query::Document::from(html);
     for node in doc.select("[data-bem]").iter() {
         let raw = node.attr("data-bem").unwrap_or_default();
         let raw = raw.as_ref();
         if raw.is_empty() {
             continue;
         }
-        let Ok(val) = serde_json::from_str::<Value>(raw) else {
+        // data-bem can be HTML-entity-encoded or raw JSON.
+        let decoded = if raw.contains("&quot;") {
+            html_unescape(raw)
+        } else {
+            raw.to_owned()
+        };
+        let Ok(val) = serde_json::from_str::<Value>(&decoded) else {
             continue;
         };
-        let Some(serp) = val.get("serp-item") else {
-            continue;
-        };
-        extract_from_dups(serp, &mut results, &mut seen);
-        extract_from_preview(serp, &mut results, &mut seen);
+        // Check serp-item key.
+        if let Some(serp) = val.get("serp-item") {
+            extract_from_dups(serp, &mut results, &mut seen);
+            extract_from_preview(serp, &mut results, &mut seen);
+        }
+        // Check cbir-similar or other keys containing small_dups.
+        for (_key, section) in val.as_object().into_iter().flatten() {
+            extract_from_small_dups(section, &mut results, &mut seen);
+        }
     }
+
+    // Strategy 2: find small_dups in HTML-entity-encoded JSON anywhere in the page.
+    if results.is_empty() {
+        extract_small_dups_from_html(html, &mut results, &mut seen);
+    }
+
     results
+}
+
+/// Unescape basic HTML entities.
+fn html_unescape(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&#39;", "'")
 }
 
 /// Extract matches from `dups` array structure.
@@ -165,6 +191,61 @@ fn extract_from_preview(
             domain,
             engine: "yandex".to_owned(),
         });
+    }
+}
+
+/// Extract matches from `small_dups` array in any JSON section.
+fn extract_from_small_dups(
+    val: &Value,
+    results: &mut Vec<ReverseMatch>,
+    seen: &mut HashSet<String>,
+) {
+    let Some(dups) = val.get("small_dups").and_then(|v| v.as_array()) else {
+        return;
+    };
+    for dup in dups {
+        let page_url = dup
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if page_url.is_empty() || !seen.insert(page_url.to_owned()) {
+            continue;
+        }
+        let title = dup
+            .get("title")
+            .or_else(|| dup.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let domain = extract_domain(page_url);
+        results.push(ReverseMatch {
+            page_url: page_url.to_owned(),
+            title,
+            thumbnail: None,
+            domain,
+            engine: "yandex".to_owned(),
+        });
+    }
+}
+
+/// Fallback: find small_dups in HTML-entity-encoded JSON blocks.
+fn extract_small_dups_from_html(
+    html: &str,
+    results: &mut Vec<ReverseMatch>,
+    seen: &mut HashSet<String>,
+) {
+    use regex::Regex;
+    use std::sync::LazyLock;
+
+    static SMALL_DUPS_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"&quot;small_dups&quot;:\[.*?\]"#).expect("small_dups regex")
+    });
+
+    for m in SMALL_DUPS_RE.find_iter(html) {
+        let decoded = html_unescape(&format!("{{{}}}", m.as_str()));
+        if let Ok(val) = serde_json::from_str::<Value>(&decoded) {
+            extract_from_small_dups(&val, results, seen);
+        }
     }
 }
 
