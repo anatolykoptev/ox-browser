@@ -6,6 +6,9 @@ pub mod http;
 pub mod innertube;
 pub mod merge;
 pub mod orchestrator;
+pub mod platform;
+pub mod platform_generic;
+pub mod platform_youtube;
 pub mod youtube;
 
 pub use orchestrator::download;
