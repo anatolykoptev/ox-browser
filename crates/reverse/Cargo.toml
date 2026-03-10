@@ -1,0 +1,19 @@
+[package]
+name = "ox-reverse"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ox-http = { path = "../http" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+url = "2"
+dom_query = "0.11"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
