@@ -9,7 +9,7 @@ use crate::extract::{extract_media, MediaKind};
 use crate::innertube;
 use crate::merge::merge_dash;
 use crate::youtube::build_video_info;
-use crate::{MediaConfig, MediaError, MediaFile, MediaRequest, MediaResult, MediaStats, MediaType, Quality};
+use crate::{MediaConfig, MediaError, MediaFile, MediaRequest, MediaResult, MediaType};
 
 
 /// Main entry point: detect platform, extract/download media.
@@ -68,23 +68,17 @@ async fn download_youtube(
     };
 
     info!(path = %final_path.display(), size = final_size, merged, "YouTube download complete");
-    Ok(MediaResult {
-        media_type: MediaType::Video,
-        files: vec![MediaFile {
-            path: final_path.to_string_lossy().into_owned(),
-            size_bytes: final_size,
-            width: Some(info.width),
-            height: Some(info.height),
-        }],
-        platform: Some("youtube".into()),
-        title: info.title,
-        author: info.author,
-        description: info.description,
-        duration_secs: info.duration_secs.map(|s| s as f64),
-        stats: Some(MediaStats { views: Some(info.views), likes: None, comments: None }),
-        quality: Some(Quality { width: info.width, height: info.height }),
-        merged,
-    })
+    let file = MediaFile {
+        path: final_path.to_string_lossy().into_owned(),
+        size_bytes: final_size,
+        width: Some(info.width),
+        height: Some(info.height),
+    };
+    Ok(MediaResult::youtube(
+        file, info.title, info.author, info.description,
+        info.duration_secs.map(|s| s as f64), info.views,
+        info.width, info.height, merged,
+    ))
 }
 
 /// Generic: extract media from HTML, filter, download.
@@ -136,20 +130,9 @@ async fn download_generic(
     let title = crate::extract::helpers::extract_og_title(&doc);
     let first_kind = items.first().map(|i| i.media_kind);
     let result_type = if first_kind == Some(MediaKind::Video) { MediaType::Video } else { MediaType::Image };
+    let title = if title.is_empty() { None } else { Some(title) };
     info!(count = files.len(), "generic download complete");
-
-    Ok(MediaResult {
-        media_type: result_type,
-        files,
-        platform: Some("generic".into()),
-        title: if title.is_empty() { None } else { Some(title) },
-        author: None,
-        description: None,
-        duration_secs: None,
-        stats: None,
-        quality: None,
-        merged: false,
-    })
+    Ok(MediaResult::generic(files, title, result_type))
 }
 
 /// Extract file extension from URL path, with fallback based on media kind.

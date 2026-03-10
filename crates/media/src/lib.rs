@@ -118,6 +118,37 @@ pub struct MediaResult {
     pub merged: bool,
 }
 
+impl MediaResult {
+    /// Build result for a YouTube download.
+    pub fn youtube(
+        file: MediaFile, title: Option<String>, author: Option<String>,
+        description: Option<String>, duration_secs: Option<f64>,
+        views: i64, width: u32, height: u32, merged: bool,
+    ) -> Self {
+        Self {
+            media_type: MediaType::Video,
+            files: vec![file],
+            platform: Some("youtube".into()),
+            title, author, description, duration_secs,
+            stats: Some(MediaStats { views: Some(views), likes: None, comments: None }),
+            quality: Some(Quality { width, height }),
+            merged,
+        }
+    }
+
+    /// Build result for a generic download.
+    pub fn generic(files: Vec<MediaFile>, title: Option<String>, media_type: MediaType) -> Self {
+        Self {
+            media_type,
+            files,
+            platform: Some("generic".into()),
+            title,
+            author: None, description: None, duration_secs: None,
+            stats: None, quality: None, merged: false,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum MediaError {
     #[error("no video found")]
