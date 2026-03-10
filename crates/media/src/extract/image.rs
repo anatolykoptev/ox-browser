@@ -76,17 +76,17 @@ fn extract_img_tags(ctx: &mut ExtractContext) {
 fn extract_picture_sources(ctx: &mut ExtractContext) {
     for node in ctx.doc.select("picture > source[srcset]").iter() {
         let srcset = node.attr("srcset").map(|s| s.to_string());
-        if let Some(url) = best_srcset_url(&srcset, ctx.base) {
-            if !url.is_empty() && ctx.seen.insert(url.clone()) && !should_skip(&url) {
-                ctx.results.push(ExtractedMedia {
-                    url,
-                    source: ctx.base_url.to_string(),
-                    title: String::new(),
-                    width: 0,
-                    height: 0,
-                    media_kind: MediaKind::Image,
-                });
-            }
+        if let Some(url) = best_srcset_url(&srcset, ctx.base)
+            && !url.is_empty() && ctx.seen.insert(url.clone()) && !should_skip(&url)
+        {
+            ctx.results.push(ExtractedMedia {
+                url,
+                source: ctx.base_url.to_string(),
+                title: String::new(),
+                width: 0,
+                height: 0,
+                media_kind: MediaKind::Image,
+            });
         }
     }
 }

@@ -121,21 +121,31 @@ pub struct MediaResult {
     pub merged: bool,
 }
 
+/// Parameters for building a YouTube media result.
+pub struct YouTubeResultParams {
+    pub file: MediaFile,
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub description: Option<String>,
+    pub duration_secs: Option<f64>,
+    pub views: i64,
+    pub width: u32,
+    pub height: u32,
+    pub merged: bool,
+}
+
 impl MediaResult {
     /// Build result for a YouTube download.
-    pub fn youtube(
-        file: MediaFile, title: Option<String>, author: Option<String>,
-        description: Option<String>, duration_secs: Option<f64>,
-        views: i64, width: u32, height: u32, merged: bool,
-    ) -> Self {
+    pub fn youtube(p: YouTubeResultParams) -> Self {
         Self {
             media_type: MediaType::Video,
-            files: vec![file],
+            files: vec![p.file],
             platform: Some("youtube".into()),
-            title, author, description, duration_secs,
-            stats: Some(MediaStats { views: Some(views), likes: None, comments: None }),
-            quality: Some(Quality { width, height }),
-            merged,
+            title: p.title, author: p.author, description: p.description,
+            duration_secs: p.duration_secs,
+            stats: Some(MediaStats { views: Some(p.views), likes: None, comments: None }),
+            quality: Some(Quality { width: p.width, height: p.height }),
+            merged: p.merged,
         }
     }
 

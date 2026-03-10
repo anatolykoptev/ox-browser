@@ -73,10 +73,10 @@ pub(crate) fn resolve_url(src: &str, base: &Option<Url>) -> String {
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
         return trimmed.to_string();
     }
-    if let Some(base) = base {
-        if let Ok(resolved) = base.join(trimmed) {
-            return resolved.to_string();
-        }
+    if let Some(base) = base
+        && let Ok(resolved) = base.join(trimmed)
+    {
+        return resolved.to_string();
     }
     String::new()
 }

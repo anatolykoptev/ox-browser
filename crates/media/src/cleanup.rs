@@ -32,11 +32,11 @@ fn cleanup_old_files(dir: &Path, max_age: Duration) {
         let Ok(modified) = meta.modified() else {
             continue;
         };
-        if let Ok(age) = now.duration_since(modified) {
-            if age > max_age {
-                let _ = std::fs::remove_file(entry.path());
-                removed += 1;
-            }
+        if let Ok(age) = now.duration_since(modified)
+            && age > max_age
+        {
+            let _ = std::fs::remove_file(entry.path());
+            removed += 1;
         }
     }
 

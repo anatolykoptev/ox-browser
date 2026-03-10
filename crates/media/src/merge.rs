@@ -11,7 +11,7 @@ pub fn merge_dash(video: &Path, audio: &Path, output: &Path) -> Result<(), Media
         .args(["-i", &video.display().to_string()])
         .args(["-i", &audio.display().to_string()])
         .args(["-c", "copy", "-y"])
-        .arg(&output.display().to_string())
+        .arg(output.display().to_string())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()

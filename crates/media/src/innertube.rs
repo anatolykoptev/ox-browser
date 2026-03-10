@@ -64,10 +64,10 @@ fn extract_param<'a>(url: &'a str, key: &str) -> Option<&'a str> {
 
 /// Check whether a `PlayerResponse` has usable streams with direct URLs.
 pub fn has_usable_streams(pr: &PlayerResponse) -> bool {
-    if let Some(ref ps) = pr.playability_status {
-        if ps.status != "OK" {
-            return false;
-        }
+    if let Some(ref ps) = pr.playability_status
+        && ps.status != "OK"
+    {
+        return false;
     }
     let Some(sd) = &pr.streaming_data else {
         return false;

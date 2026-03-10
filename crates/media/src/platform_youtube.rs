@@ -7,7 +7,7 @@ use crate::innertube;
 use crate::merge::merge_dash;
 use crate::platform::PlatformDownloader;
 use crate::youtube::build_video_info;
-use crate::{MediaConfig, MediaError, MediaFile, MediaRequest, MediaResult};
+use crate::{MediaConfig, MediaError, MediaFile, MediaRequest, MediaResult, YouTubeResultParams};
 
 pub struct YouTubeDownloader;
 
@@ -54,10 +54,11 @@ impl PlatformDownloader for YouTubeDownloader {
             width: Some(info.width),
             height: Some(info.height),
         };
-        Ok(MediaResult::youtube(
-            file, info.title, info.author, info.description,
-            info.duration_secs.map(|s| s as f64), info.views,
-            info.width, info.height, merged,
-        ))
+        Ok(MediaResult::youtube(YouTubeResultParams {
+            file, title: info.title, author: info.author,
+            description: info.description,
+            duration_secs: info.duration_secs.map(|s| s as f64),
+            views: info.views, width: info.width, height: info.height, merged,
+        }))
     }
 }
