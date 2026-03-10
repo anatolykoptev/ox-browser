@@ -14,14 +14,15 @@
 | `crates/security` | Security scanning |
 | `crates/intelligence` | Site tech analysis |
 | `crates/crawler` | BFS web crawler |
-| `crates/imagesearch` | Image search |
+| `crates/imagesearch` | Image search (Bing, DDG, Openverse, Pexels, Brave) |
+| `crates/reverse` | Reverse image search (Google Lens, Yandex) |
 | `crates/media` | Media download (YouTube, generic), DASH merge via ffmpeg |
 
 ## API
 
-**REST**: `/health`, `/solve`, `/fetch`, `/fetch-smart`, `/readability`, `/analyze`, `/security`, `/crawl`, `/images/search`, `/media/download`
+**REST**: `/health`, `/solve`, `/fetch`, `/fetch-smart`, `/readability`, `/analyze`, `/security`, `/crawl`, `/images/search`, `/images/reverse`, `/media/download`
 
-**MCP**: `/mcp` — 8 tools: fetch, fetch_smart, analyze, solve_cf, security_scan, readability, image_search, media_download
+**MCP**: `/mcp` — 9 tools: fetch, fetch_smart, analyze, solve_cf, security_scan, readability, image_search, reverse_image_search, media_download
 
 ## Build
 
