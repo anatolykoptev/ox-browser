@@ -2205,6 +2205,7 @@ dependencies = [
  "tracing",
  "url",
  "urlencoding",
+ "wreq",
 ]
 
 [[package]]

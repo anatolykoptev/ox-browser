@@ -16,7 +16,8 @@ use super::AppState;
 #[derive(Deserialize)]
 pub struct ReverseSearchRequest {
     pub url: String,
-    /// Engines: "google_lens", "yandex". Default: both.
+    /// Engines: "google_lens", "yandex". Default: yandex only
+    /// (Google Lens requires headless browser — SPA results).
     #[serde(default)]
     pub engines: Vec<String>,
     /// Max results. If not set, uses server config default.
@@ -32,7 +33,9 @@ pub async fn reverse_search(
     let mut engines: Vec<Arc<dyn ReverseEngine>> = Vec::new();
     let use_all = req.engines.is_empty();
 
-    if use_all || req.engines.iter().any(|e| e == "google_lens") {
+    // Google Lens disabled by default — results are SPA (no HTML data).
+    // Enable explicitly with engines: ["google_lens"].
+    if req.engines.iter().any(|e| e == "google_lens") {
         engines.push(Arc::new(GoogleLens));
     }
     if use_all || req.engines.iter().any(|e| e == "yandex") {

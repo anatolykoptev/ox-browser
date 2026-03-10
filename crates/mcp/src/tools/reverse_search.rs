@@ -20,7 +20,7 @@ use super::OxMcpServer;
 pub struct ReverseSearchInput {
     /// Image URL to reverse search.
     pub url: String,
-    /// Engines to use: "google_lens", "yandex". Default: both.
+    /// Engines to use: "google_lens", "yandex". Default: yandex only.
     #[serde(default)]
     pub engines: Vec<String>,
     /// Maximum results to return. Default: 20.
@@ -37,7 +37,8 @@ impl OxMcpServer {
         let mut engines: Vec<Arc<dyn ReverseEngine>> = Vec::new();
         let use_all = input.engines.is_empty();
 
-        if use_all || input.engines.iter().any(|e| e == "google_lens") {
+        // Google Lens disabled by default (SPA results need headless browser).
+        if input.engines.iter().any(|e| e == "google_lens") {
             engines.push(Arc::new(GoogleLens));
         }
         if use_all || input.engines.iter().any(|e| e == "yandex") {
