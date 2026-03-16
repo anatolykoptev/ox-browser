@@ -18,6 +18,12 @@ pub struct ReverseMatch {
     pub domain: String,
     /// Which engine found this match.
     pub engine: String,
+    /// Page description/snippet (if available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Original image dimensions "WxH" (if available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_size: Option<String>,
 }
 
 /// Aggregated result from reverse image search.
@@ -45,6 +51,15 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Extracts domain from a URL, stripping `www.` prefix.
+pub fn extract_domain(page_url: &str) -> String {
+    url::Url::parse(page_url)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
+        .map(|h| h.strip_prefix("www.").unwrap_or(&h).to_owned())
+        .unwrap_or_default()
+}
 
 /// Trait for reverse image search engines.
 #[async_trait]
@@ -99,3 +114,26 @@ mod fusion;
 pub use google_lens::GoogleLens;
 pub use yandex::YandexImages;
 pub use fusion::ReverseSearchEngine;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_domain_strips_www() {
+        assert_eq!(extract_domain("https://www.example.com/p"), "example.com");
+        assert_eq!(extract_domain("https://blog.site.org/x"), "blog.site.org");
+    }
+
+    #[test]
+    fn extract_domain_invalid_url() {
+        assert_eq!(extract_domain("not-a-url"), "");
+    }
+
+    #[test]
+    fn stock_domain_detection() {
+        assert!(is_stock_domain("shutterstock.com"));
+        assert!(is_stock_domain("www.gettyimages.com"));
+        assert!(!is_stock_domain("example.com"));
+    }
+}

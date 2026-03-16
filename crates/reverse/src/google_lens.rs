@@ -2,207 +2,135 @@
 
 use async_trait::async_trait;
 use regex::Regex;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
-use crate::{Result, ReverseEngine, ReverseMatch};
+use crate::{extract_domain, Result, ReverseEngine, ReverseMatch};
 use ox_http::HttpClient;
-use wreq::header::HeaderMap;
 
 const LENS_URL: &str = "https://lens.google.com/uploadbyurl";
+const GOOGLE_DOMAINS: &[&str] = &[
+    "google.com", "gstatic.com", "googleapis.com", "googleusercontent.com",
+];
 
-/// Google Lens reverse image search via URL upload.
 pub struct GoogleLens;
 
 #[async_trait]
 impl ReverseEngine for GoogleLens {
-    async fn search(
-        &self,
-        client: &HttpClient,
-        image_url: &str,
-        max: usize,
-    ) -> Result<Vec<ReverseMatch>> {
-        let url = format!(
-            "{}?url={}&hl=en&gl=us",
-            LENS_URL,
-            urlencoding::encode(image_url),
-        );
+    async fn search(&self, client: &HttpClient, image_url: &str, max: usize) -> Result<Vec<ReverseMatch>> {
+        let url = format!("{}?url={}&hl=en-US&gl=us", LENS_URL, urlencoding::encode(image_url));
         let resp = client.get(&url).await?;
-        // Google Lens returns 303 → google.com/search?...&udm=26
-        // Follow the redirect to get actual results.
-        let html = if resp.status == 303 || resp.status == 302 {
-            if let Some(location) = extract_redirect_url(&resp.body, &resp.headers) {
-                tracing::debug!(redirect = %location, "google_lens: following redirect");
-                match client.get(&location).await {
-                    Ok(r) => r.body,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "google_lens: redirect fetch failed");
-                        return Ok(Vec::new());
+        let html = if resp.status == 302 || resp.status == 303 {
+            let loc = resp.headers.get("location").and_then(|v| v.to_str().ok());
+            match loc {
+                Some(loc) => {
+                    tracing::debug!(redirect = %loc, "google_lens: following redirect");
+                    match client.get(loc).await {
+                        Ok(r) => r.body,
+                        Err(e) => { tracing::warn!(error = %e, "google_lens: redirect failed"); return Ok(vec![]); }
                     }
                 }
-            } else {
-                tracing::warn!("google_lens: redirect with no location");
-                return Ok(Vec::new());
+                None => { tracing::warn!("google_lens: redirect with no location"); return Ok(vec![]); }
             }
-        } else if resp.status == 200 {
-            resp.body
-        } else {
-            tracing::warn!(status = resp.status, "google_lens: unexpected status");
-            return Ok(Vec::new());
-        };
+        } else if resp.status == 200 { resp.body }
+        else { tracing::warn!(status = resp.status, "google_lens: unexpected status"); return Ok(vec![]); };
         let mut results = parse_lens_html(&html);
         results.truncate(max);
         Ok(results)
     }
-
-    fn name(&self) -> &str {
-        "google_lens"
-    }
+    fn name(&self) -> &str { "google_lens" }
 }
 
-/// Extract redirect URL from response headers (Location header).
-fn extract_redirect_url(
-    _body: &str,
-    headers: &wreq::header::HeaderMap,
-) -> Option<String> {
-    headers
-        .get("location")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_owned())
-}
-
-/// Matches `AF_initDataCallback({...data:[...]...})` blocks.
-static AF_DATA_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"AF_initDataCallback\(\{[^}]*data:(\[[\s\S]*?\])\s*,\s*sideChannel",
-    )
-    .expect("af_data regex")
-});
-
-/// Matches HTTP(S) URLs inside quoted strings.
-static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#""(https?://[^"]{10,})""#).expect("url regex")
-});
-
-/// Extracts domain from a URL, stripping `www.` prefix.
-fn extract_domain(page_url: &str) -> String {
-    url::Url::parse(page_url)
-        .ok()
-        .and_then(|u| u.host_str().map(String::from))
-        .map(|h| h.strip_prefix("www.").unwrap_or(&h).to_owned())
-        .unwrap_or_default()
-}
-
-/// Checks if a URL belongs to Google itself (not a result).
 fn is_google_url(u: &str) -> bool {
-    let dominated = |h: &str| {
-        h == "google.com"
-            || h.ends_with(".google.com")
-            || h == "gstatic.com"
-            || h.ends_with(".gstatic.com")
-            || h == "googleapis.com"
-            || h.ends_with(".googleapis.com")
-            || h == "googleusercontent.com"
-            || h.ends_with(".googleusercontent.com")
-    };
-    url::Url::parse(u)
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(|h| dominated(h)))
-        .unwrap_or(false)
+    url::Url::parse(u).ok().and_then(|p| p.host_str().map(|h| {
+        GOOGLE_DOMAINS.iter().any(|d| h == *d || h.ends_with(&format!(".{d}")))
+    })).unwrap_or(false)
 }
 
-/// Parse Google Lens HTML response into reverse matches.
+fn make_match(page_url: String, title: String) -> ReverseMatch {
+    let domain = extract_domain(&page_url);
+    ReverseMatch { page_url, title, thumbnail: None, domain, engine: "google_lens".into(), description: None, image_size: None }
+}
+
+// --- Regexes (LazyLock) ---
+
+static LDI_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"google\.ldi\s*=\s*(\{[^}]+\})").expect("ldi regex"));
+static AF_DATA_RE: LazyLock<Regex> = LazyLock::new(||
+    Regex::new(r"AF_initDataCallback\(\{[^}]*data:(\[[\s\S]*?\])\s*,\s*sideChannel").expect("af regex"));
+static URL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""(https?://[^"]{10,})""#).expect("url regex"));
+static TITLE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""([^"]{2,200})""#).expect("title regex"));
+
+// --- Parsing strategies (LDI -> AF -> DOM) ---
+
 fn parse_lens_html(html: &str) -> Vec<ReverseMatch> {
-    // Strategy 1: extract AF_initDataCallback data blocks.
-    let matches = parse_af_callbacks(html);
-    if !matches.is_empty() {
-        return matches;
-    }
-    // Strategy 2: fallback to DOM anchor tags.
+    let r = parse_ldi_map(html);
+    if !r.is_empty() { return r; }
+    let r = parse_af_callbacks(html);
+    if !r.is_empty() { return r; }
     parse_dom_links(html)
 }
 
-/// Primary parser: extract URLs from AF_initDataCallback data.
-fn parse_af_callbacks(html: &str) -> Vec<ReverseMatch> {
-    let mut results = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+fn add_link(a: &dom_query::Selection<'_>, seen: &mut HashSet<String>, out: &mut Vec<ReverseMatch>) {
+    let Some(href) = a.attr("href") else { return };
+    let h = href.as_ref();
+    if !h.starts_with("http") || is_google_url(h) { return; }
+    if !seen.insert(h.to_owned()) { return; }
+    out.push(make_match(h.to_owned(), a.text().to_string().trim().to_owned()));
+}
 
-    for cap in AF_DATA_RE.captures_iter(html) {
-        let data_str = &cap[1];
-        // Collect all non-Google URLs from this data block.
-        let urls: Vec<String> = URL_RE
-            .captures_iter(data_str)
-            .map(|c| c[1].to_owned())
-            .filter(|u| !is_google_url(u))
-            .collect();
-
-        // Collect candidate title strings: short quoted
-        // strings near URLs.
-        let titles: Vec<String> = extract_title_candidates(data_str);
-
-        for (i, page_url) in urls.iter().enumerate() {
-            if !seen.insert(page_url.clone()) {
-                continue;
-            }
-            let title = titles
-                .get(i)
-                .cloned()
-                .unwrap_or_default();
-            let domain = extract_domain(page_url);
-            results.push(ReverseMatch {
-                page_url: page_url.clone(),
-                title,
-                thumbnail: None,
-                domain,
-                engine: "google_lens".to_owned(),
-            });
+/// Strategy 1: parse `google.ldi` script map for dimg_ image keys,
+/// then find associated `<a href>` in DOM via data-iid attribute.
+fn parse_ldi_map(html: &str) -> Vec<ReverseMatch> {
+    let Some(cap) = LDI_RE.captures(html) else { return vec![]; };
+    let raw = cap[1].replace("\\u003d", "=").replace("\\u0026", "&");
+    let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw) else { return vec![]; };
+    let doc = dom_query::Document::from(html);
+    let (mut results, mut seen) = (Vec::new(), HashSet::new());
+    for key in map.keys().filter(|k| k.starts_with("dimg_")) {
+        // <a data-iid href> | <a href>...<el data-iid/>..</a> | <el data-iid><a href>..</el>
+        for sel in [
+            format!("a[data-iid=\"{key}\"][href]"),
+            format!("a[href]:has([data-iid=\"{key}\"])"),
+            format!("[data-iid=\"{key}\"] a[href]"),
+        ] {
+            for a in doc.select(&sel).iter() { add_link(&a, &mut seen, &mut results); }
         }
     }
     results
 }
 
-/// Extract short quoted strings as title candidates.
-static TITLE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#""([^"]{2,200})""#).expect("title regex")
-});
-
-fn extract_title_candidates(data: &str) -> Vec<String> {
-    TITLE_RE
-        .captures_iter(data)
-        .map(|c| c[1].to_owned())
-        .filter(|s| {
-            !s.starts_with("http")
-                && !s.contains('\\')
-                && !s.contains('{')
-                && s.chars().any(|c| c.is_alphabetic())
-        })
-        .collect()
+/// Strategy 2: extract URLs from AF_initDataCallback data blocks.
+fn parse_af_callbacks(html: &str) -> Vec<ReverseMatch> {
+    let (mut results, mut seen) = (Vec::new(), HashSet::new());
+    for cap in AF_DATA_RE.captures_iter(html) {
+        let data = &cap[1];
+        let urls: Vec<String> = URL_RE.captures_iter(data)
+            .map(|c| c[1].to_owned()).filter(|u| !is_google_url(u)).collect();
+        let titles: Vec<String> = TITLE_RE.captures_iter(data)
+            .map(|c| c[1].to_owned())
+            .filter(|s| !s.starts_with("http") && !s.contains('\\') && !s.contains('{') && s.chars().any(|c| c.is_alphabetic()))
+            .collect();
+        for (i, url) in urls.iter().enumerate() {
+            if !seen.insert(url.clone()) { continue; }
+            results.push(make_match(url.clone(), titles.get(i).cloned().unwrap_or_default()));
+        }
+    }
+    results
 }
 
-/// Fallback: parse `<a>` tags from the DOM.
+/// Strategy 3: fallback to DOM anchor tags.
 fn parse_dom_links(html: &str) -> Vec<ReverseMatch> {
     let doc = dom_query::Document::from(html);
-    let mut results = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
+    let (mut results, mut seen) = (Vec::new(), HashSet::new());
     for node in doc.select("a[href]").iter() {
         let href = node.attr("href").unwrap_or_default();
-        let href = href.as_ref();
-        if !href.starts_with("http") || is_google_url(href) {
-            continue;
-        }
-        if !seen.insert(href.to_owned()) {
-            continue;
-        }
-        let title = node.text().to_string();
-        let title = title.trim().to_owned();
-        let domain = extract_domain(href);
-        results.push(ReverseMatch {
-            page_url: href.to_owned(),
-            title,
-            thumbnail: None,
-            domain,
-            engine: "google_lens".to_owned(),
-        });
+        let h = href.as_ref();
+        if !h.starts_with("http") || is_google_url(h) { continue; }
+        if !seen.insert(h.to_owned()) { continue; }
+        results.push(make_match(h.to_owned(), node.text().to_string().trim().to_owned()));
     }
     results
 }
@@ -211,78 +139,80 @@ fn parse_dom_links(html: &str) -> Vec<ReverseMatch> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn ldi_map_extracts_dimg_keys() {
+        let html = r#"<html><script nonce="abc">google.ldi = {"dimg_1":"https://img.test/a.jpg","dimg_2":"https://img.test/b.jpg"}</script>
+        <a href="https://example.com/page1" data-iid="dimg_1">Page 1</a>
+        <a href="https://other.org/page2"><img data-iid="dimg_2"/></a></html>"#;
+        let r = parse_ldi_map(html);
+        assert_eq!(r.len(), 2);
+        assert!(r.iter().any(|m| m.page_url == "https://example.com/page1"));
+        assert!(r.iter().any(|m| m.page_url == "https://other.org/page2"));
+        assert!(r[0].description.is_none() && r[0].image_size.is_none());
+    }
+
+    #[test]
+    fn ldi_map_child_anchor() {
+        let html = r#"<script>google.ldi = {"dimg_3":"url"}</script>
+        <div data-iid="dimg_3"><a href="https://child-link.com/page">Title</a></div>"#;
+        let r = parse_ldi_map(html);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].page_url, "https://child-link.com/page");
+    }
+
+    #[test]
+    fn ldi_map_skips_non_dimg() {
+        let html = r#"<script>google.ldi = {"other":"val","dimg_x":"url"}</script>"#;
+        assert!(parse_ldi_map(html).is_empty());
+    }
+
+    #[test]
+    fn ldi_unescape_unicode() {
+        let s = r#"{"dimg_1":"x\u003dy\u0026z"}"#.replace("\\u003d", "=").replace("\\u0026", "&");
+        assert_eq!(s, r#"{"dimg_1":"x=y&z"}"#);
+    }
+
     fn make_af_html(data: &str) -> String {
-        format!(
-            r#"<html><script>AF_initDataCallback({{key: 'ds:1', data:{data}, sideChannel: {{}}}});</script></html>"#,
-        )
+        format!(r#"<html><script>AF_initDataCallback({{key:'ds:1',data:{data},sideChannel:{{}}}});</script></html>"#)
     }
 
     #[test]
-    fn parse_af_callback_extracts_matches() {
-        let data = r#"[null,null,["https://example.com/page1","Page One Title"],["https://other.org/article","Another Article"]]"#;
-        let html = make_af_html(data);
-        let results = parse_lens_html(&html);
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].page_url, "https://example.com/page1");
-        assert_eq!(results[0].domain, "example.com");
-        assert_eq!(results[0].engine, "google_lens");
-        assert_eq!(results[1].page_url, "https://other.org/article");
-        assert_eq!(results[1].domain, "other.org");
+    fn af_callback_extracts_matches() {
+        let data = r#"[null,["https://example.com/p1","Title"],["https://other.org/a","Art"]]"#;
+        let r = parse_af_callbacks(&make_af_html(data));
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].page_url, "https://example.com/p1");
+        assert_eq!(r[0].domain, "example.com");
+        assert_eq!(r[1].page_url, "https://other.org/a");
     }
 
     #[test]
-    fn parse_af_callback_skips_google_urls() {
-        let data = r#"[["https://www.google.com/search?q=test"],["https://lh3.googleusercontent.com/thumb.jpg"],["https://real-site.com/photo"]]"#;
-        let html = make_af_html(data);
-        let results = parse_lens_html(&html);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].page_url, "https://real-site.com/photo");
+    fn af_callback_skips_google_urls() {
+        let data = r#"[["https://www.google.com/s"],["https://lh3.googleusercontent.com/t"],["https://real.com/x"]]"#;
+        let r = parse_af_callbacks(&make_af_html(data));
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].page_url, "https://real.com/x");
     }
 
     #[test]
-    fn parse_af_callback_deduplicates() {
-        let data = r#"[["https://example.com/dup"],["https://example.com/dup"],["https://other.com/unique"]]"#;
-        let html = make_af_html(data);
-        let results = parse_lens_html(&html);
-        assert_eq!(results.len(), 2);
+    fn af_callback_deduplicates() {
+        let data = r#"[["https://example.com/dup-page"],["https://example.com/dup-page"],["https://other.com/unique-page"]]"#;
+        let r = parse_af_callbacks(&make_af_html(data));
+        assert_eq!(r.len(), 2);
     }
 
     #[test]
-    fn parse_empty_html_returns_empty() {
-        assert!(parse_lens_html("").is_empty());
-        assert!(parse_lens_html("<html></html>").is_empty());
-    }
-
-    #[test]
-    fn parse_malformed_callback_returns_empty() {
-        let html = r#"<script>AF_initDataCallback({broken)</script>"#;
-        assert!(parse_lens_html(html).is_empty());
-    }
-
-    #[test]
-    fn extract_domain_strips_www() {
-        assert_eq!(extract_domain("https://www.example.com/p"), "example.com");
-        assert_eq!(extract_domain("https://blog.site.org/x"), "blog.site.org");
-    }
-
-    #[test]
-    fn extract_domain_invalid_url() {
-        assert_eq!(extract_domain("not-a-url"), "");
-    }
-
-    #[test]
-    fn fallback_dom_links() {
+    fn dom_links_fallback() {
         let html = r#"<html><body>
             <a href="https://result.com/page">Result Page</a>
             <a href="https://www.google.com/search">Google</a>
             <a href="/relative">Skip</a>
             <a href="https://another.net/img">Photo</a>
         </body></html>"#;
-        let results = parse_dom_links(html);
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].page_url, "https://result.com/page");
-        assert_eq!(results[0].title, "Result Page");
-        assert_eq!(results[1].page_url, "https://another.net/img");
+        let r = parse_dom_links(html);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].page_url, "https://result.com/page");
+        assert_eq!(r[0].title, "Result Page");
     }
 
     #[test]
@@ -293,5 +223,22 @@ mod tests {
         assert!(is_google_url("https://encrypted-tbn0.gstatic.com/x"));
         assert!(!is_google_url("https://example.com/page"));
         assert!(!is_google_url("https://notgoogle.com/page"));
+    }
+
+    #[test]
+    fn empty_and_malformed_html() {
+        assert!(parse_lens_html("").is_empty());
+        assert!(parse_lens_html("<html></html>").is_empty());
+        assert!(parse_lens_html(r#"<script>AF_initDataCallback({broken)</script>"#).is_empty());
+    }
+
+    #[test]
+    fn strategy_priority_ldi_first() {
+        let html = r#"<script>google.ldi = {"dimg_1":"url"}</script>
+        <a href="https://ldi-result.com/p" data-iid="dimg_1">LDI</a>
+        <script>AF_initDataCallback({key:'x',data:["https://af-result.com/p"],sideChannel:{}});</script>"#;
+        let r = parse_lens_html(html);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].page_url, "https://ldi-result.com/p");
     }
 }

@@ -99,6 +99,8 @@ mod tests {
             thumbnail: None,
             domain: domain.to_owned(),
             engine: engine.to_owned(),
+            description: None,
+            image_size: None,
         }
     }
 

@@ -128,6 +128,7 @@ media, fonts, PWA, API discovery. One `POST /analyze` -> complete intelligence r
 - [x] `security_scan` — security audit (Phase 4)
 - [x] `crawl` — site crawling (Phase 5)
 - [x] `image_search` — image search (Phase 4.6)
+- [x] `reverse_image_search` — reverse image search (Phase 6.5)
 
 ## Phase 4: Security Scanner (v0.4.0-v0.5.1) ✅
 
@@ -378,34 +379,37 @@ See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
 - [x] Wrapped `set_var`/`remove_var` in `unsafe` blocks (process-wide mutation)
 - [x] 584 tests pass
 
-## Phase 6.5: Reverse Image Search (v0.8.0)
+## Phase 6.5: Reverse Image Search (v0.8.0) ✅
 
 **Goal:** Find where an image appears on the web — detect "laundered" stock photos
 with stripped metadata and renamed files. Primary consumer: go-imagefy.
 
-**Crate:** `ox-reverse` (new).
+**Crate:** `ox-reverse` (~500 LOC, 28+ tests).
 
-### Phase 6.5a: Google Lens (URL mode)
+### Phase 6.5a: Google Lens (URL mode) ✅
 
-- [ ] `GET https://lens.google.com/uploadbyurl?url={encoded_url}` — single request
-- [ ] Parse `AF_initDataCallback` JSON from HTML response
-- [ ] Extract matching URLs, titles, similarity indicators
-- [ ] Stealth: wreq+BoringSSL, proxy rotation, CF bypass if needed
+- [x] `GET https://lens.google.com/uploadbyurl?url={encoded_url}&hl=en-US` — stealth request
+- [x] Parse `google.ldi` script map from `<script nonce>` tags (primary strategy)
+- [x] Parse `AF_initDataCallback` JSON data blocks (secondary strategy)
+- [x] Fallback to DOM `<a>` tag extraction (tertiary strategy)
+- [x] Stealth: wreq+BoringSSL, proxy rotation
+- [x] Note: Google blocks datacenter IPs — best-effort, Yandex is primary engine
 
-### Phase 6.5b: Yandex Images (URL mode)
+### Phase 6.5b: Yandex Images (URL mode) ✅
 
-- [ ] `GET https://yandex.com/images/search/?rpt=imageview&url={image_url}`
-- [ ] Parse `data-bem` JSON attributes for `serp-item` results
-- [ ] Client Hints injection (`sec-ch-ua`, `sec-ch-ua-platform`, `device-memory`, `ect`)
-- [ ] Good for Russian content and face matching
+- [x] `GET https://yandex.ru/images/search?rpt=imageview&cbir_page=sites&url={image_url}`
+- [x] Parse `data-state` JSON from `div.Root[id^="ImagesApp-"]` (primary strategy)
+- [x] JSON path: `initialState.cbirSites.sites[]` — rich data (title, description, dimensions)
+- [x] Fallback to `data-bem` JSON from `.serp-item` divs (legacy format)
+- [x] Client Hints injection (`sec-ch-ua`, `sec-ch-ua-platform`, `device-memory`, `ect`)
 
-### Phase 6.5c: REST + MCP Integration
+### Phase 6.5c: REST + MCP Integration ✅
 
-- [ ] `POST /images/reverse` REST endpoint: `{"url": "...", "engines": ["google_lens", "yandex"]}`
-- [ ] Response: `{"matches": [{"source_url", "title", "engine", "thumbnail"}], "is_stock": bool}`
-- [ ] `is_stock` auto-detection: check match URLs against go-imagefy `BlockedDomains` list
-- [ ] `reverse_image_search` MCP tool
-- [ ] Unit tests for HTML parsing (offline fixtures)
+- [x] `POST /images/reverse` REST endpoint: `{"url": "...", "engines": ["google_lens", "yandex"]}`
+- [x] Response: matches with page_url, title, domain, thumbnail, description, image_size
+- [x] `is_stock` auto-detection against 20+ stock photo domains
+- [x] `reverse_image_search` MCP tool
+- [x] 28+ unit tests for HTML parsing (offline fixtures, both strategies)
 
 **Depends on:** Phase 4.6 (image search infrastructure)
 **Consumers:** go-imagefy Phase 6 (Content Provenance)
