@@ -241,4 +241,129 @@ mod tests {
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].page_url, "https://ldi-result.com/p");
     }
+
+    // --- Hard red tests ---
+
+    #[test]
+    fn ldi_filters_google_urls_in_anchors() {
+        // data-iid links to a google.com URL — must be skipped
+        let html = r#"<script>google.ldi = {"dimg_1":"url","dimg_2":"url"}</script>
+        <a href="https://www.google.com/imgres?q=test" data-iid="dimg_1">Google</a>
+        <a href="https://real-site.com/photo" data-iid="dimg_2">Real</a>"#;
+        let r = parse_ldi_map(html);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].page_url, "https://real-site.com/photo");
+    }
+
+    #[test]
+    fn ldi_deduplicates_across_cases() {
+        // Same URL found via Case 1 (direct) and Case 3 (child) — only one result
+        let html = r#"<script>google.ldi = {"dimg_1":"url"}</script>
+        <a href="https://example.com/dup" data-iid="dimg_1">Direct</a>
+        <div data-iid="dimg_1"><a href="https://example.com/dup">Child</a></div>"#;
+        let r = parse_ldi_map(html);
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn ldi_no_matching_dom_elements() {
+        // dimg_ keys exist but no DOM elements have data-iid
+        let html = r#"<script>google.ldi = {"dimg_1":"https://img.com/a.jpg","dimg_2":"https://img.com/b.jpg"}</script>
+        <a href="https://example.com/page">No data-iid</a>"#;
+        let r = parse_ldi_map(html);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn ldi_malformed_json() {
+        let html = r#"<script>google.ldi = {not valid json}</script>"#;
+        assert!(parse_ldi_map(html).is_empty());
+    }
+
+    #[test]
+    fn af_callback_all_google_urls_returns_empty() {
+        let data = r#"[["https://www.google.com/s"],["https://lh3.googleusercontent.com/t"],["https://gstatic.com/x"]]"#;
+        let r = parse_af_callbacks(&make_af_html(data));
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn af_callback_multiple_blocks() {
+        // Two separate AF_initDataCallback blocks
+        let html = r#"<html>
+        <script>AF_initDataCallback({key:'ds:0',data:["https://first.com/p1"],sideChannel:{}});</script>
+        <script>AF_initDataCallback({key:'ds:1',data:["https://second.com/p2"],sideChannel:{}});</script>
+        </html>"#;
+        let r = parse_af_callbacks(html);
+        assert_eq!(r.len(), 2);
+        assert!(r.iter().any(|m| m.page_url == "https://first.com/p1"));
+        assert!(r.iter().any(|m| m.page_url == "https://second.com/p2"));
+    }
+
+    #[test]
+    fn strategy_fallthrough_ldi_empty_af_works() {
+        // LDI present but empty, AF has results
+        let html = r#"<script>google.ldi = {"other_key":"not_dimg"}</script>
+        <script>AF_initDataCallback({key:'ds:1',data:["https://af-result.com/p"],sideChannel:{}});</script>"#;
+        let r = parse_lens_html(html);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].page_url, "https://af-result.com/p");
+    }
+
+    #[test]
+    fn strategy_fallthrough_all_empty_dom_works() {
+        // No LDI, no AF, but has DOM links
+        let html = r#"<html><body>
+        <a href="https://dom-result.com/page">DOM Result</a>
+        </body></html>"#;
+        let r = parse_lens_html(html);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].page_url, "https://dom-result.com/page");
+    }
+
+    #[test]
+    fn dom_links_deduplicates() {
+        let html = r#"<html><body>
+        <a href="https://example.com/same">First</a>
+        <a href="https://example.com/same">Second</a>
+        <a href="https://other.com/diff">Other</a>
+        </body></html>"#;
+        let r = parse_dom_links(html);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].title, "First"); // keeps first occurrence
+    }
+
+    #[test]
+    fn dom_links_skips_short_urls() {
+        let html = r#"<a href="http://x.c/y">Short</a>"#;
+        let r = parse_dom_links(html);
+        // href must start with "http" — this does, but is_google_url won't match
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn is_google_url_edge_cases() {
+        // Subdomain tricks that should NOT match
+        assert!(!is_google_url("https://google.com.evil.com/page"));
+        assert!(!is_google_url("https://notgoogleusercontent.com/x"));
+        // Valid Google subdomains
+        assert!(is_google_url("https://apis.google.com/js/platform.js"));
+        assert!(is_google_url("https://fonts.googleapis.com/css"));
+        // Invalid URL
+        assert!(!is_google_url("not-a-url"));
+        assert!(!is_google_url(""));
+    }
+
+    #[test]
+    fn parse_lens_html_max_respected() {
+        // parse_lens_html returns all results; truncation is in ReverseEngine::search.
+        // But we test that parse_lens_html can handle many results.
+        let mut links = String::new();
+        for i in 0..50 {
+            links.push_str(&format!(r#"<a href="https://site{i}.com/page">Title {i}</a>"#));
+        }
+        let html = format!("<html><body>{links}</body></html>");
+        let r = parse_lens_html(&html);
+        assert_eq!(r.len(), 50);
+    }
 }

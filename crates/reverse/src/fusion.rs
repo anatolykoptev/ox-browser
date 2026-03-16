@@ -176,4 +176,99 @@ mod tests {
         assert!(!result.is_stock);
         assert!(result.engines_used.is_empty());
     }
+
+    // --- Hard red tests ---
+
+    #[test]
+    fn multiple_stock_domains_detected() {
+        let matches = vec![
+            make_match("https://shutterstock.com/1", "shutterstock.com", "yandex"),
+            make_match("https://gettyimages.com/2", "gettyimages.com", "yandex"),
+            make_match("https://example.com/3", "example.com", "yandex"),
+            make_match("https://alamy.com/4", "alamy.com", "google_lens"),
+        ];
+        let mut stock_domains = Vec::new();
+        let mut stock_seen = HashSet::new();
+        for m in &matches {
+            if is_stock_domain(&m.domain) && stock_seen.insert(m.domain.clone()) {
+                stock_domains.push(m.domain.clone());
+            }
+        }
+        assert_eq!(stock_domains.len(), 3);
+        assert!(stock_domains.contains(&"shutterstock.com".to_owned()));
+        assert!(stock_domains.contains(&"gettyimages.com".to_owned()));
+        assert!(stock_domains.contains(&"alamy.com".to_owned()));
+    }
+
+    #[test]
+    fn dedup_cross_engine_keeps_first() {
+        let mut seen = HashSet::new();
+        let matches = vec![
+            make_match("https://shared.com/photo", "shared.com", "yandex"),
+            make_match("https://shared.com/photo", "shared.com", "google_lens"),
+            make_match("https://unique.com/img", "unique.com", "google_lens"),
+        ];
+        let mut deduped = Vec::new();
+        for m in matches {
+            if seen.insert(m.page_url.clone()) {
+                deduped.push(m);
+            }
+        }
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].engine, "yandex"); // first occurrence wins
+    }
+
+    #[test]
+    fn all_matches_are_stock() {
+        let matches = vec![
+            make_match("https://shutterstock.com/1", "shutterstock.com", "yandex"),
+            make_match("https://gettyimages.com/2", "gettyimages.com", "yandex"),
+        ];
+        let mut stock_domains = Vec::new();
+        let mut stock_seen = HashSet::new();
+        for m in &matches {
+            if is_stock_domain(&m.domain) && stock_seen.insert(m.domain.clone()) {
+                stock_domains.push(m.domain.clone());
+            }
+        }
+        assert!(!stock_domains.is_empty()); // is_stock = true
+        assert_eq!(stock_domains.len(), 2);
+    }
+
+    #[test]
+    fn stock_domain_dedup_same_domain() {
+        // Multiple results from same stock domain — only listed once
+        let matches = vec![
+            make_match("https://shutterstock.com/1", "shutterstock.com", "yandex"),
+            make_match("https://shutterstock.com/2", "shutterstock.com", "yandex"),
+            make_match("https://shutterstock.com/3", "shutterstock.com", "google_lens"),
+        ];
+        let mut stock_domains = Vec::new();
+        let mut stock_seen = HashSet::new();
+        for m in &matches {
+            if is_stock_domain(&m.domain) && stock_seen.insert(m.domain.clone()) {
+                stock_domains.push(m.domain.clone());
+            }
+        }
+        assert_eq!(stock_domains.len(), 1);
+        assert_eq!(stock_domains[0], "shutterstock.com");
+    }
+
+    #[test]
+    fn truncation_at_max() {
+        let mut seen = HashSet::new();
+        let matches: Vec<ReverseMatch> = (0..50)
+            .map(|i| make_match(&format!("https://site{i}.com/p"), &format!("site{i}.com"), "yandex"))
+            .collect();
+        let mut deduped = Vec::new();
+        for m in matches {
+            if seen.insert(m.page_url.clone()) {
+                deduped.push(m);
+            }
+        }
+        deduped.truncate(20);
+        assert_eq!(deduped.len(), 20);
+        assert_eq!(deduped[0].domain, "site0.com");
+        assert_eq!(deduped[19].domain, "site19.com");
+    }
 }

@@ -139,6 +139,7 @@ fn extract_from_data_state(
         let description = site
             .get("description")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
             .map(String::from);
         let image_size = format_image_size(site.get("originalImage"));
         results.push(ReverseMatch {
@@ -384,5 +385,118 @@ mod tests {
     fn normalize_thumb_protocol_relative() {
         assert_eq!(normalize_thumb_url("//t.yandex.com/1.jpg"), "https://t.yandex.com/1.jpg");
         assert_eq!(normalize_thumb_url("https://t.com/2.jpg"), "https://t.com/2.jpg");
+    }
+
+    // --- Hard red tests ---
+
+    #[test]
+    fn data_state_missing_intermediate_keys() {
+        // initialState exists but cbirSites is missing
+        let json = r#"{"initialState":{"serpList":{"items":[]}}}"#;
+        assert!(parse_yandex_html(&make_data_state_html(json)).is_empty());
+    }
+
+    #[test]
+    fn data_state_sites_missing_required_fields() {
+        // Site with no url — must be skipped; site with url but no title — still included
+        let json = r#"{"initialState":{"cbirSites":{"sites":[{"title":"No URL"},{"url":"https://valid.com/page","domain":"valid.com"}]}}}"#;
+        let results = parse_yandex_html(&make_data_state_html(json));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].page_url, "https://valid.com/page");
+        assert_eq!(results[0].title, ""); // no title key → empty
+    }
+
+    #[test]
+    fn data_state_empty_url_skipped() {
+        let json = r#"{"initialState":{"cbirSites":{"sites":[{"url":"","title":"Empty URL"},{"url":"https://real.com/x","title":"Real","domain":"real.com"}]}}}"#;
+        let results = parse_yandex_html(&make_data_state_html(json));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].page_url, "https://real.com/x");
+    }
+
+    #[test]
+    fn data_state_special_chars_in_title() {
+        let json = r#"{"initialState":{"cbirSites":{"sites":[{"url":"https://a.com/p","title":"Title with \"quotes\" & <tags>","domain":"a.com"}]}}}"#;
+        let results = parse_yandex_html(&make_data_state_html(json));
+        assert_eq!(results.len(), 1);
+        assert!(results[0].title.contains("quotes"));
+    }
+
+    #[test]
+    fn data_state_thumb_missing() {
+        // No thumb key — thumbnail should be None
+        let json = r#"{"initialState":{"cbirSites":{"sites":[{"url":"https://a.com/p","title":"A","domain":"a.com"}]}}}"#;
+        let results = parse_yandex_html(&make_data_state_html(json));
+        assert!(results[0].thumbnail.is_none());
+    }
+
+    #[test]
+    fn data_state_description_empty_string_skipped() {
+        let json = r#"{"initialState":{"cbirSites":{"sites":[{"url":"https://a.com/p","title":"A","domain":"a.com","description":""}]}}}"#;
+        let results = parse_yandex_html(&make_data_state_html(json));
+        assert!(results[0].description.is_none()); // empty string → None
+    }
+
+    #[test]
+    fn bem_small_dups_extraction() {
+        let bem = r#"{"serp-item":{},"other":{"small_dups":[{"url":"https://small.com/p","title":"Small Dup"}]}}"#;
+        let html = make_bem_html(bem);
+        let results = parse_yandex_html(&html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].page_url, "https://small.com/p");
+        assert_eq!(results[0].title, "Small Dup");
+    }
+
+    #[test]
+    fn bem_entity_encoded_json() {
+        // data-bem with &quot; entities (like real Yandex sometimes does)
+        let html = r#"<html><body><div class="serp-item" data-bem="{&quot;serp-item&quot;:{&quot;dups&quot;:[{&quot;url&quot;:&quot;https://entity.com/page&quot;,&quot;title&quot;:&quot;Entity Title&quot;}]}}"></div></body></html>"#;
+        let results = parse_yandex_html(html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].page_url, "https://entity.com/page");
+        assert_eq!(results[0].title, "Entity Title");
+    }
+
+    #[test]
+    fn bem_dedup_across_dups_and_preview() {
+        // Same URL in dups and preview — should only appear once
+        let bem = r#"{"serp-item":{"dups":[{"url":"https://dup.com/p","title":"From Dups"}],"preview":[{"snippet":{"url":"https://dup.com/p","title":"From Preview"}}]}}"#;
+        let html = make_bem_html(bem);
+        let results = parse_yandex_html(&html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "From Dups"); // dups processed first
+    }
+
+    #[test]
+    fn bem_missing_thumb_url() {
+        let bem = r#"{"serp-item":{"dups":[{"url":"https://a.com/p","title":"No Thumb"}]}}"#;
+        let html = make_bem_html(bem);
+        let results = parse_yandex_html(&html);
+        assert!(results[0].thumbnail.is_none());
+    }
+
+    #[test]
+    fn data_state_wins_over_data_bem() {
+        // Both data-state and data-bem present — data-state should be used
+        let html = r#"<html><body>
+        <div class="Root" id="ImagesApp-1" data-state='{"initialState":{"cbirSites":{"sites":[{"url":"https://state.com/p","title":"State","domain":"state.com"}]}}}'>
+        </div>
+        <div class="serp-item" data-bem='{"serp-item":{"dups":[{"url":"https://bem.com/p","title":"Bem"}]}}'>
+        </div>
+        </body></html>"#;
+        let results = parse_yandex_html(html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].page_url, "https://state.com/p");
+    }
+
+    #[test]
+    fn many_results_no_panic() {
+        let mut sites = Vec::new();
+        for i in 0..100 {
+            sites.push(format!(r#"{{"url":"https://site{i}.com/p","title":"Site {i}","domain":"site{i}.com"}}"#));
+        }
+        let json = format!(r#"{{"initialState":{{"cbirSites":{{"sites":[{}]}}}}}}"#, sites.join(","));
+        let results = parse_yandex_html(&make_data_state_html(&json));
+        assert_eq!(results.len(), 100);
     }
 }

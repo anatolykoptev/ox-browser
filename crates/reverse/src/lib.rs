@@ -136,4 +136,62 @@ mod tests {
         assert!(is_stock_domain("www.gettyimages.com"));
         assert!(!is_stock_domain("example.com"));
     }
+
+    // --- Hard red tests ---
+
+    #[test]
+    fn extract_domain_with_port() {
+        assert_eq!(extract_domain("https://example.com:8080/path"), "example.com");
+    }
+
+    #[test]
+    fn extract_domain_ip_address() {
+        assert_eq!(extract_domain("http://192.168.1.1/page"), "192.168.1.1");
+    }
+
+    #[test]
+    fn extract_domain_empty_url() {
+        assert_eq!(extract_domain(""), "");
+    }
+
+    #[test]
+    fn extract_domain_unicode() {
+        // url::Url converts to punycode
+        assert_eq!(extract_domain("https://www.例え.jp/path"), "xn--r8jz45g.jp");
+    }
+
+    #[test]
+    fn stock_domain_case_insensitive() {
+        assert!(is_stock_domain("SHUTTERSTOCK.COM"));
+        assert!(is_stock_domain("GettyImages.com"));
+    }
+
+    #[test]
+    fn stock_domain_subdomain() {
+        assert!(is_stock_domain("image.shutterstock.com"));
+        assert!(is_stock_domain("contributor.gettyimages.com"));
+        assert!(is_stock_domain("www.depositphotos.com"));
+    }
+
+    #[test]
+    fn stock_domain_all_known_sites() {
+        let domains = [
+            "shutterstock.com", "gettyimages.com", "istockphoto.com",
+            "adobestock.com", "depositphotos.com", "dreamstime.com",
+            "123rf.com", "alamy.com", "bigstockphoto.com", "stocksy.com",
+            "pond5.com", "freepik.com", "vectorstock.com",
+        ];
+        for d in domains {
+            assert!(is_stock_domain(d), "should detect: {d}");
+        }
+    }
+
+    #[test]
+    fn stock_domain_false_positives() {
+        assert!(!is_stock_domain("unsplash.com")); // free, not stock
+        assert!(!is_stock_domain("pixabay.com")); // free
+        assert!(!is_stock_domain("pexels.com")); // free
+        assert!(!is_stock_domain("flickr.com"));
+        assert!(!is_stock_domain("example.com"));
+    }
 }
