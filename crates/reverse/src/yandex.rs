@@ -58,23 +58,10 @@ fn parse_yandex_html(html: &str) -> Vec<ReverseMatch> {
     let mut seen = HashSet::new();
     let doc = dom_query::Document::from(html);
 
-    // Strategy 1 (primary): data-state JSON from ImagesApp root div.
-    for node in doc.select("div.Root[id^=\"ImagesApp-\"]").iter() {
-        let raw = node.attr("data-state").unwrap_or_default();
-        let raw = raw.as_ref();
-        if raw.is_empty() {
-            continue;
-        }
-        let decoded = if raw.contains("&quot;") {
-            html_unescape(raw)
-        } else {
-            raw.to_owned()
-        };
-        let Ok(val) = serde_json::from_str::<Value>(&decoded) else {
-            continue;
-        };
-        extract_from_data_state(&val, &mut results, &mut seen);
-    }
+    // Strategy 1 (primary): extract data-state from raw HTML via regex.
+    // Cannot use dom_query for this because it decodes &quot; → " inside
+    // JSON string values, creating invalid JSON.
+    extract_data_state_from_raw(html, &mut results, &mut seen);
 
     // Strategy 2 (fallback): data-bem attributes (classic format).
     if results.is_empty() {
@@ -82,6 +69,39 @@ fn parse_yandex_html(html: &str) -> Vec<ReverseMatch> {
     }
 
     results
+}
+
+/// Double-quoted data-state (real Yandex: entities inside, no raw quotes).
+static DS_DQ_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"id="ImagesApp-[^"]*"[^>]*data-state="([^"]*)"#)
+        .expect("ds_dq regex")
+});
+
+/// Single-quoted data-state (test fixtures: raw JSON with quotes).
+static DS_SQ_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"id="ImagesApp-[^"]*"[^>]*data-state='([^']*)'"#)
+        .expect("ds_sq regex")
+});
+
+/// Extract data-state JSON from raw HTML (avoids dom_query entity issues).
+fn extract_data_state_from_raw(
+    html: &str,
+    results: &mut Vec<ReverseMatch>,
+    seen: &mut HashSet<String>,
+) {
+    // Try double-quoted first (real Yandex HTML), then single-quoted (tests).
+    let iter = DS_DQ_RE.captures_iter(html).chain(DS_SQ_RE.captures_iter(html));
+    for cap in iter {
+        let raw = &cap[1];
+        if raw.is_empty() {
+            continue;
+        }
+        let decoded = html_unescape(raw);
+        let Ok(val) = serde_json::from_str::<Value>(&decoded) else {
+            continue;
+        };
+        extract_from_data_state(&val, results, seen);
+    }
 }
 
 /// Strategy 1: extract sites from data-state JSON.
@@ -347,6 +367,17 @@ mod tests {
         assert!(parse_yandex_html(html).is_empty());
         let html = r#"<div data-bem="not json"></div>"#;
         assert!(parse_yandex_html(html).is_empty());
+    }
+
+    #[test]
+    fn data_state_html_entity_encoded() {
+        // Real Yandex uses double quotes with &quot; entities:
+        // data-state="{&quot;initialState&quot;:...}"
+        let html = r#"<html><body><div class="Root" id="ImagesApp-1" data-state="{&quot;initialState&quot;:{&quot;cbirSites&quot;:{&quot;sites&quot;:[{&quot;url&quot;:&quot;https://example.com/page&quot;,&quot;title&quot;:&quot;Test&quot;,&quot;domain&quot;:&quot;example.com&quot;}]}}}"></div></body></html>"#;
+        let results = parse_yandex_html(html);
+        assert_eq!(results.len(), 1, "should parse HTML-entity-encoded data-state");
+        assert_eq!(results[0].page_url, "https://example.com/page");
+        assert_eq!(results[0].title, "Test");
     }
 
     #[test]
