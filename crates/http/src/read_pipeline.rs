@@ -116,6 +116,7 @@ pub fn build_output(
         length,
         method: method.into(),
         elapsed_ms: ms,
+        json_ld: ext.json_ld,
         error: None,
     }
 }
@@ -131,6 +132,7 @@ pub fn build_error_output(params: &ReadParams, method: &str, ms: u64, msg: &str)
         length: 0,
         method: method.into(),
         elapsed_ms: ms,
+        json_ld: Vec::new(),
         error: Some(msg.into()),
     }
 }

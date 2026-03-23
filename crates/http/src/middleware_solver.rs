@@ -178,6 +178,7 @@ mod tests {
             url: "https://example.com/page".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 200);
@@ -206,6 +207,7 @@ mod tests {
             url: "https://example.com/page".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let resp = handler.handle(req).await.unwrap();
         assert!(resp.body.contains("cf_clearance=cached-tok"));
@@ -235,6 +237,7 @@ mod tests {
             url: "https://blocked.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let err = handler.handle(req).await.unwrap_err();
         assert!(matches!(err, HttpError::Cloudflare(ChallengeType::Block, ..)));
@@ -255,6 +258,7 @@ mod tests {
             url: "https://normal.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 200);

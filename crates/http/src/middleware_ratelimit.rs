@@ -96,6 +96,7 @@ mod tests {
             url: "https://example.com/page".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         }
     }
 

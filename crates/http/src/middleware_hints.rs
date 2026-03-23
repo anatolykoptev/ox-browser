@@ -86,6 +86,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![("user-agent".into(), chrome_ua())],
             body: None,
+            proxy: None,
         };
         handler.handle(req).await.unwrap();
 
@@ -109,6 +110,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![("user-agent".into(), ua.into())],
             body: None,
+            proxy: None,
         };
         handler.handle(req).await.unwrap();
 
@@ -133,6 +135,7 @@ mod tests {
                 ("sec-ch-ua".into(), custom_hint.clone()),
             ],
             body: None,
+            proxy: None,
         };
         handler.handle(req).await.unwrap();
 
@@ -161,6 +164,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         handler.handle(req).await.unwrap();
 

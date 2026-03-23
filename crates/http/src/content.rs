@@ -50,6 +50,8 @@ pub struct ReadOutput {
     pub length: usize,
     pub method: String,
     pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub json_ld: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -61,6 +63,7 @@ pub struct ExtractedContent {
     pub author: String,
     pub excerpt: String,
     pub length: usize,
+    pub json_ld: Vec<serde_json::Value>,
 }
 
 /// Extract clean content from HTML.
@@ -72,8 +75,13 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
             author: String::new(),
             excerpt: String::new(),
             length: 0,
+            json_ld: Vec::new(),
         };
     }
+
+    // Extract JSON-LD before readability strips it.
+    let json_ld = crate::json_ld::extract_json_ld(html);
+
     let article = Readability::new(html, Some(url), None)
         .ok()
         .and_then(|r| r.parse());
@@ -93,6 +101,7 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
                 author: a.byline.unwrap_or_default(),
                 excerpt: a.excerpt.unwrap_or_default(),
                 length,
+                json_ld,
             }
         }
         None => {
@@ -105,6 +114,7 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
                 author: String::new(),
                 excerpt: String::new(),
                 length,
+                json_ld,
             }
         }
     }

@@ -89,6 +89,7 @@ mod tests {
             url: "https://example.com/api".into(),
             headers: vec![],
             body: Some(b"hello".to_vec()),
+            proxy: None,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 201);
@@ -113,6 +114,7 @@ mod tests {
             url: "bad-url".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let result = handler.handle(req).await;
         assert!(result.is_err());

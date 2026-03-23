@@ -306,6 +306,7 @@ async fn retry_middleware_retries_on_cloudflare_error() {
         url: "https://example.com".into(),
         headers: vec![],
         body: None,
+        proxy: None,
     };
     let resp = handler.handle(req).await.unwrap();
     assert_eq!(resp.status, 200);
@@ -351,6 +352,7 @@ async fn persistent_cf_block_exhausts_retries() {
         url: "https://example.com".into(),
         headers: vec![],
         body: None,
+        proxy: None,
     };
     let err = handler.handle(req).await.unwrap_err();
     match err {
@@ -386,6 +388,7 @@ async fn middleware_propagates_inner_error() {
         url: "https://example.com".into(),
         headers: vec![],
         body: None,
+        proxy: None,
     };
     let err = handler.handle(req).await.unwrap_err();
     match err {

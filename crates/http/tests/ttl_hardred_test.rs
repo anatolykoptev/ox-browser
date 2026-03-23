@@ -30,6 +30,7 @@ fn make_request(url: &str) -> Request {
         url: url.into(),
         headers: vec![],
         body: None,
+        proxy: None,
     }
 }
 

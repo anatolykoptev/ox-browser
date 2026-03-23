@@ -104,6 +104,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -125,6 +126,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -146,6 +148,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
 
         let result = handler.handle(req).await;
@@ -168,6 +171,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -189,6 +193,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
 
         let resp = handler.handle(req).await.unwrap();

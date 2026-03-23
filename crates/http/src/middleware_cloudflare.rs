@@ -85,6 +85,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let err = handler.handle(req).await.unwrap_err();
         match err {
@@ -109,6 +110,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 200);
@@ -127,6 +129,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 503);
