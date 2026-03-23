@@ -2,7 +2,7 @@
 //!
 //! Called by both MCP and REST layers.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use url::Url;
 
@@ -12,8 +12,26 @@ use crate::cookie_provider::CookieProvider;
 use crate::ChallengeType;
 use crate::HttpClient;
 
-/// Execute the full read pipeline: fetch → extract → quality check → headless fallback.
+/// Overall timeout for the entire read pipeline (fetch + extract + headless fallback).
+const PIPELINE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Execute the full read pipeline with a 30s overall timeout.
 pub async fn read_page(
+    http: &HttpClient,
+    provider: &dyn CookieProvider,
+    cache: &CookieCache,
+    params: &ReadParams,
+) -> ReadOutput {
+    match tokio::time::timeout(
+        PIPELINE_TIMEOUT,
+        read_page_inner(http, provider, cache, params),
+    ).await {
+        Ok(output) => output,
+        Err(_) => build_error_output(params, "direct", PIPELINE_TIMEOUT.as_millis() as u64, "read pipeline timeout"),
+    }
+}
+
+async fn read_page_inner(
     http: &HttpClient,
     provider: &dyn CookieProvider,
     cache: &CookieCache,
