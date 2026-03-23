@@ -53,10 +53,14 @@ fn cookie_header(solution: &SolvedChallenge) -> String {
         .join("; ")
 }
 
-/// Inject cookies from a solved challenge into the request.
-fn inject_cookies(req: &mut Request, solution: &SolvedChallenge) {
+/// Inject cookies and user-agent from a solved challenge into the request.
+/// CF binds cf_clearance to the UA — mismatch causes 403.
+fn inject_solution(req: &mut Request, solution: &SolvedChallenge) {
     let value = cookie_header(solution);
     req.set_header("cookie", value);
+    if !solution.user_agent.is_empty() {
+        req.set_header("user-agent", solution.user_agent.clone());
+    }
 }
 
 #[async_trait]
@@ -67,7 +71,7 @@ impl Handler for SolverHandler {
         // Check cache first — inject cookies if we have a prior solution.
         if let Some(solution) = self.cache.get(&domain) {
             debug!(domain = %domain, "solver: using cached cookies");
-            inject_cookies(&mut req, &solution);
+            inject_solution(&mut req, &solution);
             return self.next.handle(req).await;
         }
 
@@ -86,7 +90,7 @@ impl Handler for SolverHandler {
                     .await
                     .map_err(|e| HttpError::ProxyPool(format!("solver failed: {e}")))?;
                 self.cache.put(&domain, solution.clone());
-                inject_cookies(&mut req, &solution);
+                inject_solution(&mut req, &solution);
                 self.next.handle(req).await
             }
             // Everything else passes through.

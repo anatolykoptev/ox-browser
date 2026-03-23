@@ -35,7 +35,7 @@
 [solver]
 # byparr_url = ""                  # or set BYPARR_URL env var
 byparr_timeout_secs = 120          # FlareSolverr cold start can take ~70s
-chromium_enabled = true             # native Rust CDP solver (replaces Byparr)
+chromium_enabled = false            # Byparr (Camoufox) works on ARM64 with pinned tag
 # chromium_path auto-detected via CHROME_PATH env var
 chromium_max_concurrent = 2
 chromium_timeout_secs = 30
