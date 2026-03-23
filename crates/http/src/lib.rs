@@ -1,5 +1,6 @@
 pub mod content;
 pub mod cloudflare;
+pub mod read_pipeline;
 pub mod cookie_cache;
 pub mod cookie_provider;
 mod client;
