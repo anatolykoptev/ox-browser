@@ -1,12 +1,16 @@
 //! POST /readability endpoint — extract article content from a URL.
+//!
+//! Two-stage fetch: fast wreq first, headless fallback on 401/403/429/503.
+//! DEPRECATED: Use POST /read instead.
 
 use std::time::Instant;
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use readabilityrs::Readability;
+use ox_http::ChallengeType;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use super::AppState;
 
@@ -33,6 +37,8 @@ pub struct ReadabilityResponse {
     pub excerpt: String,
     pub length: usize,
     pub elapsed_ms: u64,
+    /// "direct" or "solved" (headless fallback was used).
+    pub method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -48,128 +54,98 @@ pub async fn readability(
         Err(e) => {
             return (
                 StatusCode::BAD_GATEWAY,
-                Json(ReadabilityResponse {
-                    title: String::new(),
-                    content: String::new(),
-                    author: String::new(),
-                    excerpt: String::new(),
-                    length: 0,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                    error: Some(format!("fetch failed: {e}")),
-                }),
+                Json(error_response(start, "direct", &format!("fetch failed: {e}"))),
             );
         }
     };
 
-    if resp.status != 200 {
+    let (html, method) = if resp.status == 200 {
+        (resp.body, "direct")
+    } else if ox_http::content::should_fallback(resp.status) {
+        tracing::info!(
+            url = %req.url,
+            status = resp.status,
+            "readability: non-200, attempting headless fallback"
+        );
+        match headless_fetch(&state, &req.url).await {
+            Ok(body) => (body, "solved"),
+            Err(e) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(error_response(
+                        start,
+                        "solved",
+                        &format!("HTTP {} + fallback: {e}", resp.status),
+                    )),
+                );
+            }
+        }
+    } else {
         return (
             StatusCode::BAD_GATEWAY,
-            Json(ReadabilityResponse {
-                title: String::new(),
-                content: String::new(),
-                author: String::new(),
-                excerpt: String::new(),
-                length: 0,
-                elapsed_ms: start.elapsed().as_millis() as u64,
-                error: Some(format!("HTTP {}", resp.status)),
-            }),
+            Json(error_response(start, "direct", &format!("HTTP {}", resp.status))),
         );
-    }
+    };
 
-    let result = extract_article(&resp.body, &req.url, req.plain_text, req.max_length);
+    let format = if req.plain_text { ox_http::content::ContentFormat::Text }
+                 else { ox_http::content::ContentFormat::Html };
+    let extracted = ox_http::content::extract_content(&html, &req.url, format);
+    let mut content = extracted.content;
+    if req.max_length > 0 {
+        content = ox_http::content::truncate_utf8(&content, req.max_length);
+    }
+    let length = content.len();
 
     (
         StatusCode::OK,
         Json(ReadabilityResponse {
+            title: extracted.title,
+            content,
+            author: extracted.author,
+            excerpt: extracted.excerpt,
+            length,
             elapsed_ms: start.elapsed().as_millis() as u64,
+            method: method.into(),
             error: None,
-            ..result
         }),
     )
 }
 
-fn extract_article(
-    html: &str,
-    url: &str,
-    plain_text: bool,
-    max_length: usize,
-) -> ReadabilityResponse {
-    let r = match Readability::new(html, Some(url), None) {
-        Ok(r) => r,
-        Err(e) => {
-            return ReadabilityResponse {
-                title: String::new(),
-                content: String::new(),
-                author: String::new(),
-                excerpt: String::new(),
-                length: 0,
-                elapsed_ms: 0,
-                error: Some(format!("readability init: {e}")),
-            };
-        }
-    };
-    let article = match r.parse() {
-        Some(a) => a,
-        None => {
-            return ReadabilityResponse {
-                title: String::new(),
-                content: String::new(),
-                author: String::new(),
-                excerpt: String::new(),
-                length: 0,
-                elapsed_ms: 0,
-                error: Some("readability: could not extract article".into()),
-            };
-        }
-    };
+/// Solve via headless browser, cache cookies, retry GET.
+async fn headless_fetch(state: &AppState, url: &str) -> Result<String, String> {
+    let domain = Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
+        .unwrap_or_default();
 
-    let raw_content = article.content.unwrap_or_default();
-    let mut content = if plain_text {
-        html_to_plain(&raw_content)
-    } else {
-        raw_content
-    };
+    let solved = state
+        .provider
+        .solve(url, ChallengeType::JsChallenge)
+        .await?;
+    state.cache.put(&domain, solved);
 
-    if max_length > 0 && content.len() > max_length {
-        // Truncate at char boundary
-        let mut end = max_length;
-        while end < content.len() && !content.is_char_boundary(end) {
-            end += 1;
-        }
-        content.truncate(end);
-        content.push('…');
+    tracing::info!(domain = %domain, "headless solved, retrying GET");
+    let retry = state
+        .http_client
+        .get(url)
+        .await
+        .map_err(|e| format!("retry after solve: {e}"))?;
+
+    if retry.status != 200 {
+        return Err(format!("retry got HTTP {}", retry.status));
     }
-
-    let length = content.len();
-
-    ReadabilityResponse {
-        title: article.title.unwrap_or_default(),
-        content,
-        author: article.byline.unwrap_or_default(),
-        excerpt: article.excerpt.unwrap_or_default(),
-        length,
-        elapsed_ms: 0,
-        error: None,
-    }
+    Ok(retry.body)
 }
 
-/// Strip HTML tags and normalize whitespace for plain text output.
-fn html_to_plain(html: &str) -> String {
-    let doc = dom_query::Document::from(html);
-    let text = doc.select("body").text().to_string();
-    // Collapse multiple whitespace/newlines into single spaces, trim
-    let mut result = String::with_capacity(text.len());
-    let mut prev_ws = true;
-    for ch in text.chars() {
-        if ch.is_whitespace() {
-            if !prev_ws {
-                result.push(' ');
-                prev_ws = true;
-            }
-        } else {
-            result.push(ch);
-            prev_ws = false;
-        }
+fn error_response(start: Instant, method: &str, msg: &str) -> ReadabilityResponse {
+    ReadabilityResponse {
+        title: String::new(),
+        content: String::new(),
+        author: String::new(),
+        excerpt: String::new(),
+        length: 0,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+        method: method.into(),
+        error: Some(msg.into()),
     }
-    result.trim().to_string()
 }

@@ -79,7 +79,7 @@ impl OxMcpServer {
 
     #[tool(
         name = "fetch_smart",
-        description = "Smart three-tier fetch: fast wreq first, then Cloudflare detection, then headless browser solve + retry. Automatically bypasses CF challenges."
+        description = "DEPRECATED: Use 'read' instead. Returns raw HTML with CF bypass. The 'read' tool provides the same plus automatic content extraction."
     )]
     async fn fetch_smart(
         &self,
@@ -123,7 +123,7 @@ impl OxMcpServer {
 
     #[tool(
         name = "readability",
-        description = "Extract article content from a URL using Mozilla Readability algorithm. Removes navigation, ads, sidebars — returns clean article text. Supports plain text or HTML output. Use for reading website content, place descriptions, blog posts, news articles."
+        description = "DEPRECATED: Use 'read' instead. The 'read' tool provides the same extraction plus markdown output and anti-bot detection."
     )]
     async fn readability(
         &self,

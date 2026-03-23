@@ -4,14 +4,11 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use ox_http::detect_cloudflare;
-use ox_http::ChallengeType;
 use rmcp::model::*;
-use rmcp::ErrorData as McpError;
-use serde::{Deserialize, Serialize};
-
 use rmcp::schemars;
+use rmcp::ErrorData as McpError;
 use schemars::JsonSchema;
-use url::Url;
+use serde::{Deserialize, Serialize};
 
 use super::OxMcpServer;
 
@@ -27,8 +24,7 @@ pub struct FetchInput {
 pub struct FetchSmartInput {
     /// The URL to fetch with automatic CF bypass.
     pub url: String,
-    /// Save response body to file and return path instead of inline body.
-    /// Default: true. Set to false to get body inline.
+    /// Save response body to file instead of returning inline. Default: true.
     #[serde(default = "default_true")]
     pub save_to_file: bool,
 }
@@ -66,32 +62,24 @@ struct FetchSmartResult {
 
 impl OxMcpServer {
     /// Stealth HTTP fetch via wreq+BoringSSL.
-    pub(crate) async fn do_fetch(
-        &self,
-        input: FetchInput,
-    ) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_fetch(&self, input: FetchInput) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
-
+        let elapsed = || start.elapsed().as_millis() as u64;
         match self.http_client.get(&input.url).await {
             Ok(resp) => {
                 let cf = detect_cloudflare(&resp);
                 let headers: HashMap<String, String> = resp
                     .headers
                     .iter()
-                    .filter_map(|(k, v)| {
-                        v.to_str()
-                            .ok()
-                            .map(|val| (k.to_string(), val.to_owned()))
-                    })
+                    .filter_map(|(k, v)| v.to_str().ok().map(|val| (k.to_string(), val.to_owned())))
                     .collect();
-
                 let result = FetchResult {
                     status: resp.status,
                     headers,
                     body: resp.body,
                     cf_detected: cf.is_some(),
                     cf_type: cf.map(|c| c.challenge_type.to_string()),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    elapsed_ms: elapsed(),
                     error: None,
                 };
                 let json = serde_json::to_string(&result)
@@ -105,7 +93,7 @@ impl OxMcpServer {
                     body: String::new(),
                     cf_detected: false,
                     cf_type: None,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    elapsed_ms: elapsed(),
                     error: Some(e.to_string()),
                 };
                 let json = serde_json::to_string(&result)
@@ -115,7 +103,8 @@ impl OxMcpServer {
         }
     }
 
-    /// Three-tier fetch: fast wreq, CF detection, headless solve + retry.
+    /// Fetch with automatic CF bypass via middleware chain.
+    /// DEPRECATED: Use the `read` MCP tool instead.
     pub(crate) async fn do_fetch_smart(
         &self,
         input: FetchSmartInput,
@@ -123,53 +112,14 @@ impl OxMcpServer {
         let start = Instant::now();
         let save = input.save_to_file;
         let url = input.url.clone();
-        let domain = Url::parse(&input.url)
-            .ok()
-            .and_then(|u| u.host_str().map(String::from))
-            .unwrap_or_default();
 
-        // Stage 1: Fast wreq fetch.
-        let resp = match self.http_client.get(&input.url).await {
-            Ok(r) => r,
-            Err(e) => {
-                return Ok(smart_error(start, &e.to_string()));
-            }
-        };
-
-        let cf = detect_cloudflare(&resp);
-        if cf.is_none() {
-            return Ok(smart_ok(resp.status, resp.body, "direct", false, start, save, &url));
-        }
-
-        let challenge = cf.unwrap();
-        tracing::info!(domain, challenge = %challenge.challenge_type, "CF detected");
-
-        if challenge.challenge_type == ChallengeType::Block {
-            return Ok(smart_ok(resp.status, resp.body, "direct", true, start, save, &url));
-        }
-
-        // Stage 2: Headless solve -> retry with cookies.
-        match self.provider.solve(&input.url, challenge.challenge_type).await {
-            Ok(solved) => {
-                self.cache.put(&domain, solved);
-                match self.http_client.get(&input.url).await {
-                    Ok(retry) => Ok(smart_ok(
-                        retry.status,
-                        retry.body,
-                        "solved",
-                        true,
-                        start,
-                        save,
-                        &url,
-                    )),
-                    Err(e) => Ok(smart_error(start, &format!("retry failed: {e}"))),
-                }
-            }
-            Err(e) => Ok(smart_error(start, &format!("solve failed: {e}"))),
+        // Middleware chain handles CF detect + solve + retry automatically.
+        match self.http_client.get(&input.url).await {
+            Ok(resp) => Ok(smart_ok(resp.status, resp.body, "auto", false, start, save, &url)),
+            Err(e) => Ok(smart_error(start, &e.to_string())),
         }
     }
 }
-
 fn smart_ok(
     status: u16,
     body: String,
@@ -190,7 +140,6 @@ fn smart_ok(
     } else {
         (Some(body), None)
     };
-
     let r = FetchSmartResult {
         status,
         body: body_field,
@@ -217,3 +166,7 @@ fn smart_error(start: Instant, msg: &str) -> CallToolResult {
     let json = serde_json::to_string(&r).unwrap_or_default();
     CallToolResult::error(vec![Content::text(json)])
 }
+
+#[cfg(test)]
+#[path = "fetch_tests.rs"]
+mod tests;

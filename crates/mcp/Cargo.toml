@@ -20,5 +20,3 @@ ox-media = { path = "../media" }
 axum = "0.8"
 tokio.workspace = true
 tracing.workspace = true
-readabilityrs = "0.1"
-dom_query = "0.25"
