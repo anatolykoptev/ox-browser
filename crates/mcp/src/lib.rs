@@ -1,7 +1,8 @@
 //! MCP protocol server for ox-browser.
 //!
-//! Exposes fetch, fetch_smart, analyze, and solve_cf as MCP tools
-//! over Streamable HTTP transport.
+//! Exposes 11 tools over Streamable HTTP transport.
+//! Primary: read, fetch, analyze, crawl, solve_cf, security_scan, image_search, reverse_image_search, media_download, site_audit.
+//! Deprecated: fetch_smart, readability (use read instead).
 
 pub mod tools;
 
