@@ -45,8 +45,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ox_http::{
-    ByparrConfig, ByparrSolver, ChallengeType, CookieCache, CookieProvider,
-    HttpConfig, SolvedChallenge,
+    ByparrConfig, ByparrSolver, ChallengeType, ChromiumConfig, ChromiumSolver,
+    CookieCache, CookieProvider, HttpConfig, SolvedChallenge,
 };
 use serde::Deserialize;
 
@@ -121,7 +121,20 @@ impl CookieProvider for NoOpProvider {
 }
 
 /// Build the cookie provider from config.
+///
+/// Priority: chromium_enabled → byparr_url → NoOp.
 pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
+    if config.solver.chromium_enabled {
+        let chromium_cfg = ChromiumConfig {
+            timeout: Duration::from_secs(config.solver.chromium_timeout_secs),
+            max_concurrent: config.solver.chromium_max_concurrent,
+            chrome_path: config.solver.chromium_path.clone(),
+            proxy_url: config.proxy.residential_url.clone(),
+        };
+        tracing::info!("using chromium solver");
+        return Arc::new(ChromiumSolver::new(chromium_cfg));
+    }
+
     if let Some(ref url) = config.solver.byparr_url {
         Arc::new(ByparrSolver::new(ByparrConfig {
             base_url: url.clone(),
