@@ -2029,7 +2029,7 @@ checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
 
 [[package]]
 name = "ox-browser"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "ox-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dom_query 0.25.1",
  "ox-http",
@@ -2066,7 +2066,7 @@ dependencies = [
 
 [[package]]
 name = "ox-crawler"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2088,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "ox-http"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "cookie_store",
@@ -2108,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "ox-imagesearch"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "dom_query 0.11.0",
@@ -2125,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "ox-intelligence"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dom_query 0.25.1",
  "ox-security",
@@ -2140,12 +2140,11 @@ dependencies = [
 
 [[package]]
 name = "ox-js"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-stream",
  "async-trait",
  "axum",
- "dom_query 0.25.1",
  "http-body-util",
  "ox-core",
  "ox-crawler",
@@ -2155,7 +2154,6 @@ dependencies = [
  "ox-media",
  "ox-reverse",
  "ox-security",
- "readabilityrs",
  "serde",
  "serde_json",
  "tokio",
@@ -2166,10 +2164,9 @@ dependencies = [
 
 [[package]]
 name = "ox-mcp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "axum",
- "dom_query 0.25.1",
  "ox-core",
  "ox-crawler",
  "ox-http",
@@ -2179,7 +2176,6 @@ dependencies = [
  "ox-media",
  "ox-reverse",
  "ox-security",
- "readabilityrs",
  "rmcp",
  "serde",
  "serde_json",
@@ -2210,7 +2206,7 @@ dependencies = [
 
 [[package]]
 name = "ox-reverse"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "dom_query 0.11.0",
@@ -2228,7 +2224,7 @@ dependencies = [
 
 [[package]]
 name = "ox-security"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "ammonia",
  "content-security-policy",

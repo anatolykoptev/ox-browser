@@ -179,26 +179,10 @@ fn collapse_whitespace(s: &str) -> String {
 }
 
 const NOISE_SELECTORS: &[&str] = &[
-    "nav",
-    "footer",
-    "header",
-    ".nav",
-    ".navbar",
-    ".footer",
-    ".sidebar",
-    ".menu",
-    ".breadcrumb",
-    ".pagination",
-    ".cookie-banner",
-    ".cookie-consent",
-    "#cookie-banner",
-    "[role=navigation]",
-    "[role=banner]",
-    "[role=contentinfo]",
-    "script",
-    "style",
-    "noscript",
-    "iframe",
+    "nav", "footer", "header", ".nav", ".navbar", ".footer", ".sidebar",
+    ".menu", ".breadcrumb", ".pagination", ".cookie-banner", ".cookie-consent",
+    "#cookie-banner", "[role=navigation]", "[role=banner]", "[role=contentinfo]",
+    "script", "style", "noscript", "iframe",
 ];
 
 #[cfg(test)]

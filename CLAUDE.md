@@ -20,9 +20,9 @@
 
 ## API
 
-**REST**: `/health`, `/solve`, `/fetch`, `/fetch-smart`, `/readability`, `/analyze`, `/security`, `/crawl`, `/images/search`, `/images/reverse`, `/media/download`
+**REST**: `/health`, `/solve`, `/fetch`, `/fetch-smart`, `/read`, `/readability`, `/analyze`, `/security`, `/crawl`, `/images/search`, `/images/reverse`, `/media/download`, `/site-audit`
 
-**MCP**: `/mcp` — 9 tools: fetch, fetch_smart, analyze, solve_cf, security_scan, readability, image_search, reverse_image_search, media_download
+**MCP**: `/mcp` — 11 tools: fetch, fetch_smart (deprecated→use read), **read**, analyze, solve_cf, security_scan, readability (deprecated→use read), crawl, image_search, reverse_image_search, media_download, site_audit
 
 ## Build
 
