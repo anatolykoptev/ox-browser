@@ -5,6 +5,7 @@ mod crawl;
 mod fetch;
 mod image_search;
 mod media_download;
+mod read;
 mod readability;
 mod reverse_search;
 mod security;
@@ -25,6 +26,7 @@ pub use analyze::AnalyzeInput;
 pub use fetch::{FetchInput, FetchSmartInput};
 pub use media_download::MediaDownloadInput;
 pub use image_search::ImageSearchInput;
+pub use read::ReadInput;
 pub use readability::ReadabilityInput;
 pub use reverse_search::ReverseSearchInput;
 pub use security::SecurityScanInput;
@@ -128,6 +130,17 @@ impl OxMcpServer {
         Parameters(input): Parameters<ReadabilityInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_readability(input).await
+    }
+
+    #[tool(
+        name = "read",
+        description = "Read and extract content from any URL. Returns clean text, markdown, or HTML. Automatically handles Cloudflare bypass, anti-bot detection, retries, and content extraction. Use this as the default tool for reading web pages, articles, blog posts, documentation."
+    )]
+    async fn read(
+        &self,
+        Parameters(input): Parameters<ReadInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_read(input).await
     }
 
     #[tool(
