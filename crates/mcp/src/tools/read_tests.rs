@@ -14,7 +14,7 @@ fn read_output_skips_none_error() {
         title: "T".into(), content: "C".into(), author: String::new(),
         excerpt: String::new(), url: "https://x.com".into(),
         format: "text".into(), length: 1, method: "direct".into(),
-        elapsed_ms: 50, json_ld: Vec::new(), error: None,
+        elapsed_ms: 50, json_ld: Vec::new(), og_image: String::new(), error: None,
     };
     let json = serde_json::to_value(&out).unwrap();
     assert!(!json.as_object().unwrap().contains_key("error"));
@@ -27,7 +27,7 @@ fn read_output_includes_error() {
         title: String::new(), content: String::new(), author: String::new(),
         excerpt: String::new(), url: "https://fail.com".into(),
         format: "text".into(), length: 0, method: "direct".into(),
-        elapsed_ms: 10, json_ld: Vec::new(), error: Some("fail".into()),
+        elapsed_ms: 10, json_ld: Vec::new(), og_image: String::new(), error: Some("fail".into()),
     };
     let json = serde_json::to_value(&out).unwrap();
     assert_eq!(json["error"], "fail");

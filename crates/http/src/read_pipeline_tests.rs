@@ -10,6 +10,7 @@ fn build_output_populates_all_fields() {
         excerpt: "E".into(),
         length: 1,
         json_ld: vec![],
+        og_image: String::new(),
     };
     let params = ReadParams { url: "https://x.com".into(), format: "text".into(), max_length: 0 };
     let out = build_output(ext, &params, "direct", 42);
@@ -41,6 +42,7 @@ fn truncation_applied_when_max_length_set() {
         excerpt: String::new(),
         length: 500,
         json_ld: vec![],
+        og_image: String::new(),
     };
     let params = ReadParams { url: "https://x.com".into(), format: "text".into(), max_length: 50 };
     let out = build_output(ext, &params, "direct", 0);

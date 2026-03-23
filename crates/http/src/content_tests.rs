@@ -76,3 +76,21 @@ fn should_fallback_codes() {
     assert!(!should_fallback(404));
     assert!(!should_fallback(500));
 }
+
+#[test]
+fn test_extract_og_image() {
+    let html = r#"<html><head><meta property="og:image" content="https://example.com/hero.jpg"></head><body>Hello</body></html>"#;
+    assert_eq!(extract_og_image(html), "https://example.com/hero.jpg");
+}
+
+#[test]
+fn test_extract_og_image_missing() {
+    let html = "<html><head><title>Test</title></head><body>Hello</body></html>";
+    assert_eq!(extract_og_image(html), "");
+}
+
+#[test]
+fn test_extract_og_image_single_quotes() {
+    let html = r#"<html><head><meta property='og:image' content='https://example.com/img.png'></head></html>"#;
+    assert_eq!(extract_og_image(html), "https://example.com/img.png");
+}

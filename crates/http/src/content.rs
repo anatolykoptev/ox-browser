@@ -52,6 +52,8 @@ pub struct ReadOutput {
     pub elapsed_ms: u64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub json_ld: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub og_image: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -64,6 +66,7 @@ pub struct ExtractedContent {
     pub excerpt: String,
     pub length: usize,
     pub json_ld: Vec<serde_json::Value>,
+    pub og_image: String,
 }
 
 /// Extract clean content from HTML.
@@ -76,11 +79,13 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
             excerpt: String::new(),
             length: 0,
             json_ld: Vec::new(),
+            og_image: String::new(),
         };
     }
 
-    // Extract JSON-LD before readability strips it.
+    // Extract JSON-LD and og:image before readability strips meta tags.
     let json_ld = crate::json_ld::extract_json_ld(html);
+    let og_image = extract_og_image(html);
 
     let article = Readability::new(html, Some(url), None)
         .ok()
@@ -102,6 +107,7 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
                 excerpt: a.excerpt.unwrap_or_default(),
                 length,
                 json_ld,
+                og_image,
             }
         }
         None => {
@@ -115,9 +121,33 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
                 excerpt: String::new(),
                 length,
                 json_ld,
+                og_image,
             }
         }
+    }}
+
+/// Extract og:image URL from HTML meta tags.
+fn extract_og_image(html: &str) -> String {
+    // Look for <meta property="og:image" content="...">
+    let needle = "property=\"og:image\"";
+    let pos = html.find(needle).or_else(|| html.find("property='og:image'"));
+    let Some(pos) = pos else { return String::new() };
+
+    // Search for content="..." nearby (within 200 chars)
+    let slice = &html[pos..html.len().min(pos + 200)];
+    if let Some(c_start) = slice.find("content=\"") {
+        let val_start = c_start + 9;
+        if let Some(c_end) = slice[val_start..].find('"') {
+            return slice[val_start..val_start + c_end].to_string();
+        }
     }
+    if let Some(c_start) = slice.find("content='") {
+        let val_start = c_start + 9;
+        if let Some(c_end) = slice[val_start..].find('\'') {
+            return slice[val_start..val_start + c_end].to_string();
+        }
+    }
+    String::new()
 }
 
 fn convert_format(html: &str, format: ContentFormat) -> String {
