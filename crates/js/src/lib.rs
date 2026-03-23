@@ -7,21 +7,20 @@ mod fetch;
 mod fetch_smart;
 mod image_search;
 mod media_download;
+mod read;
 mod readability;
 mod reverse_search;
 mod security;
 mod site_audit;
+mod solve;
 
-use std::collections::HashMap;
+pub use solve::SolveResponse;
+
 use std::sync::Arc;
 
-use axum::extract::State;
-use axum::http::StatusCode;
 use axum::routing::{get, post};
-use axum::{Json, Router};
-use ox_http::{ChallengeType, CookieCache, CookieProvider, HttpClient};
-use serde::{Deserialize, Serialize};
-use url::Url;
+use axum::Router;
+use ox_http::{CookieCache, CookieProvider, HttpClient};
 
 /// Runtime defaults configurable via config.toml.
 #[derive(Clone, Debug)]
@@ -55,35 +54,11 @@ pub struct AppState {
     pub media_config: ox_media::MediaConfig,
 }
 
-/// Incoming solve request body.
-#[derive(Deserialize)]
-pub struct SolveRequest {
-    pub url: String,
-    #[serde(default = "default_challenge_type")]
-    pub challenge_type: String,
-}
-
-fn default_challenge_type() -> String {
-    "js_challenge".into()
-}
-
-/// Response returned by the /solve endpoint.
-#[derive(Serialize, Deserialize)]
-pub struct SolveResponse {
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cookies: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_agent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// Builds the Axum router with /health, /solve, /fetch and /fetch-smart.
+/// Builds the Axum router with all REST endpoints.
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
-        .route("/solve", post(solve))
+        .route("/solve", post(solve::solve))
         .route("/fetch", post(fetch::fetch))
         .route("/fetch-smart", post(fetch_smart::fetch_smart))
         .route("/analyze", post(analyze::analyze))
@@ -94,6 +69,7 @@ pub fn router(state: AppState) -> Router {
         .route("/readability", post(readability::readability))
         .route("/crawl", post(crawl::crawl))
         .route("/site-audit", post(site_audit::site_audit))
+        .route("/read", post(read::read))
         .with_state(state)
 }
 
@@ -101,82 +77,15 @@ async fn health() -> &'static str {
     "ok"
 }
 
-async fn solve(
-    State(state): State<AppState>,
-    Json(req): Json<SolveRequest>,
-) -> (StatusCode, Json<SolveResponse>) {
-    let challenge_type = match req.challenge_type.as_str() {
-        "js_challenge" => ChallengeType::JsChallenge,
-        "managed_challenge" | "turnstile" => ChallengeType::Turnstile,
-        "managed_challenge_200" => ChallengeType::ManagedChallenge,
-        "block" => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(SolveResponse {
-                    status: "error".into(),
-                    cookies: None,
-                    user_agent: None,
-                    error: Some("block challenges are not solvable".into()),
-                }),
-            );
-        }
-        _ => ChallengeType::JsChallenge,
-    };
-
-    let domain = match Url::parse(&req.url) {
-        Ok(u) => u.host_str().unwrap_or("unknown").to_owned(),
-        Err(_) => "unknown".to_owned(),
-    };
-
-    if let Some(cached) = state.cache.get(&domain) {
-        tracing::debug!(domain, "cache hit");
-        return (
-            StatusCode::OK,
-            Json(SolveResponse {
-                status: "ok".into(),
-                cookies: Some(cached.cookies),
-                user_agent: Some(cached.user_agent),
-                error: None,
-            }),
-        );
-    }
-
-    match state.provider.solve(&req.url, challenge_type).await {
-        Ok(solved) => {
-            state.cache.put(&domain, solved.clone());
-            tracing::info!(domain, "challenge solved");
-            (
-                StatusCode::OK,
-                Json(SolveResponse {
-                    status: "ok".into(),
-                    cookies: Some(solved.cookies),
-                    user_agent: Some(solved.user_agent),
-                    error: None,
-                }),
-            )
-        }
-        Err(e) => {
-            tracing::warn!(domain, error = %e, "solve failed");
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(SolveResponse {
-                    status: "error".into(),
-                    cookies: None,
-                    user_agent: None,
-                    error: Some(e),
-                }),
-            )
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
     use axum::body::Body;
+    use axum::http::StatusCode;
     use http_body_util::BodyExt;
-    use ox_http::{HttpConfig, SolvedChallenge};
+    use ox_http::{ChallengeType, HttpConfig, SolvedChallenge};
+    use std::collections::HashMap;
     use std::time::Duration;
     use tower::ServiceExt;
 
@@ -202,9 +111,7 @@ mod tests {
         AppState {
             provider: Arc::new(MockProvider),
             cache: Arc::new(CookieCache::new(Duration::from_secs(300))),
-            http_client: Arc::new(
-                HttpClient::new(HttpConfig::default()).unwrap(),
-            ),
+            http_client: Arc::new(HttpClient::new(HttpConfig::default()).unwrap()),
             defaults: EndpointDefaults::default(),
             media_config: ox_media::MediaConfig::default(),
         }
