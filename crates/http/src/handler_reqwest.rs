@@ -55,8 +55,13 @@ impl Handler for WreqHandler {
             _ => self.client.get(&req.url),
         };
 
-        // Rotating proxy: pick next proxy from pool per-request.
-        if let Some(ref pool) = self.proxy_pool {
+        // Per-request proxy override takes precedence over the pool.
+        if let Some(ref proxy_url) = req.proxy {
+            if let Ok(proxy) = wreq::Proxy::all(proxy_url) {
+                builder = builder.proxy(proxy);
+            }
+        } else if let Some(ref pool) = self.proxy_pool {
+            // Rotating proxy: pick next proxy from pool per-request.
             if let Some(proxy_url) = pool.next() {
                 if let Ok(proxy) = wreq::Proxy::all(&proxy_url) {
                     builder = builder.proxy(proxy);

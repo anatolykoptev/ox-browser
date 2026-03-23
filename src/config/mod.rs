@@ -149,6 +149,7 @@ pub fn build_http_config(config: &ServerConfig) -> HttpConfig {
         debug: config.log.level == "debug",
         emulation: config.http.emulation(),
         retry: Some(config.retry.to_retry_config()),
+        residential_proxy: config.proxy.residential_url.clone(),
         ..Default::default()
     }
 }

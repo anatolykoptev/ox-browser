@@ -9,6 +9,7 @@ use crate::middleware_hints::client_hints_middleware;
 use crate::middleware_logging::logging_middleware;
 use crate::middleware_ratelimit::rate_limit_middleware;
 use crate::middleware_retry::retry_middleware;
+use crate::middleware_residential::residential_proxy_middleware;
 use crate::middleware_solver::solver_middleware;
 use crate::middleware_ssrf::ssrf_middleware;
 use crate::profile_hints::browser_headers;
@@ -59,6 +60,12 @@ impl HttpClient {
         // CF solver (between retry and cloudflare_detect).
         if let (Some(provider), Some(cache)) = (&config.cookie_provider, &config.cookie_cache) {
             middlewares.push(solver_middleware(Arc::clone(provider), Arc::clone(cache)));
+        }
+
+        // Residential proxy retry (between solver and cloudflare_detect).
+        // On CF error, retries once with residential IP before falling back to solver.
+        if let Some(ref proxy) = config.residential_proxy {
+            middlewares.push(residential_proxy_middleware(proxy.clone()));
         }
 
         // Cloudflare detection (inside retry so CF triggers auto-retry).
@@ -131,6 +138,7 @@ impl HttpClient {
             url: url.to_owned(),
             headers,
             body,
+            proxy: None,
         }
     }
 

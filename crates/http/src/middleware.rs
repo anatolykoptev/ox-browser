@@ -19,6 +19,9 @@ pub struct Request {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+    /// Optional per-request proxy override. When set, the terminal handler
+    /// uses this proxy URL instead of the pool.
+    pub proxy: Option<String>,
 }
 
 impl Request {
@@ -50,6 +53,14 @@ impl Request {
         } else {
             self.headers.push((name, value));
         }
+    }
+
+    /// Override the proxy for this specific request.
+    ///
+    /// The terminal handler (`WreqHandler`) reads this field and uses it
+    /// instead of the rotating proxy pool.
+    pub fn set_proxy(&mut self, proxy_url: impl Into<String>) {
+        self.proxy = Some(proxy_url.into());
     }
 }
 
@@ -108,6 +119,7 @@ mod tests {
             url: "https://example.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 200);
@@ -152,6 +164,7 @@ mod tests {
             url: "https://test.com".into(),
             headers: vec![],
             body: None,
+            proxy: None,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 200);
@@ -184,6 +197,7 @@ mod tests {
                 ("User-Agent".into(), "test-ua".into()),
             ],
             body: None,
+            proxy: None,
         };
         assert_eq!(req.header("content-type"), Some("text/html"));
         assert_eq!(req.header("USER-AGENT"), Some("test-ua"));

@@ -40,6 +40,11 @@ pub struct HttpConfig {
     pub cookie_provider: Option<Arc<dyn CookieProvider>>,
     /// Cookie cache for solved CF challenges. Shared across sessions.
     pub cookie_cache: Option<Arc<CookieCache>>,
+    /// Residential proxy URL for CF bypass retry.
+    ///
+    /// When set, the residential proxy middleware retries CF-blocked requests
+    /// (except Block) through this proxy before falling back to the headless solver.
+    pub residential_proxy: Option<String>,
 }
 
 impl Default for HttpConfig {
@@ -58,6 +63,7 @@ impl Default for HttpConfig {
             emulation: None,
             cookie_provider: None,
             cookie_cache: None,
+            residential_proxy: None,
         }
     }
 }

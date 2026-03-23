@@ -16,6 +16,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     if let Some(ref proxy) = config.proxy.url {
         http_config.proxy_url = Some(proxy.clone());
     }
+    // Env fallback for residential proxy (e.g. RESIDENTIAL_PROXY_URL=http://host:port).
+    if http_config.residential_proxy.is_none() {
+        http_config.residential_proxy = std::env::var("RESIDENTIAL_PROXY_URL").ok();
+    }
     http_config.cookie_provider = Some(Arc::clone(&provider));
     http_config.cookie_cache = Some(Arc::clone(&cache));
 

@@ -11,6 +11,8 @@ pub struct ProxySection {
     pub url: Option<String>,
     pub webshare_timeout_secs: u64,
     pub health: ProxyHealthSection,
+    /// Residential proxy URL for CF bypass (overrides RESIDENTIAL_PROXY_URL env var).
+    pub residential_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +32,7 @@ impl Default for ProxySection {
             url: None,
             webshare_timeout_secs: 10,
             health: ProxyHealthSection::default(),
+            residential_url: None,
         }
     }
 }
