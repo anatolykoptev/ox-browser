@@ -153,7 +153,7 @@ pub fn html_to_plain(html: &str) -> String {
     collapse_whitespace(&text)
 }
 
-fn html_to_fit_markdown(html: &str) -> String {
+pub fn html_to_fit_markdown(html: &str) -> String {
     let doc = dom_query::Document::from(html);
     for sel in NOISE_SELECTORS {
         doc.select(sel).remove();
@@ -178,7 +178,7 @@ fn collapse_whitespace(s: &str) -> String {
     r.trim().to_string()
 }
 
-const NOISE_SELECTORS: &[&str] = &[
+pub const NOISE_SELECTORS: &[&str] = &[
     "nav", "footer", "header", ".nav", ".navbar", ".footer", ".sidebar",
     ".menu", ".breadcrumb", ".pagination", ".cookie-banner", ".cookie-consent",
     "#cookie-banner", "[role=navigation]", "[role=banner]", "[role=contentinfo]",

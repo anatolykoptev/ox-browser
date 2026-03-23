@@ -1,30 +1,6 @@
 //! HTML to Markdown conversion with noise filtering.
-
-use dom_query::Document;
-
-/// CSS selectors for noise elements to strip before conversion.
-const NOISE_SELECTORS: &[&str] = &[
-    "nav",
-    "footer",
-    "header",
-    ".nav",
-    ".navbar",
-    ".footer",
-    ".sidebar",
-    ".menu",
-    ".breadcrumb",
-    ".pagination",
-    ".cookie-banner",
-    ".cookie-consent",
-    "#cookie-banner",
-    "[role=navigation]",
-    "[role=banner]",
-    "[role=contentinfo]",
-    "script",
-    "style",
-    "noscript",
-    "iframe",
-];
+//!
+//! Delegates noise stripping to `ox_http::content` (single source of truth).
 
 /// Convert raw HTML to Markdown using htmd.
 pub fn html_to_markdown(html: &str) -> String {
@@ -36,14 +12,7 @@ pub fn html_to_markdown(html: &str) -> String {
 /// Removes navigation, footers, headers, sidebars, scripts, styles,
 /// and other non-content elements before conversion.
 pub fn html_to_fit_markdown(html: &str) -> String {
-    let doc = Document::from(html);
-
-    for selector in NOISE_SELECTORS {
-        doc.select(selector).remove();
-    }
-
-    let cleaned = doc.html();
-    htmd::convert(&cleaned).unwrap_or_default()
+    ox_http::content::html_to_fit_markdown(html)
 }
 
 #[cfg(test)]
@@ -99,8 +68,6 @@ mod tests {
             !md.contains("color: red"),
             "style should be stripped, got: {md}"
         );
-        // noscript may or may not be stripped depending on dom_query parser mode
-        // The critical check is that scripts and styles are removed
     }
 
     #[test]
