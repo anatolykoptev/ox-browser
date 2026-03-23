@@ -131,7 +131,8 @@ pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
             timeout: Duration::from_secs(config.solver.chromium_timeout_secs),
             max_concurrent: config.solver.chromium_max_concurrent,
             chrome_path,
-            proxy_url: config.proxy.residential_url.clone(),
+            proxy_url: config.proxy.residential_url.clone()
+                .or_else(|| std::env::var("RESIDENTIAL_PROXY_URL").ok()),
         };
         tracing::info!("using chromium solver");
         return Arc::new(ChromiumSolver::new(chromium_cfg));
