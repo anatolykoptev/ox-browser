@@ -10,15 +10,21 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chromiumoxide::Browser;
 use chromiumoxide::browser::BrowserConfig;
-use chromiumoxide::page::Page;
 use futures::StreamExt;
 use tokio::sync::Semaphore;
 
 use crate::cloudflare::ChallengeType;
 use crate::cookie_provider::{CookieProvider, SolvedChallenge};
 
+/// Stealth bootstrap script injected before page navigation.
+const STEALTH_JS: &str = include_str!("stealth.js");
+
 /// Cookie name set by Cloudflare after a successful challenge.
 const CF_CLEARANCE: &str = "cf_clearance";
+
+/// User-Agent that matches the stealth script's Client Hints profile.
+const STEALTH_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
+    AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
 /// Configuration for the chromiumoxide-based solver.
 #[derive(Debug, Clone)]
@@ -66,7 +72,10 @@ impl ChromiumSolver {
             .new_headless_mode()
             .arg("--disable-gpu")
             .arg("--disable-dev-shm-usage")
-            .arg("--no-first-run");
+            .arg("--no-first-run")
+            .arg("--disable-blink-features=AutomationControlled")
+            .arg("--window-size=1920,1080")
+            .arg("--lang=en-US,en");
 
         if let Some(ref path) = self.config.chrome_path {
             builder = builder.chrome_executable(path);
@@ -107,10 +116,26 @@ impl ChromiumSolver {
         browser: &Browser,
         url: &str,
     ) -> Result<SolvedChallenge, String> {
-        let page: Page = browser
-            .new_page(url)
+        // Open blank page so we can inject stealth BEFORE navigation.
+        let page = browser
+            .new_page("about:blank")
             .await
             .map_err(|e| format!("chromium new_page error: {e}"))?;
+
+        // Inject stealth script — runs on every document, including navigation.
+        page.evaluate_on_new_document(STEALTH_JS)
+            .await
+            .map_err(|e| format!("chromium stealth inject error: {e}"))?;
+
+        // Override UA to strip "HeadlessChrome" from the UA string.
+        page.set_user_agent(STEALTH_UA)
+            .await
+            .map_err(|e| format!("chromium set_user_agent error: {e}"))?;
+
+        // Navigate to target URL now that stealth is in place.
+        page.goto(url)
+            .await
+            .map_err(|e| format!("chromium goto error: {e}"))?;
 
         let deadline = tokio::time::Instant::now() + self.config.timeout;
 
@@ -128,13 +153,6 @@ impl ChromiumSolver {
                 .map_err(|e| format!("chromium get_cookies error: {e}"))?;
 
             if cookies.iter().any(|c| c.name == CF_CLEARANCE) {
-                let ua: String = page
-                    .evaluate("navigator.userAgent")
-                    .await
-                    .map_err(|e| format!("chromium evaluate error: {e}"))?
-                    .into_value()
-                    .unwrap_or_default();
-
                 let cookie_map: HashMap<String, String> = cookies
                     .into_iter()
                     .map(|c| (c.name, c.value))
@@ -142,7 +160,7 @@ impl ChromiumSolver {
 
                 return Ok(SolvedChallenge {
                     cookies: cookie_map,
-                    user_agent: ua,
+                    user_agent: STEALTH_UA.to_string(),
                 });
             }
 

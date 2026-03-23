@@ -37,6 +37,9 @@ make check    # fmt + lint + test
 
 ```bash
 cd ~/deploy/krolik-server
+# Fast rebuild (cached deps, 2-3 min — use for code-only changes):
+docker compose build ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
+# Full rebuild (no cache, 15+ min — only when Cargo.toml changes):
 docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
 ```
 
@@ -45,3 +48,5 @@ docker compose build --no-cache ox-browser && docker compose up -d --no-deps --f
 - Cookie cache is in-memory — restarts clear CF sessions
 - `/media/download` writes to `/tmp/ox-browser/media/` (tmpfs in Docker)
 - MCP registration: `claude mcp add -s user -t http ox-browser http://127.0.0.1:8901/mcp`
+- Docker build uses cargo-chef — `--no-cache` recompiles ALL deps (15min). Omit it for code-only changes
+- Chromium solver: `chromium_enabled=true` in config.toml, needs `shm_size:256m` and no `cap_drop:ALL` in compose
