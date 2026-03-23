@@ -125,10 +125,12 @@ impl CookieProvider for NoOpProvider {
 /// Priority: chromium_enabled → byparr_url → NoOp.
 pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
     if config.solver.chromium_enabled {
+        let chrome_path = config.solver.chromium_path.clone()
+            .or_else(|| std::env::var("CHROME_PATH").ok());
         let chromium_cfg = ChromiumConfig {
             timeout: Duration::from_secs(config.solver.chromium_timeout_secs),
             max_concurrent: config.solver.chromium_max_concurrent,
-            chrome_path: config.solver.chromium_path.clone(),
+            chrome_path,
             proxy_url: config.proxy.residential_url.clone(),
         };
         tracing::info!("using chromium solver");

@@ -18,7 +18,10 @@ RUN cargo build --release --bin ox-browser
 
 # Stage 4: Runtime
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl ffmpeg chromium \
+    && rm -rf /var/lib/apt/lists/*
+ENV CHROME_PATH=/usr/bin/chromium
 COPY --from=builder /app/target/release/ox-browser /usr/local/bin/ox-browser
 
 WORKDIR /app
