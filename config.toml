@@ -11,7 +11,7 @@
 # max_redirects = 10
 # Emulation: chrome136, chrome131, chrome127, chrome124, chrome120, chrome116,
 #            safari18, safari17, edge127, none
-# emulation = "chrome136"
+emulation = "chrome136"
 
 [retry]
 # max_retries = 3
