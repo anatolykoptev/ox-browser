@@ -35,6 +35,13 @@ impl Default for RatelimitSection {
                     random_delay_ms: 1000,
                 },
                 RatelimitRule {
+                    domain: "*.x.com".into(),
+                    requests_per_window: 40,
+                    window_secs: 900,
+                    min_delay_ms: 1000,
+                    random_delay_ms: 500,
+                },
+                RatelimitRule {
                     domain: String::new(), // catch-all
                     requests_per_window: 30,
                     window_secs: 60,
