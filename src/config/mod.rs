@@ -23,6 +23,7 @@ mod images;
 mod log;
 mod media;
 mod proxy;
+mod ratelimit;
 mod retry;
 mod server;
 mod solver;
@@ -36,6 +37,7 @@ pub use images::ImagesSection;
 pub use log::LogSection;
 pub use media::MediaSection;
 pub use proxy::ProxySection;
+pub use ratelimit::RatelimitSection;
 pub use retry::RetrySection;
 pub use server::ServerSection;
 pub use solver::SolverSection;
@@ -66,6 +68,7 @@ pub struct ServerConfig {
     pub images: ImagesSection,
     pub crawler: CrawlerSection,
     pub media: MediaSection,
+    pub ratelimit: RatelimitSection,
 }
 
 impl ServerConfig {
