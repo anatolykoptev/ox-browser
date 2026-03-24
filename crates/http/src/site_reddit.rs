@@ -18,7 +18,7 @@ async fn reddit_fetch(url: &str, proxy_url: Option<&str>) -> Result<(u16, String
         .timeout(std::time::Duration::from_secs(15))
         .emulation(Emulation::Chrome136)
         .redirect(wreq::redirect::Policy::limited(5))
-        .cookie_store(false);
+        .cookie_store(true);
 
     if let Some(proxy) = proxy_url {
         let p = wreq::Proxy::all(proxy).map_err(|e| e.to_string())?;
