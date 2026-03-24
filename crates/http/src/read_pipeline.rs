@@ -41,7 +41,7 @@ async fn read_page_inner(
     let format = ContentFormat::from_param(&params.format);
 
     // Site-specific handlers (bypass CF entirely)
-    if let Some(output) = crate::site_reddit::try_reddit_json(http, params, format, start).await {
+    if let Some(output) = crate::site_reddit::try_reddit_json(params, format, start).await {
         return output;
     }
 
