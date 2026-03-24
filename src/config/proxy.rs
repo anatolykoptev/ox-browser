@@ -49,7 +49,6 @@ impl Default for ProxyHealthSection {
 
 impl ProxyHealthSection {
     /// Convert to ox-http HealthConfig.
-    #[allow(dead_code)]
     pub fn to_health_config(&self) -> HealthConfig {
         HealthConfig {
             failure_threshold: self.failure_threshold,

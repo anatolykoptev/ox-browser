@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use ox_http::HttpClient;
+use ox_http::{DomainLimiter, HttpClient};
 use ox_js::EndpointDefaults;
 
 use crate::config::{self, ServerConfig};
@@ -22,6 +22,30 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     }
     http_config.cookie_provider = Some(Arc::clone(&provider));
     http_config.cookie_cache = Some(Arc::clone(&cache));
+
+    // Per-domain rate limits.
+    let domain_configs = config.ratelimit.to_domain_configs();
+    if !domain_configs.is_empty() {
+        http_config.rate_limiter = Some(Arc::new(DomainLimiter::new(domain_configs)));
+        tracing::info!("initialized domain rate limiter with {} rules", config.ratelimit.rules.len());
+    }
+
+    // Initialize proxy pool from Webshare API if key is available.
+    if let Ok(api_key) = std::env::var("WEBSHARE_API_KEY") {
+        if !api_key.is_empty() {
+            match ox_http::WebsharePool::new(&api_key).await {
+                Ok(pool) => {
+                    let health_cfg = config.proxy.health.to_health_config();
+                    let healthy = ox_http::HealthyPool::new(Arc::new(pool), health_cfg);
+                    http_config.proxy_pool = Some(Arc::new(healthy));
+                    tracing::info!("initialized Webshare proxy pool with health tracking");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to init Webshare pool, continuing without proxies");
+                }
+            }
+        }
+    }
 
     let _crawler_defaults = &config.crawler;
     tracing::info!(
