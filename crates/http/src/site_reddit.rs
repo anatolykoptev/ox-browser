@@ -1,46 +1,24 @@
 //! Reddit-specific handler: fetch via old.reddit.com JSON API.
 //!
-//! Reddit blocks headless browsers at app level (not CF). The `.json` suffix
-//! on any Reddit URL returns structured data without CF protection.
-//! Requires residential proxy for datacenter IPs.
+//! Reddit blocks datacenter IPs at application level. The `.json` suffix
+//! on old.reddit.com URLs returns structured JSON data.
+//! The request goes through the middleware chain which handles
+//! residential proxy retry automatically.
 
 use std::time::Instant;
 
 use url::Url;
-use wreq_util::Emulation;
 
 use crate::content::{ContentFormat, ExtractedContent, ReadOutput, ReadParams};
 use crate::read_pipeline::{build_output, elapsed};
-
-/// Fetch Reddit JSON using a dedicated client (not the middleware chain).
-async fn reddit_fetch(url: &str, proxy_url: Option<&str>) -> Result<(u16, String), String> {
-    let mut builder = wreq::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .emulation(Emulation::Chrome136)
-        .redirect(wreq::redirect::Policy::limited(5))
-        .cookie_store(true);
-
-    if let Some(proxy) = proxy_url {
-        let p = wreq::Proxy::all(proxy).map_err(|e| e.to_string())?;
-        builder = builder.proxy(p);
-    }
-
-    let client = builder.build().map_err(|e| e.to_string())?;
-    let resp = client
-        .get(url)
-        .header("accept", "application/json")
-        .header("accept-language", "en-US,en;q=0.9")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let status = resp.status().as_u16();
-    let body = resp.text().await.map_err(|e| e.to_string())?;
-    Ok((status, body))
-}
+use crate::HttpClient;
 
 /// Try Reddit JSON endpoint. Returns Some(output) if URL is reddit.com, None otherwise.
+///
+/// Uses the shared HttpClient (middleware chain) which handles residential
+/// proxy retry on 403/blocked responses via quality_check + residential middlewares.
 pub async fn try_reddit_json(
+    http: &HttpClient,
     params: &ReadParams,
     format: ContentFormat,
     start: Instant,
@@ -54,20 +32,21 @@ pub async fn try_reddit_json(
     let json_url = format!("https://old.reddit.com{path}.json?limit=25&raw_json=1");
     tracing::info!(url = %params.url, json_url = %json_url, "reddit: using JSON API");
 
-    let proxy_url = std::env::var("RESIDENTIAL_PROXY_URL").ok();
-    let resp = match reddit_fetch(&json_url, proxy_url.as_deref()).await {
+    // Goes through middleware chain: CF detect → quality check → residential proxy → solver.
+    // Reddit blocks datacenter IPs (403), quality middleware converts to CF error,
+    // residential middleware retries with proxy → 200 with JSON data.
+    let resp = match http.get(&json_url).await {
         Ok(r) => r,
         Err(e) => {
-            tracing::warn!(error = %e, "reddit fetch failed");
+            tracing::warn!(error = %e, "reddit JSON fetch failed");
             return None;
         }
     };
-    let (status, body) = resp;
-    if status != 200 {
-        tracing::warn!(status, "reddit JSON API returned non-200");
+    if resp.status != 200 {
+        tracing::warn!(status = resp.status, "reddit JSON API returned non-200");
         return None;
     }
-    let data: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let data: serde_json::Value = serde_json::from_str(&resp.body).ok()?;
 
     let (title, lines) = if let Some(children) = data["data"]["children"].as_array() {
         parse_listing(children)

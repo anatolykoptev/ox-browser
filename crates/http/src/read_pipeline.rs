@@ -31,8 +31,8 @@ async fn read_page_inner(
     let start = Instant::now();
     let format = ContentFormat::from_param(&params.format);
 
-    // Site-specific handlers (bypass middleware chain entirely)
-    if let Some(output) = crate::site_reddit::try_reddit_json(params, format, start).await {
+    // Site-specific handlers (rewrite URL, still go through middleware chain)
+    if let Some(output) = crate::site_reddit::try_reddit_json(http, params, format, start).await {
         return output;
     }
 
