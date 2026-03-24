@@ -2199,6 +2199,7 @@ dependencies = [
  "dom_query 0.27.0",
  "futures",
  "htmd",
+ "ox-twitter",
  "rand 0.8.5",
  "readabilityrs",
  "serde",
@@ -2345,6 +2346,20 @@ dependencies = [
  "serde_json",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "ox-twitter"
+version = "0.8.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "wreq",
+ "wreq-util",
 ]
 
 [[package]]

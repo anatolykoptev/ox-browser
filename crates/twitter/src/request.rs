@@ -178,10 +178,10 @@ async fn get_or_activate_guest_token(client: &wreq::Client) -> Result<String, St
     // Check cache
     {
         let cache = GUEST_TOKEN.lock().unwrap();
-        if let Some(ref gt) = *cache {
-            if gt.acquired_at.elapsed().as_secs() < GUEST_TOKEN_TTL_SECS {
-                return Ok(gt.token.clone());
-            }
+        if let Some(ref gt) = *cache
+            && gt.acquired_at.elapsed().as_secs() < GUEST_TOKEN_TTL_SECS
+        {
+            return Ok(gt.token.clone());
         }
     }
 

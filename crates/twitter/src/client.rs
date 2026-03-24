@@ -1,14 +1,27 @@
-//! Fallback orchestrator: go-hully → FxTwitter → GraphQL.
+//! Fallback orchestrator: go-social → go-hully → FxTwitter → GraphQL.
 
 use crate::types::{Tweet, UserProfile};
-use crate::{fxtwitter, graphql, parser, request};
+use crate::{fxtwitter, graphql, parser, request, social};
 
 const GO_HULLY_ENV: &str = "GO_HULLY_URL";
+const GO_SOCIAL_URL_ENV: &str = "GO_SOCIAL_URL";
 
 /// Fetch a single tweet by ID with fallback chain.
-/// Order: go-hully (auth accounts) → FxTwitter (free) → GraphQL (guest token).
+/// Order: go-social (auth pool) → go-hully → FxTwitter → GraphQL (guest token).
 pub async fn fetch_tweet(id: &str, proxy: Option<&str>) -> Option<Tweet> {
-    // 1. Try go-hully (has auth accounts, most reliable)
+    // 1. Try go-social (centralized auth account pool — most reliable)
+    if let Some(base) = go_social_url() {
+        tracing::debug!(id, "twitter: trying go-social");
+        match social::fetch_tweet(&base, id).await {
+            Ok(tweet) => {
+                tracing::info!(id, "twitter: got tweet from go-social");
+                return Some(tweet);
+            }
+            Err(e) => tracing::warn!(id, error = %e, "twitter: go-social failed"),
+        }
+    }
+
+    // 2. Try go-hully (existing fallback)
     if let Some(base) = go_hully_url() {
         tracing::debug!(id, "twitter: trying go-hully");
         match fetch_tweet_from_hully(&base, id).await {
@@ -20,14 +33,14 @@ pub async fn fetch_tweet(id: &str, proxy: Option<&str>) -> Option<Tweet> {
         }
     }
 
-    // 2. Try FxTwitter (fast, free, no auth)
+    // 3. Try FxTwitter (fast, free, no auth)
     tracing::debug!(id, "twitter: trying FxTwitter");
     if let Some(tweet) = fxtwitter::fetch_tweet(id, proxy).await {
         tracing::info!(id, "twitter: got tweet from FxTwitter");
         return Some(tweet);
     }
 
-    // 3. Fallback to GraphQL (guest token)
+    // 4. Fallback to GraphQL (guest token)
     tracing::info!(id, "twitter: trying GraphQL with guest token");
     let vars = request::tweet_detail_vars(id);
     let url = request::build_url(&graphql::TWEET_DETAIL, &vars);
@@ -74,10 +87,10 @@ pub async fn fetch_profile(screen_name: &str, proxy: Option<&str>) -> Option<Use
         tracing::debug!(screen_name, user_id = %profile.id, "twitter: fetching recent tweets");
         let vars = request::user_tweets_vars(&profile.id, 10);
         let url = request::build_url(&graphql::USER_TWEETS, &vars);
-        if let Ok(body) = request::execute(&url, proxy, 10).await {
-            if let Some(tweets) = parser::parse_user_tweets(&body) {
-                profile.recent_tweets = tweets;
-            }
+        if let Ok(body) = request::execute(&url, proxy, 10).await
+            && let Some(tweets) = parser::parse_user_tweets(&body)
+        {
+            profile.recent_tweets = tweets;
         }
     }
 
@@ -85,12 +98,16 @@ pub async fn fetch_profile(screen_name: &str, proxy: Option<&str>) -> Option<Use
     Some(profile)
 }
 
-/// Get go-hully base URL from env.
+fn go_social_url() -> Option<String> {
+    std::env::var(GO_SOCIAL_URL_ENV)
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
 fn go_hully_url() -> Option<String> {
     std::env::var(GO_HULLY_ENV).ok().filter(|s| !s.is_empty())
 }
 
-/// Fetch tweet from go-hully REST API.
 async fn fetch_tweet_from_hully(base_url: &str, id: &str) -> Result<Tweet, String> {
     let url = format!("{base_url}/v1/tweet/{id}");
     let client = wreq::Client::builder()
@@ -111,7 +128,6 @@ async fn fetch_tweet_from_hully(base_url: &str, id: &str) -> Result<Tweet, Strin
     }
 
     let body = resp.text().await.map_err(|e| e.to_string())?;
-    // go-twitter Tweet struct → our Tweet struct
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     Ok(Tweet {
         id: v["ID"].as_str().unwrap_or("").to_string(),

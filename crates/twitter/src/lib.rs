@@ -4,6 +4,7 @@ pub mod fxtwitter;
 pub mod graphql;
 pub mod request;
 pub mod parser;
+pub mod social;
 pub mod client;
 pub mod format;
 
