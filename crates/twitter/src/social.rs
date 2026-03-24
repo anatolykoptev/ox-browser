@@ -7,7 +7,6 @@ use crate::{graphql, parser, request, types::Tweet};
 const GO_SOCIAL_TOKEN_ENV: &str = "GO_SOCIAL_TOKEN";
 
 const TWITTER_BASE_URL: &str = "https://x.com";
-const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 /// Response from go-social `GET /twitter/account`.
 #[derive(serde::Deserialize)]
@@ -120,7 +119,7 @@ async fn graphql_get_authed(
         .header("x-twitter-active-user", "yes")
         .header("x-twitter-client-language", "en")
         .header("content-type", "application/json")
-        .header("user-agent", DEFAULT_USER_AGENT)
+        .header("user-agent", crate::TWITTER_USER_AGENT)
         .header("accept", "*/*")
         .header("accept-language", "en-US,en;q=0.9")
         .header("referer", format!("{TWITTER_BASE_URL}/"))

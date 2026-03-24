@@ -9,7 +9,6 @@ use std::time::Instant;
 use crate::graphql::{self, Endpoint, BEARER_TOKEN};
 
 const TWITTER_API_URL: &str = "https://api.twitter.com";
-const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 /// Cached guest token with expiry tracking.
 static GUEST_TOKEN: Mutex<Option<GuestToken>> = Mutex::new(None);
@@ -159,7 +158,7 @@ async fn do_graphql_get(
         .header("x-twitter-active-user", "yes")
         .header("x-twitter-client-language", "en")
         .header("content-type", "application/json")
-        .header("user-agent", DEFAULT_USER_AGENT)
+        .header("user-agent", crate::TWITTER_USER_AGENT)
         .header("accept", "*/*")
         .header("accept-language", "en-US,en;q=0.9")
         .header("referer", "https://twitter.com/")
@@ -199,7 +198,7 @@ async fn activate_guest_token(client: &wreq::Client) -> Result<String, String> {
         .post(format!("{TWITTER_API_URL}/1.1/guest/activate.json"))
         .header("authorization", format!("Bearer {BEARER_TOKEN}"))
         .header("content-type", "application/json")
-        .header("user-agent", DEFAULT_USER_AGENT)
+        .header("user-agent", crate::TWITTER_USER_AGENT)
         .send()
         .await
         .map_err(|e| format!("guest token request failed: {e}"))?;
