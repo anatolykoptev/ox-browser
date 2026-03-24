@@ -161,6 +161,7 @@ impl ChromiumSolver {
                 return Ok(SolvedChallenge {
                     cookies: cookie_map,
                     user_agent: STEALTH_UA.to_string(),
+                    body: None,
                 });
             }
 

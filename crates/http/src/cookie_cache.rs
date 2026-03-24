@@ -84,6 +84,7 @@ mod tests {
         SolvedChallenge {
             cookies,
             user_agent: ua.into(),
+            body: None,
         }
     }
 

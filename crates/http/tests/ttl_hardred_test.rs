@@ -21,7 +21,7 @@ use wreq::header::HeaderMap;
 fn make_solution(token: &str, ua: &str) -> SolvedChallenge {
     let mut cookies = HashMap::new();
     cookies.insert("cf_clearance".into(), token.into());
-    SolvedChallenge { cookies, user_agent: ua.into() }
+    SolvedChallenge { cookies, user_agent: ua.into(), body: None }
 }
 
 fn make_request(url: &str) -> Request {

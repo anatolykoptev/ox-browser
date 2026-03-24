@@ -11,6 +11,9 @@ use crate::cloudflare::ChallengeType;
 pub struct SolvedChallenge {
     pub cookies: HashMap<String, String>,
     pub user_agent: String,
+    /// Optional page body returned by the solver (e.g. Byparr response HTML).
+    /// When present, consumers can use this directly instead of retrying the request.
+    pub body: Option<String>,
 }
 
 /// Async trait for solving Cloudflare challenges and returning cookies.
@@ -43,6 +46,7 @@ mod tests {
             Ok(SolvedChallenge {
                 cookies,
                 user_agent: self.user_agent.clone(),
+                body: None,
             })
         }
     }

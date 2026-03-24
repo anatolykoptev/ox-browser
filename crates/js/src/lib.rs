@@ -103,6 +103,7 @@ mod tests {
             Ok(SolvedChallenge {
                 cookies,
                 user_agent: "TestUA/1.0".into(),
+                body: None,
             })
         }
     }
