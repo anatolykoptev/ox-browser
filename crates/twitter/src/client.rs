@@ -13,16 +13,32 @@ pub async fn fetch_tweet(id: &str, proxy: Option<&str>) -> Option<Tweet> {
     }
 
     // 2. Fallback to GraphQL
-    tracing::debug!(id, "twitter: FxTwitter failed, trying GraphQL");
+    tracing::info!(id, "twitter: FxTwitter failed, trying GraphQL");
     let vars = request::tweet_detail_vars(id);
     let url = request::build_url(&graphql::TWEET_DETAIL, &vars);
-    let body = request::execute(&url, proxy, 10).await.ok()?;
-    let tweets = parser::parse_tweet_detail(&body)?;
-    let tweet = tweets.into_iter().find(|t| t.id == id);
-    if tweet.is_some() {
-        tracing::info!(id, "twitter: got tweet from GraphQL");
+    match request::execute(&url, proxy, 15).await {
+        Ok(body) => {
+            tracing::debug!(id, body_len = body.len(), "twitter: GraphQL response received");
+            match parser::parse_tweet_detail(&body) {
+                Some(tweets) => {
+                    tracing::info!(id, count = tweets.len(), "twitter: parsed tweets from GraphQL");
+                    let tweet = tweets.into_iter().find(|t| t.id == id);
+                    if tweet.is_none() {
+                        tracing::warn!(id, "twitter: focal tweet not found in GraphQL response");
+                    }
+                    tweet
+                }
+                None => {
+                    tracing::warn!(id, body_prefix = &body[..body.len().min(500)], "twitter: failed to parse GraphQL response");
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(id, error = %e, "twitter: GraphQL request failed");
+            None
+        }
     }
-    tweet
 }
 
 /// Fetch a user profile by screen name with fallback chain.
