@@ -86,6 +86,13 @@ impl HttpClient {
         self.handler.handle(req).await
     }
 
+    /// Execute a GET request routed through a specific proxy.
+    pub async fn get_with_proxy(&self, url: &str, proxy_url: &str) -> Result<HttpResponse> {
+        let mut req = self.build_request("GET", url, None, None);
+        req.proxy = Some(proxy_url.to_owned());
+        self.handler.handle(req).await
+    }
+
     /// Execute a GET request with extra headers appended after the defaults.
     pub async fn get_with_headers(
         &self,

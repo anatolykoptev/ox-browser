@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use url::Url;
 
-use crate::content::{self, ContentFormat, ExtractedContent, ReadOutput, ReadParams};
+use crate::content::{ContentFormat, ExtractedContent, ReadOutput, ReadParams};
 use crate::read_pipeline::{build_output, elapsed};
 use crate::HttpClient;
 
@@ -28,8 +28,15 @@ pub async fn try_reddit_json(
     let json_url = format!("https://old.reddit.com{path}.json?limit=25&raw_json=1");
     tracing::info!(url = %params.url, json_url = %json_url, "reddit: using JSON API");
 
-    let resp = http.get(&json_url).await.ok()?;
+    // Reddit blocks datacenter IPs — use residential proxy if available
+    let proxy = std::env::var("RESIDENTIAL_PROXY_URL").ok();
+    let resp = if let Some(ref p) = proxy {
+        http.get_with_proxy(&json_url, p).await.ok()?
+    } else {
+        http.get(&json_url).await.ok()?
+    };
     if resp.status != 200 {
+        tracing::warn!(status = resp.status, "reddit JSON API returned non-200");
         return None;
     }
     let data: serde_json::Value = serde_json::from_str(&resp.body).ok()?;
