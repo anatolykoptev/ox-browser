@@ -2,6 +2,7 @@ pub mod content;
 pub mod cloudflare;
 pub mod json_ld;
 pub mod read_pipeline;
+pub mod site_reddit;
 pub mod cookie_cache;
 pub mod cookie_provider;
 mod client;

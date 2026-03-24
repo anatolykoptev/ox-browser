@@ -40,6 +40,11 @@ async fn read_page_inner(
     let start = Instant::now();
     let format = ContentFormat::from_param(&params.format);
 
+    // Site-specific handlers (bypass CF entirely)
+    if let Some(output) = crate::site_reddit::try_reddit_json(http, params, format, start).await {
+        return output;
+    }
+
     let resp = match http.get(&params.url).await {
         Ok(r) => r,
         Err(e) => return build_error_output(params, "direct", elapsed(start), &e.to_string()),
@@ -164,7 +169,7 @@ pub fn build_error_output(params: &ReadParams, method: &str, ms: u64, msg: &str)
     }
 }
 
-fn elapsed(start: Instant) -> u64 {
+pub fn elapsed(start: Instant) -> u64 {
     start.elapsed().as_millis() as u64
 }
 
