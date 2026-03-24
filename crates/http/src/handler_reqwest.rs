@@ -69,6 +69,15 @@ impl Handler for WreqHandler {
             }
         }
 
+        tracing::debug!(
+            url = %req.url,
+            method = %req.method,
+            proxy = ?req.proxy,
+            ua = ?req.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("user-agent")).map(|(_, v)| v.as_str()),
+            header_count = req.headers.len(),
+            "wreq: sending request"
+        );
+
         // Apply headers in insertion order (important for fingerprinting).
         for (name, value) in &req.headers {
             builder = builder.header(name.as_str(), value.as_str());
@@ -80,6 +89,14 @@ impl Handler for WreqHandler {
         }
 
         let resp = builder.send().await?;
+
+        tracing::debug!(
+            url = %req.url,
+            status = resp.status().as_u16(),
+            final_url = %resp.uri(),
+            "wreq: response received"
+        );
+
         let status = resp.status().as_u16();
         let final_url = resp.uri().to_string();
         let headers = resp.headers().clone();
