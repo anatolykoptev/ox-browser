@@ -24,10 +24,10 @@ struct WebshareResponse {
 
 #[derive(Deserialize)]
 struct WebshareProxy {
-    proxy_address: String,
-    port: u16,
-    username: String,
-    password: String,
+    proxy_address: Option<String>,
+    port: Option<u16>,
+    username: Option<String>,
+    password: Option<String>,
 }
 
 impl WebsharePool {
@@ -78,11 +78,12 @@ fn parse_webshare_response(body: &str) -> crate::Result<Vec<String>> {
     Ok(response
         .results
         .into_iter()
-        .map(|p| {
-            format!(
-                "http://{}:{}@{}:{}",
-                p.username, p.password, p.proxy_address, p.port
-            )
+        .filter_map(|p| {
+            let addr = p.proxy_address?;
+            let port = p.port?;
+            let user = p.username?;
+            let pass = p.password?;
+            Some(format!("http://{user}:{pass}@{addr}:{port}"))
         })
         .collect())
 }
@@ -142,5 +143,16 @@ mod tests {
     fn parse_invalid_json() {
         let result = parse_webshare_response("not json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_skips_entries_with_null_fields() {
+        let body = r#"{"count": 2, "results": [
+            {"proxy_address": "1.2.3.4", "port": 8080, "username": "user1", "password": "pass1"},
+            {"proxy_address": null, "port": 9090, "username": "user2", "password": "pass2"}
+        ]}"#;
+        let proxies = parse_webshare_response(body).unwrap();
+        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies[0], "http://user1:pass1@1.2.3.4:8080");
     }
 }
