@@ -36,6 +36,11 @@ async fn read_page_inner(
         return output;
     }
 
+    // Twitter/X handler
+    if let Some(output) = crate::site_twitter::try_twitter(params, format, start).await {
+        return output;
+    }
+
     // All requests go through middleware chain:
     // CF detect → quality check → residential retry → solver (with body passthrough)
     let resp = match http.get(&params.url).await {
