@@ -38,9 +38,7 @@ impl OxMcpServer {
         input: ReadInput,
     ) -> Result<CallToolResult, McpError> {
         let params: ReadParams = input.into();
-        let output = read_pipeline::read_page(
-            &self.http_client, self.provider.as_ref(), &self.cache, &params,
-        ).await;
+        let output = read_pipeline::read_page(&self.http_client, &params).await;
 
         let is_err = output.error.is_some();
         let json = serde_json::to_string(&output).unwrap_or_default();

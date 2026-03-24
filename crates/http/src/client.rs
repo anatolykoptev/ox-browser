@@ -28,7 +28,7 @@ impl HttpClient {
     /// Build the client and its middleware chain from config.
     ///
     /// Chain order (outermost first):
-    /// `[logging?] -> [rate_limit?] -> [retry?] -> [cloudflare?] -> [client_hints] -> wreq`
+    /// `[logging?] -> [rate_limit?] -> [retry?] -> [solver?] -> [residential?] -> [cloudflare?] -> [quality_check] -> [client_hints] -> wreq`
     pub fn new(config: HttpConfig) -> Result<Self> {
         let client = Self::build_wreq_client(&config)?;
         let base: Arc<dyn Handler> = if let Some(ref pool) = config.proxy_pool {
@@ -72,6 +72,10 @@ impl HttpClient {
         if config.cloudflare_detect {
             middlewares.push(cloudflare_detect_middleware());
         }
+
+        // Quality check: convert anti-bot 200s and non-CF errors (401/403/429/503)
+        // to CF challenge errors so the solver middleware can handle them.
+        middlewares.push(crate::middleware_quality::quality_check_middleware());
 
         // Innermost middleware: auto-inject client hints.
         middlewares.push(client_hints_middleware());

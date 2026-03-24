@@ -1,30 +1,23 @@
-//! Shared read pipeline — async fetch + extract + quality fallback.
+//! Shared read pipeline — async fetch + extract via middleware chain.
 //!
 //! Called by both MCP and REST layers.
 
 use std::time::{Duration, Instant};
 
-use url::Url;
-
 use crate::content::{self, ContentFormat, ReadOutput, ReadParams};
-use crate::cookie_cache::CookieCache;
-use crate::cookie_provider::CookieProvider;
-use crate::ChallengeType;
 use crate::HttpClient;
 
-/// Overall timeout for the entire read pipeline (fetch + extract + headless fallback).
+/// Overall timeout for the entire read pipeline (fetch + extract).
 const PIPELINE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Execute the full read pipeline with a 30s overall timeout.
 pub async fn read_page(
     http: &HttpClient,
-    provider: &dyn CookieProvider,
-    cache: &CookieCache,
     params: &ReadParams,
 ) -> ReadOutput {
     match tokio::time::timeout(
         PIPELINE_TIMEOUT,
-        read_page_inner(http, provider, cache, params),
+        read_page_inner(http, params),
     ).await {
         Ok(output) => output,
         Err(_) => build_error_output(params, "direct", PIPELINE_TIMEOUT.as_millis() as u64, "read pipeline timeout"),
@@ -33,27 +26,24 @@ pub async fn read_page(
 
 async fn read_page_inner(
     http: &HttpClient,
-    provider: &dyn CookieProvider,
-    cache: &CookieCache,
     params: &ReadParams,
 ) -> ReadOutput {
     let start = Instant::now();
     let format = ContentFormat::from_param(&params.format);
 
-    // Site-specific handlers (bypass CF entirely)
+    // Site-specific handlers (bypass middleware chain entirely)
     if let Some(output) = crate::site_reddit::try_reddit_json(params, format, start).await {
         return output;
     }
 
+    // All requests go through middleware chain:
+    // CF detect → quality check → residential retry → solver (with body passthrough)
     let resp = match http.get(&params.url).await {
         Ok(r) => r,
         Err(e) => return build_error_output(params, "direct", elapsed(start), &e.to_string()),
     };
 
     if resp.status != 200 {
-        if content::should_fallback(resp.status) {
-            return headless_read(http, provider, cache, params, format, start).await;
-        }
         return build_error_output(
             params,
             "direct",
@@ -63,66 +53,7 @@ async fn read_page_inner(
     }
 
     let extracted = content::extract_content(&resp.body, &params.url, format);
-
-    if content::is_low_quality(&resp.body, &extracted.content) {
-        tracing::info!(url = %params.url, "low quality content, trying headless");
-        return headless_read(http, provider, cache, params, format, start).await;
-    }
-
     build_output(extracted, params, "direct", elapsed(start))
-}
-
-async fn headless_read(
-    http: &HttpClient,
-    provider: &dyn CookieProvider,
-    cache: &CookieCache,
-    params: &ReadParams,
-    format: ContentFormat,
-    start: Instant,
-) -> ReadOutput {
-    let domain = Url::parse(&params.url)
-        .ok()
-        .and_then(|u| u.host_str().map(String::from))
-        .unwrap_or_default();
-
-    let solved = match provider.solve(&params.url, ChallengeType::JsChallenge).await {
-        Ok(s) => s,
-        Err(e) => {
-            return build_error_output(
-                params,
-                "solved",
-                elapsed(start),
-                &format!("headless solve failed: {e}"),
-            )
-        }
-    };
-    cache.put(&domain, solved.clone());
-
-    // If solver returned the page body directly, use it (avoids IP mismatch on retry)
-    if let Some(ref body) = solved.body {
-        let extracted = content::extract_content(body, &params.url, format);
-        return build_output(extracted, params, "solved", elapsed(start));
-    }
-
-    // No body — retry with cookies (may fail if IP differs between solver and wreq)
-    match http.get(&params.url).await {
-        Ok(retry) if retry.status == 200 => {
-            let extracted = content::extract_content(&retry.body, &params.url, format);
-            build_output(extracted, params, "solved", elapsed(start))
-        }
-        Ok(retry) => build_error_output(
-            params,
-            "solved",
-            elapsed(start),
-            &format!("HTTP {} after solve", retry.status),
-        ),
-        Err(e) => build_error_output(
-            params,
-            "solved",
-            elapsed(start),
-            &format!("retry: {e}"),
-        ),
-    }
 }
 
 pub fn build_output(
