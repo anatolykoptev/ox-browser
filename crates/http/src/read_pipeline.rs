@@ -91,8 +91,15 @@ async fn headless_read(
             )
         }
     };
-    cache.put(&domain, solved);
+    cache.put(&domain, solved.clone());
 
+    // If solver returned the page body directly, use it (avoids IP mismatch on retry)
+    if let Some(ref body) = solved.body {
+        let extracted = content::extract_content(body, &params.url, format);
+        return build_output(extracted, params, "solved", elapsed(start));
+    }
+
+    // No body — retry with cookies (may fail if IP differs between solver and wreq)
     match http.get(&params.url).await {
         Ok(retry) if retry.status == 200 => {
             let extracted = content::extract_content(&retry.body, &params.url, format);

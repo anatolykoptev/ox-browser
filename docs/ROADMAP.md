@@ -434,7 +434,7 @@ ox-browser/crates/
 ├── intelligence/   — Web intelligence: fingerprint, SEO, perf, a11y, content, media, fonts, PWA, API
 ├── security/       — Security: 14 modules, Observatory scoring, AST analysis, 6 crate integrations
 ├── imagesearch/    — Image search: Bing, DDG parsers + WRR fusion (13 tests)
-├── reverse/        — Reverse image search: Google Lens, Yandex (planned)
+├── reverse/        — Reverse image search: Google Lens, Yandex
 ├── js/             — REST API: /health, /solve, /fetch, /fetch-smart, /analyze, /security, /images/search
 ├── mcp/            — MCP server (rmcp v1.1.0, Streamable HTTP, 9 tools)
 ├── crawler/        — Site crawler (BFS/DFS, robots.txt, rate limiting, markdown output)
