@@ -8,6 +8,7 @@ pub mod parser;
 pub mod social;
 pub mod client;
 pub mod format;
+pub mod login;
 
 pub(crate) mod tw_http;
 mod xtid_cubic;
