@@ -12,7 +12,7 @@ use super::{LoginFlow, POLL_INTERVAL};
 
 impl<'a> LoginFlow<'a> {
     /// Type text character-by-character with human-like delays.
-    /// Uses element.focus() + CDP DispatchKeyEvent (char input type).
+    /// Uses element.click() (CDP mouse → focus) + press_key per char.
     /// `selector` identifies the target input element.
     pub(super) async fn type_human(
         &mut self,
@@ -20,40 +20,19 @@ impl<'a> LoginFlow<'a> {
         text: &str,
         speed: Speed,
     ) -> Result<(), TwitterLoginError> {
-        use chromiumoxide::cdp::browser_protocol::input::{
-            DispatchKeyEventParams, DispatchKeyEventType,
-        };
-
-        // Focus the element via CDP (element.focus() calls this.focus() on the node)
+        // Click the element (CDP mouse dispatch → establishes browser-level focus)
         let el = self.page.find_element(selector).await.map_err(|_| {
             TwitterLoginError::Navigation(format!("type_human: element not found: {selector}"))
         })?;
-        el.focus().await.map_err(|e| {
-            TwitterLoginError::Navigation(format!("type_human: focus failed: {e}"))
+        el.click().await.map_err(|e| {
+            TwitterLoginError::Navigation(format!("type_human: click failed: {e}"))
         })?;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
+        // Type each character using Element.press_key (DispatchKeyEvent with focus)
         for ch in text.chars() {
-            let key_str = ch.to_string();
-
-            // Char-type key event (like Puppeteer's keyboard.type)
-            let down = DispatchKeyEventParams::builder()
-                .r#type(DispatchKeyEventType::KeyDown)
-                .text(&key_str)
-                .key(&key_str)
-                .build()
-                .unwrap();
-            self.page.execute(down).await.map_err(|e| {
-                TwitterLoginError::Navigation(format!("key down: {e}"))
-            })?;
-
-            let up = DispatchKeyEventParams::builder()
-                .r#type(DispatchKeyEventType::KeyUp)
-                .key(&key_str)
-                .build()
-                .unwrap();
-            self.page.execute(up).await.map_err(|e| {
-                TwitterLoginError::Navigation(format!("key up: {e}"))
+            el.press_key(ch.to_string()).await.map_err(|e| {
+                TwitterLoginError::Navigation(format!("press_key '{ch}': {e}"))
             })?;
 
             let delay = self.human.char_delay(speed);
