@@ -14,6 +14,7 @@ mod security;
 mod site_audit;
 pub mod site_twitter;
 mod solve;
+mod twitter_login;
 
 pub use solve::SolveResponse;
 
@@ -102,6 +103,7 @@ pub fn router(state: AppState) -> Router {
         .route("/crawl", post(crawl::crawl))
         .route("/site-audit", post(site_audit::site_audit))
         .route("/read", post(read::read))
+        .route("/twitter/login", post(twitter_login::twitter_login))
         .with_state(state)
 }
 
