@@ -48,13 +48,12 @@ impl<'a> LoginFlow<'a> {
     }
 
     async fn handle_ocf_screen(&mut self) -> Result<(), TwitterLoginError> {
-        // Read heading to disambiguate
+        // Read heading to disambiguate (isolated world to avoid detection)
         let heading: String = self
-            .page
-            .evaluate(selectors::JS_READ_HEADING)
+            .eval_isolated(selectors::JS_READ_HEADING)
             .await
             .ok()
-            .and_then(|r| r.into_value().ok())
+            .and_then(|v| v.as_str().map(String::from))
             .unwrap_or_default();
 
         let heading_lower = heading.to_lowercase();
@@ -131,12 +130,12 @@ impl<'a> LoginFlow<'a> {
                 });
             }
 
-            // Check for account locked (via heading, lighter than full body text)
-            let heading: String = self.page
-                .evaluate(selectors::JS_READ_HEADING)
+            // Check for account locked (via heading, isolated world)
+            let heading: String = self
+                .eval_isolated(selectors::JS_READ_HEADING)
                 .await
                 .ok()
-                .and_then(|r| r.into_value().ok())
+                .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_default();
             let h = heading.to_lowercase();
             if h.contains("locked") || h.contains("suspended") {
@@ -166,7 +165,7 @@ impl<'a> LoginFlow<'a> {
 
         self.type_human(selectors::OCF_TEXT_INPUT, &code, Speed::Slow).await?;
 
-        // Click Next/Verify button
+        // Click Next/Verify button (isolated world to avoid detection)
         let js_click = r#"
             (() => {
                 const btns = document.querySelectorAll('button[role="button"]');
@@ -177,7 +176,7 @@ impl<'a> LoginFlow<'a> {
                 return false;
             })()
         "#;
-        self.page.evaluate(js_click).await.ok();
+        self.eval_isolated(js_click).await.ok();
 
         // Wait for navigation after 2FA submit
         self.wait_for_navigation_or_timeout().await;

@@ -108,11 +108,10 @@ impl<'a> LoginFlow<'a> {
             }})()"#
         );
         let focused: bool = self
-            .page
-            .evaluate(js)
+            .eval_isolated(&js)
             .await
             .ok()
-            .and_then(|r| r.into_value().ok())
+            .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
         if !focused {
@@ -123,16 +122,21 @@ impl<'a> LoginFlow<'a> {
         Ok(())
     }
 
+    /// Evaluate JS in an isolated world (no `Runtime.enable` fingerprint).
+    pub(super) async fn eval_isolated(&self, expression: &str) -> Result<serde_json::Value, String> {
+        let remote = ChromeSession::evaluate_isolated(self.page, expression).await?;
+        remote.value.ok_or_else(|| "no value returned".to_string())
+    }
+
     pub(super) async fn element_exists(&self, selector: &str) -> bool {
         self.page.find_element(selector).await.is_ok()
     }
 
     pub(super) async fn is_on_home(&self) -> bool {
-        self.page
-            .evaluate(selectors::JS_CHECK_HOME_URL)
+        self.eval_isolated(selectors::JS_CHECK_HOME_URL)
             .await
             .ok()
-            .and_then(|r| r.into_value::<bool>().ok())
+            .and_then(|v| v.as_bool())
             .unwrap_or(false)
     }
 

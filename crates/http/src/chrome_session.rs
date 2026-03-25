@@ -120,6 +120,55 @@ impl ChromeSession {
         }
     }
 
+    /// Evaluate JS in an isolated world (avoids `Runtime.enable` detection).
+    ///
+    /// Creates a fresh isolated execution context via `Page.createIsolatedWorld`,
+    /// then runs `Runtime.evaluate` scoped to that context. Anti-bot systems
+    /// (DataDome, PerimeterX) detect `Runtime.enable` in the main world — this
+    /// sidesteps it entirely.
+    pub async fn evaluate_isolated(
+        page: &Page,
+        expression: &str,
+    ) -> Result<chromiumoxide::cdp::js_protocol::runtime::RemoteObject, String> {
+        use chromiumoxide::cdp::browser_protocol::page::{
+            CreateIsolatedWorldParams, GetFrameTreeParams,
+        };
+        use chromiumoxide::cdp::js_protocol::runtime::EvaluateParams;
+
+        // 1. Get main frame ID.
+        let tree = page
+            .execute(GetFrameTreeParams {})
+            .await
+            .map_err(|e| format!("GetFrameTree: {e}"))?;
+        let frame_id = tree.result.frame_tree.frame.id;
+
+        // 2. Create isolated world (name "utility" — not "__playwright__").
+        let mut params = CreateIsolatedWorldParams::new(frame_id);
+        params.world_name = Some("utility".into());
+        params.grant_univeral_access = Some(true);
+
+        let world = page
+            .execute(params)
+            .await
+            .map_err(|e| format!("CreateIsolatedWorld: {e}"))?;
+
+        // 3. Evaluate JS in isolated context.
+        let mut eval = EvaluateParams::new(expression);
+        eval.context_id = Some(world.result.execution_context_id);
+        eval.return_by_value = Some(true);
+
+        let result = page
+            .execute(eval)
+            .await
+            .map_err(|e| format!("Evaluate (isolated): {e}"))?;
+
+        if let Some(ref exc) = result.result.exception_details {
+            return Err(format!("JS exception: {exc:?}"));
+        }
+
+        Ok(result.result.result)
+    }
+
     /// Shut down browser and handler task.
     pub async fn shutdown(mut self) {
         let _ = self.browser.close().await;

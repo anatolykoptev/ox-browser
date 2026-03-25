@@ -1,6 +1,6 @@
 //! Core login flow state machine — drives Chrome through Twitter's multi-step login.
 
-mod actions;
+pub(super) mod actions;
 mod detect;
 mod helpers;
 
@@ -81,6 +81,19 @@ impl<'a> LoginFlow<'a> {
     // --- Navigation ---
 
     async fn navigate(&mut self) -> Result<(), TwitterLoginError> {
+        // Step 1: Visit x.com first to get cookies (avoids bot detection).
+        tracing::info!("chrome login: pre-navigating to x.com");
+        self.page
+            .goto("https://x.com")
+            .await
+            .map_err(|e| TwitterLoginError::Navigation(format!("pre-nav x.com: {e}")))?;
+
+        let pause = self.human.page_load_pause(); // 1-3s random
+        tokio::time::sleep(pause).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Step 2: Navigate to login page.
+        tracing::info!("chrome login: navigating to login page");
         self.page
             .goto(LOGIN_URL)
             .await
