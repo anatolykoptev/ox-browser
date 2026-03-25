@@ -23,6 +23,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use ox_http::read_pipeline::SiteHandler;
 use ox_http::{CookieCache, CookieProvider, HttpClient};
+use tokio::sync::Semaphore;
 
 /// Runtime defaults configurable via config.toml.
 #[derive(Clone, Debug)]
@@ -56,6 +57,8 @@ pub struct AppState {
     pub media_config: ox_media::MediaConfig,
     /// Injected site-specific handlers for the read pipeline.
     pub site_handlers: Arc<Vec<SiteHandler>>,
+    pub twitter_config: ox_twitter::login::TwitterLoginConfig,
+    pub twitter_semaphore: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -66,7 +69,9 @@ impl AppState {
         http_client: Arc<HttpClient>,
         defaults: EndpointDefaults,
         media_config: ox_media::MediaConfig,
+        twitter_config: ox_twitter::login::TwitterLoginConfig,
     ) -> Self {
+        let twitter_semaphore = Arc::new(Semaphore::new(twitter_config.max_concurrent));
         let handlers: Vec<SiteHandler> = vec![site_twitter::make_twitter_handler()];
         Self {
             provider,
@@ -75,6 +80,8 @@ impl AppState {
             defaults,
             media_config,
             site_handlers: Arc::new(handlers),
+            twitter_config,
+            twitter_semaphore,
         }
     }
 }
@@ -140,6 +147,7 @@ mod tests {
             Arc::new(HttpClient::new(HttpConfig::default()).unwrap()),
             EndpointDefaults::default(),
             ox_media::MediaConfig::default(),
+            ox_twitter::login::TwitterLoginConfig::default(),
         )
     }
 

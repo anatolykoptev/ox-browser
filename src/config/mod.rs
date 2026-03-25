@@ -27,6 +27,7 @@ mod ratelimit;
 mod retry;
 mod server;
 mod solver;
+mod twitter;
 
 pub use cache::CacheSection;
 pub use cloudflare::CloudflareSection;
@@ -41,6 +42,7 @@ pub use ratelimit::RatelimitSection;
 pub use retry::RetrySection;
 pub use server::ServerSection;
 pub use solver::SolverSection;
+pub use twitter::TwitterSection;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -69,6 +71,7 @@ pub struct ServerConfig {
     pub crawler: CrawlerSection,
     pub media: MediaSection,
     pub ratelimit: RatelimitSection,
+    pub twitter: TwitterSection,
 }
 
 impl ServerConfig {

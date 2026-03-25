@@ -63,3 +63,9 @@ chromium_timeout_secs = 30
 
 [log]
 # level = "info"                   # info, debug, warn, error, trace
+
+[twitter]
+login_timeout_secs = 90
+max_concurrent_logins = 1
+screenshot_on_error = true
+screenshot_dir = "/tmp/ox-browser/twitter-login"

@@ -1,6 +1,7 @@
 //! HTTP API server startup logic, extracted to keep main.rs small.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use ox_http::{DomainLimiter, HttpClient};
 use ox_js::EndpointDefaults;
@@ -65,6 +66,17 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     let media_config = config.media.to_media_config();
 
+    let twitter_config = ox_twitter::login::TwitterLoginConfig {
+        timeout: Duration::from_secs(config.twitter.login_timeout_secs),
+        max_concurrent: config.twitter.max_concurrent_logins,
+        screenshot_on_error: config.twitter.screenshot_on_error,
+        screenshot_dir: config.twitter.screenshot_dir.clone().into(),
+        default_chrome_path: config.solver.chromium_path.clone()
+            .or_else(|| std::env::var("CHROME_PATH").ok()),
+        default_proxy: config.proxy.residential_url.clone()
+            .or_else(|| std::env::var("RESIDENTIAL_PROXY_URL").ok()),
+    };
+
     let http_client = Arc::new(HttpClient::new(http_config)?);
     let state = ox_js::AppState::new(
         provider,
@@ -72,6 +84,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         http_client,
         defaults.clone(),
         media_config.clone(),
+        twitter_config,
     );
     let rest_router = ox_js::router(state.clone());
     let mcp_router = ox_mcp::build_mcp_router(
