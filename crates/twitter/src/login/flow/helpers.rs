@@ -32,17 +32,40 @@ impl<'a> LoginFlow<'a> {
         // Debug screenshot to verify focus state
         tracing::debug!(selector, "type_human: element clicked, starting typing");
 
-        // Type using execCommand('insertText') — creates trusted InputEvents
+        // React controlled inputs: set value via native setter + trigger
+        // React's internal onChange via a synthetic-looking InputEvent.
+        // We set the full value at once, then simulate human-like delay.
+        let mut typed = String::new();
         for ch in text.chars() {
-            let escaped = match ch {
-                '\'' => "\\'".to_string(),
-                '\\' => "\\\\".to_string(),
-                _ => ch.to_string(),
-            };
-            let js = format!("document.execCommand('insertText', false, '{escaped}')");
-            self.page.evaluate(js).await.map_err(|e| {
-                TwitterLoginError::Navigation(format!("insertText: {e}"))
-            })?;
+            typed.push(ch);
+            let escaped = typed.replace('\\', "\\\\").replace('"', "\\\"");
+            // Use React fiber trick: get native setter, set value, then
+            // dispatch InputEvent that React's onChange handler will process.
+            let js = format!(
+                r#"(() => {{
+                    const el = document.querySelector('{selector}');
+                    if (!el) return false;
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    ).set;
+                    nativeInputValueSetter.call(el, "{escaped}");
+                    const ev = new Event('input', {{ bubbles: true }});
+                    // React 16+ checks _valueTracker — reset it so React sees the change
+                    const tracker = el._valueTracker;
+                    if (tracker) tracker.setValue('');
+                    el.dispatchEvent(ev);
+                    return true;
+                }})()"#
+            );
+            let ok: bool = self.page.evaluate(js).await
+                .ok()
+                .and_then(|r| r.into_value().ok())
+                .unwrap_or(false);
+            if !ok {
+                return Err(TwitterLoginError::Navigation(
+                    format!("type_human: element not found: {selector}")
+                ));
+            }
 
             let delay = self.human.char_delay(speed);
             tokio::time::sleep(delay).await;
@@ -51,9 +74,6 @@ impl<'a> LoginFlow<'a> {
                 tokio::time::sleep(self.human.micro_pause_delay()).await;
             }
         }
-
-        // No nativeInputValueSetter — execCommand creates trusted events
-        // that React picks up via its synthetic event system.
         Ok(())
     }
 
