@@ -12,41 +12,34 @@ impl<'a> LoginFlow<'a> {
         let pause = self.human.pre_click_delay();
         tokio::time::sleep(pause).await;
 
-        // Debug: dump all buttons with their attributes to find the right selector
-        let btn_debug: String = self.page
-            .evaluate(r#"(() => {
-                const btns = document.querySelectorAll('button, div[role="button"]');
-                return Array.from(btns).map(b => {
-                    const testid = b.getAttribute('data-testid') || '';
-                    const role = b.getAttribute('role') || '';
-                    const txt = b.textContent.trim().substring(0, 30);
-                    return `<${b.tagName} testid="${testid}" role="${role}"> "${txt}"`;
-                }).join('\n');
-            })()"#)
-            .await
-            .ok()
-            .and_then(|r| r.into_value().ok())
-            .unwrap_or_default();
-        tracing::info!(buttons = %btn_debug, "DEBUG: all clickable elements");
-
-        // Try CDP mouse click on first button containing "Next"
-        // Find all buttons, iterate to find "Next"
+        // Find Next button by text, click via CDP mouse
+        let mut clicked = false;
         if let Ok(elements) = self.page.find_elements(r#"button[role="button"]"#).await {
             for el in &elements {
                 if let Ok(Some(text)) = el.inner_text().await {
                     if text.trim() == "Next" {
                         el.click().await.ok();
-                        tracing::info!("clicked Next via CDP mouse click");
+                        clicked = true;
                         break;
                     }
                 }
             }
         }
 
-        // Wait for navigation/DOM update
+        if !clicked {
+            let screenshot = self.take_error_screenshot("click-next-not-found").await;
+            return Err(TwitterLoginError::ElementNotFound {
+                selector: "Next button".into(),
+                step: FlowStep::ClickNext,
+                screenshot,
+            });
+        }
+
+        // Screenshot right after click for intermediate screen diagnosis
+        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+        self.take_error_screenshot("post-next-click").await;
+
         self.wait_for_navigation_or_timeout().await;
-        let pause = self.human.pre_click_delay();
-        tokio::time::sleep(pause).await;
         Ok(())
     }
 
