@@ -103,7 +103,7 @@ impl<'a> LoginFlow<'a> {
         let pause = self.human.reading_pause();
         tokio::time::sleep(pause).await;
 
-        self.type_human(&self.input.username.clone(), Speed::Fast)
+        self.type_human(selectors::USERNAME_INPUT, &self.input.username.clone(), Speed::Fast)
             .await?;
 
         Ok(())
@@ -120,7 +120,7 @@ impl<'a> LoginFlow<'a> {
         let pause = self.human.reading_pause();
         tokio::time::sleep(pause).await;
 
-        self.type_human(&self.input.password.clone(), Speed::Slow)
+        self.type_human(selectors::PASSWORD_INPUT, &self.input.password.clone(), Speed::Slow)
             .await?;
 
         Ok(())

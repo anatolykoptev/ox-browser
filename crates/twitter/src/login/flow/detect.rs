@@ -77,7 +77,7 @@ impl<'a> LoginFlow<'a> {
             self.focus_and_clear(selectors::OCF_TEXT_INPUT).await?;
 
             let val = confirm_value.to_string();
-            self.type_human(&val, Speed::Fast).await?;
+            self.type_human(selectors::OCF_TEXT_INPUT, &val, Speed::Fast).await?;
 
             // Click Next again
             self.click_next_button().await?;
@@ -164,7 +164,7 @@ impl<'a> LoginFlow<'a> {
         let pause = self.human.reading_pause();
         tokio::time::sleep(pause).await;
 
-        self.type_human(&code, Speed::Slow).await?;
+        self.type_human(selectors::OCF_TEXT_INPUT, &code, Speed::Slow).await?;
 
         // Click Next/Verify button
         let js_click = r#"

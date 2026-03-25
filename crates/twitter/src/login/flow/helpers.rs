@@ -13,34 +13,37 @@ use super::{LoginFlow, POLL_INTERVAL};
 impl<'a> LoginFlow<'a> {
     /// Type text character-by-character with human-like delays.
     /// Uses React-compatible JS value setter + InputEvent per char.
+    /// `selector` identifies the target input element.
     pub(super) async fn type_human(
         &mut self,
+        selector: &str,
         text: &str,
         speed: Speed,
     ) -> Result<(), TwitterLoginError> {
-        // Build the text incrementally, setting value via React's native setter
         let mut current = String::new();
         for ch in text.chars() {
             current.push(ch);
+            let escaped = current.replace('\\', "\\\\").replace('\'', "\\'").replace('"', "\\\"");
             let js = format!(
                 r#"(() => {{
-                    const el = document.activeElement;
+                    const el = document.querySelector('{selector}');
                     if (!el) return false;
                     const setter = Object.getOwnPropertyDescriptor(
                         HTMLInputElement.prototype, 'value'
                     ).set;
-                    setter.call(el, '{}');
+                    setter.call(el, '{escaped}');
                     el.dispatchEvent(new Event('input', {{ bubbles: true }}));
                     return true;
-                }})()"#,
-                current.replace('\\', "\\\\").replace('\'', "\\'").replace('"', "\\\"")
+                }})()"#
             );
             let ok: bool = self.page.evaluate(js).await
                 .ok()
                 .and_then(|r| r.into_value().ok())
                 .unwrap_or(false);
             if !ok {
-                return Err(TwitterLoginError::Navigation("type_human: no active element".into()));
+                return Err(TwitterLoginError::Navigation(
+                    format!("type_human: element not found: {selector}")
+                ));
             }
 
             let delay = self.human.char_delay(speed);
