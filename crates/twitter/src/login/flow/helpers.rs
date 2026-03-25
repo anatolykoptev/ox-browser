@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 
-use chromiumoxide::cdp::browser_protocol::input::{DispatchKeyEventParams, DispatchKeyEventType};
 use tokio::time::Instant;
 
 use super::super::chrome::ChromeSession;
@@ -12,43 +11,43 @@ use super::super::selectors;
 use super::{LoginFlow, POLL_INTERVAL};
 
 impl<'a> LoginFlow<'a> {
+    /// Type text character-by-character with human-like delays.
+    /// Uses React-compatible JS value setter + InputEvent per char.
     pub(super) async fn type_human(
         &mut self,
         text: &str,
         speed: Speed,
     ) -> Result<(), TwitterLoginError> {
+        // Build the text incrementally, setting value via React's native setter
+        let mut current = String::new();
         for ch in text.chars() {
-            let key_str = ch.to_string();
-
-            // KeyDown with text
-            let down = DispatchKeyEventParams::builder()
-                .r#type(DispatchKeyEventType::KeyDown)
-                .text(&key_str)
-                .key(&key_str)
-                .build()
-                .unwrap();
-            self.page
-                .execute(down)
-                .await
-                .map_err(|e| TwitterLoginError::Navigation(format!("key down: {e}")))?;
-
-            // KeyUp
-            let up = DispatchKeyEventParams::builder()
-                .r#type(DispatchKeyEventType::KeyUp)
-                .key(&key_str)
-                .build()
-                .unwrap();
-            self.page
-                .execute(up)
-                .await
-                .map_err(|e| TwitterLoginError::Navigation(format!("key up: {e}")))?;
+            current.push(ch);
+            let js = format!(
+                r#"(() => {{
+                    const el = document.activeElement;
+                    if (!el) return false;
+                    const setter = Object.getOwnPropertyDescriptor(
+                        HTMLInputElement.prototype, 'value'
+                    ).set;
+                    setter.call(el, '{}');
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    return true;
+                }})()"#,
+                current.replace('\\', "\\\\").replace('\'', "\\'").replace('"', "\\\"")
+            );
+            let ok: bool = self.page.evaluate(js).await
+                .ok()
+                .and_then(|r| r.into_value().ok())
+                .unwrap_or(false);
+            if !ok {
+                return Err(TwitterLoginError::Navigation("type_human: no active element".into()));
+            }
 
             let delay = self.human.char_delay(speed);
             tokio::time::sleep(delay).await;
 
             if self.human.should_micro_pause() {
-                let pause = self.human.micro_pause_delay();
-                tokio::time::sleep(pause).await;
+                tokio::time::sleep(self.human.micro_pause_delay()).await;
             }
         }
         Ok(())
