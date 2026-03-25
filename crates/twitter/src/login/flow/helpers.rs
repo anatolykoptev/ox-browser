@@ -12,8 +12,8 @@ use super::{LoginFlow, POLL_INTERVAL};
 
 impl<'a> LoginFlow<'a> {
     /// Type text character-by-character with human-like delays.
-    /// Uses element.click() (CDP mouse → focus) + press_key per char.
-    /// `selector` identifies the target input element.
+    /// Uses element.click() for focus + document.execCommand('insertText')
+    /// per char — creates trusted InputEvents that React accepts.
     pub(super) async fn type_human(
         &mut self,
         selector: &str,
@@ -29,10 +29,15 @@ impl<'a> LoginFlow<'a> {
         })?;
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-        // Type each character using Element.press_key (DispatchKeyEvent with focus)
+        // Debug screenshot to verify focus state
+        tracing::debug!(selector, "type_human: element clicked, starting typing");
+
         for ch in text.chars() {
-            el.press_key(ch.to_string()).await.map_err(|e| {
-                TwitterLoginError::Navigation(format!("press_key '{ch}': {e}"))
+            let escaped = if ch == '\'' { "\\'" } else { &ch.to_string() };
+            // execCommand('insertText') creates trusted InputEvents
+            let js = format!("document.execCommand('insertText', false, '{escaped}')");
+            self.page.evaluate(js).await.map_err(|e| {
+                TwitterLoginError::Navigation(format!("insertText '{ch}': {e}"))
             })?;
 
             let delay = self.human.char_delay(speed);
