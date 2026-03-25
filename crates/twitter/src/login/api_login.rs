@@ -39,14 +39,25 @@ pub async fn login(
     let guest_token = get_guest_token(&client).await?;
     tracing::info!(guest_token = %guest_token, "API login: got guest token");
 
-    // Step 2: init login flow
+    // Step 2: init login flow (use pre-seeded ct0 for first request)
     let mut state =
         flow::FlowState::init(&client, &guest_token, Some(&ct0)).await?;
     tracing::info!(task = %state.current_task(), "API login: flow initialized");
 
+    // After init, Twitter sets ct0 in Set-Cookie — extract and use it
+    if let Some(real_ct0) = extract_ct0_from_jar(&jar) {
+        tracing::info!(ct0_len = real_ct0.len(), "API login: got real ct0 from jar");
+        state.set_csrf_token(&real_ct0);
+    }
+
     // Step 3: JS instrumentation
     state.js_instrumentation(&client).await?;
     tracing::info!(task = %state.current_task(), "API login: js instrumentation");
+
+    // Twitter may update ct0 after each step — refresh from jar
+    if let Some(updated_ct0) = extract_ct0_from_jar(&jar) {
+        state.set_csrf_token(&updated_ct0);
+    }
 
     // Step 4: enter username
     state.enter_username(&client, &req.username).await?;
@@ -185,4 +196,17 @@ fn extract_cookies(jar: &wreq::cookie::Jar) -> HashMap<String, String> {
         map.insert(cookie.name().to_string(), cookie.value().to_string());
     }
     map
+}
+
+/// Extract ct0 cookie from jar (set by Twitter via Set-Cookie after init).
+fn extract_ct0_from_jar(jar: &wreq::cookie::Jar) -> Option<String> {
+    for cookie in jar.get_all() {
+        if cookie.name() == "ct0" {
+            let val = cookie.value().to_string();
+            if !val.is_empty() {
+                return Some(val);
+            }
+        }
+    }
+    None
 }

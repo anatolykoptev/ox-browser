@@ -2224,7 +2224,9 @@ name = "ox-http"
 version = "0.8.0"
 dependencies = [
  "async-trait",
+ "base64",
  "chromiumoxide",
+ "chrono",
  "cookie_store",
  "dom_query 0.27.0",
  "futures",
@@ -2384,7 +2386,6 @@ version = "0.8.0"
 dependencies = [
  "base64",
  "chromiumoxide",
- "chrono",
  "futures",
  "once_cell",
  "ox-http",
@@ -4681,6 +4682,9 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "schnellru",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
  "smallvec",
  "socket2",
  "tokio",

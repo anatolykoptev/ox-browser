@@ -32,6 +32,11 @@ impl FlowState {
             .map(|s| s.to_string())
     }
 
+    /// Update CSRF token (ct0) after extracting from cookie jar.
+    pub fn set_csrf_token(&mut self, ct0: &str) {
+        self.csrf_token = Some(ct0.to_string());
+    }
+
     fn headers(&self) -> HeaderMap {
         api_headers::login_headers(
             &self.guest_token,
@@ -125,6 +130,11 @@ impl FlowState {
         self.response = body;
 
         if status >= 400 {
+            tracing::warn!(
+                status,
+                body = %self.response,
+                "API login: task.json returned error"
+            );
             return Err(TwitterLoginError::ApiError {
                 status,
                 body: self.response.to_string(),

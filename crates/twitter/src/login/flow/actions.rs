@@ -100,7 +100,7 @@ impl<'a> LoginFlow<'a> {
 }
 
 /// Generate a TOTP code from a base32-encoded secret.
-pub(super) fn generate_totp(secret_b32: &str) -> Result<String, TwitterLoginError> {
+pub(in crate::login) fn generate_totp(secret_b32: &str) -> Result<String, TwitterLoginError> {
     use totp_rs::{Algorithm, Secret, TOTP};
 
     let secret_bytes = Secret::Encoded(secret_b32.to_string())
