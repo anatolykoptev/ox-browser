@@ -2365,6 +2365,7 @@ dependencies = [
  "tracing",
  "url",
  "wreq",
+ "wreq-util",
 ]
 
 [[package]]

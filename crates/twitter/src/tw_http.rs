@@ -37,6 +37,7 @@ pub(crate) fn twitter_http() -> &'static HttpClient {
         let config = HttpConfig {
             timeout: std::time::Duration::from_secs(30),
             user_agent: crate::TWITTER_USER_AGENT.to_string(),
+            emulation: Some(wreq_util::Emulation::Chrome136),
             cloudflare_detect: false,
             quality_check: false, // Twitter 403 = real auth error, not CF challenge
             ..HttpConfig::default()
