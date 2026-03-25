@@ -65,6 +65,15 @@ pub enum TwitterLoginError {
         step: FlowStep,
         screenshot: Option<PathBuf>,
     },
+
+    #[error("API error: HTTP {status}")]
+    ApiError { status: u16, body: String },
+
+    #[error("rate limited")]
+    RateLimited,
+
+    #[error("email verification required (LoginAcid)")]
+    EmailVerificationRequired,
 }
 
 impl TwitterLoginError {
@@ -80,7 +89,20 @@ impl TwitterLoginError {
             Self::MissingEmail => "missing_email",
             Self::CookiesNotFound => "cookies_not_found",
             Self::Timeout { .. } => "timeout",
+            Self::ApiError { .. } => "api_error",
+            Self::RateLimited => "rate_limited",
+            Self::EmailVerificationRequired => "email_verification_required",
         }
+    }
+
+    /// Permanent errors should not be retried with Chrome fallback.
+    pub fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            Self::WrongCredentials { .. }
+                | Self::AccountLocked { .. }
+                | Self::MissingEmail
+        )
     }
 
     pub fn screenshot(&self) -> Option<&PathBuf> {
