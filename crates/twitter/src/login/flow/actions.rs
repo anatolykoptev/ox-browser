@@ -43,7 +43,10 @@ impl<'a> LoginFlow<'a> {
             });
         }
 
-        let pause = self.human.reading_pause();
+        // Wait for navigation (SPA may not fire frameNavigated — timeout is ok)
+        self.wait_for_navigation_or_timeout().await;
+        // Small human pause after transition
+        let pause = self.human.pre_click_delay();
         tokio::time::sleep(pause).await;
         Ok(())
     }
@@ -64,7 +67,9 @@ impl<'a> LoginFlow<'a> {
                 screenshot: None,
             })?;
 
-        let pause = self.human.reading_pause();
+        // Wait for navigation after login click
+        self.wait_for_navigation_or_timeout().await;
+        let pause = self.human.pre_click_delay();
         tokio::time::sleep(pause).await;
         Ok(())
     }

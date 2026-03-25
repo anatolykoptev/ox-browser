@@ -184,7 +184,9 @@ impl<'a> LoginFlow<'a> {
         "#;
         self.page.evaluate(js_click).await.ok();
 
-        let pause = self.human.reading_pause();
+        // Wait for navigation after 2FA submit
+        self.wait_for_navigation_or_timeout().await;
+        let pause = self.human.pre_click_delay();
         tokio::time::sleep(pause).await;
 
         // Wait for home page after 2FA

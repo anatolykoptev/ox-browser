@@ -79,6 +79,27 @@ impl<'a> LoginFlow<'a> {
         }
     }
 
+    /// Wait for a page navigation event, with a short timeout.
+    /// Twitter is an SPA — navigation events may or may not fire.
+    /// Returns Ok(true) if navigation fired, Ok(false) if timeout.
+    pub(super) async fn wait_for_navigation_or_timeout(&self) -> bool {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            self.page.wait_for_navigation(),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {
+                tracing::debug!("navigation event received");
+                true
+            }
+            _ => {
+                tracing::debug!("navigation timeout (SPA transition)");
+                false
+            }
+        }
+    }
+
     pub(super) async fn element_exists(&self, selector: &str) -> bool {
         self.page.find_element(selector).await.is_ok()
     }
