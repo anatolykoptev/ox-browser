@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 ox-http = { path = "../http" }
+ox-twitter = { path = "../twitter" }
 ox-intelligence = { path = "../intelligence" }
 ox-security = { path = "../security" }
 ox-imagesearch = { path = "../imagesearch" }

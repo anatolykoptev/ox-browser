@@ -2,6 +2,9 @@
 //!
 //! Called by both MCP and REST layers.
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::content::{self, ContentFormat, ReadOutput, ReadParams};
@@ -10,14 +13,23 @@ use crate::HttpClient;
 /// Overall timeout for the entire read pipeline (fetch + extract).
 const PIPELINE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A site-specific handler: takes (params, format, start) → Option<ReadOutput>.
+/// Injected from outside ox-http to avoid circular dependencies.
+pub type SiteHandler = Arc<
+    dyn Fn(ReadParams, ContentFormat, Instant) -> Pin<Box<dyn Future<Output = Option<ReadOutput>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Execute the full read pipeline with a 30s overall timeout.
 pub async fn read_page(
     http: &HttpClient,
     params: &ReadParams,
+    site_handlers: &[SiteHandler],
 ) -> ReadOutput {
     match tokio::time::timeout(
         PIPELINE_TIMEOUT,
-        read_page_inner(http, params),
+        read_page_inner(http, params, site_handlers),
     ).await {
         Ok(output) => output,
         Err(_) => build_error_output(params, "direct", PIPELINE_TIMEOUT.as_millis() as u64, "read pipeline timeout"),
@@ -27,17 +39,20 @@ pub async fn read_page(
 async fn read_page_inner(
     http: &HttpClient,
     params: &ReadParams,
+    site_handlers: &[SiteHandler],
 ) -> ReadOutput {
     let start = Instant::now();
     let format = ContentFormat::from_param(&params.format);
 
-    // Site-specific handlers (rewrite URL, still go through middleware chain)
-    if let Some(output) = crate::site_reddit::try_reddit_json(http, params, format, start).await {
-        return output;
+    // External site-specific handlers (injected to avoid circular deps).
+    for handler in site_handlers {
+        if let Some(output) = handler(params.clone(), format, start).await {
+            return output;
+        }
     }
 
-    // Twitter/X handler
-    if let Some(output) = crate::site_twitter::try_twitter(params, format, start).await {
+    // Site-specific handlers (rewrite URL, still go through middleware chain)
+    if let Some(output) = crate::site_reddit::try_reddit_json(http, params, format, start).await {
         return output;
     }
 

@@ -8,7 +8,7 @@ const GO_SOCIAL_URL_ENV: &str = "GO_SOCIAL_URL";
 
 /// Fetch a single tweet by ID with fallback chain.
 /// Order: go-social (auth pool) → go-hully → FxTwitter → GraphQL (guest token).
-pub async fn fetch_tweet(id: &str, proxy: Option<&str>) -> Option<Tweet> {
+pub async fn fetch_tweet(id: &str) -> Option<Tweet> {
     // 1. Try go-social (centralized auth account pool — most reliable)
     if let Some(base) = go_social_url() {
         tracing::debug!(id, "twitter: trying go-social");
@@ -35,7 +35,7 @@ pub async fn fetch_tweet(id: &str, proxy: Option<&str>) -> Option<Tweet> {
 
     // 3. Try FxTwitter (fast, free, no auth)
     tracing::debug!(id, "twitter: trying FxTwitter");
-    if let Some(tweet) = fxtwitter::fetch_tweet(id, proxy).await {
+    if let Some(tweet) = fxtwitter::fetch_tweet(id).await {
         tracing::info!(id, "twitter: got tweet from FxTwitter");
         return Some(tweet);
     }
@@ -44,7 +44,7 @@ pub async fn fetch_tweet(id: &str, proxy: Option<&str>) -> Option<Tweet> {
     tracing::info!(id, "twitter: trying GraphQL with guest token");
     let vars = request::tweet_detail_vars(id);
     let url = request::build_url(&graphql::TWEET_DETAIL, &vars);
-    match request::execute(&url, proxy, 15).await {
+    match request::execute(&url).await {
         Ok(body) => {
             tracing::debug!(id, body_len = body.len(), "twitter: GraphQL response");
             match parser::parse_tweet_detail(&body) {
@@ -66,17 +66,17 @@ pub async fn fetch_tweet(id: &str, proxy: Option<&str>) -> Option<Tweet> {
 }
 
 /// Fetch a user profile by screen name with fallback chain.
-pub async fn fetch_profile(screen_name: &str, proxy: Option<&str>) -> Option<UserProfile> {
+pub async fn fetch_profile(screen_name: &str) -> Option<UserProfile> {
     // 1. Try FxTwitter for basic profile (fast, doesn't need auth)
     tracing::debug!(screen_name, "twitter: trying FxTwitter for profile");
-    let mut profile = fxtwitter::fetch_profile(screen_name, proxy).await;
+    let mut profile = fxtwitter::fetch_profile(screen_name).await;
 
     // 2. Fallback to GraphQL for profile
     if profile.is_none() {
         tracing::debug!(screen_name, "twitter: FxTwitter failed, trying GraphQL");
         let vars = request::user_by_screen_name_vars(screen_name);
         let url = request::build_url(&graphql::USER_BY_SCREEN_NAME, &vars);
-        if let Ok(body) = request::execute(&url, proxy, 10).await {
+        if let Ok(body) = request::execute(&url).await {
             profile = parser::parse_user_profile(&body);
         }
     }
@@ -87,7 +87,7 @@ pub async fn fetch_profile(screen_name: &str, proxy: Option<&str>) -> Option<Use
         tracing::debug!(screen_name, user_id = %profile.id, "twitter: fetching recent tweets");
         let vars = request::user_tweets_vars(&profile.id, 10);
         let url = request::build_url(&graphql::USER_TWEETS, &vars);
-        if let Ok(body) = request::execute(&url, proxy, 10).await
+        if let Ok(body) = request::execute(&url).await
             && let Some(tweets) = parser::parse_user_tweets(&body)
         {
             profile.recent_tweets = tweets;

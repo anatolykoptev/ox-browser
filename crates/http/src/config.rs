@@ -45,6 +45,9 @@ pub struct HttpConfig {
     /// When set, the residential proxy middleware retries CF-blocked requests
     /// (except Block) through this proxy before falling back to the headless solver.
     pub residential_proxy: Option<String>,
+    /// Enable quality-check middleware (converts 401/403/429/503 to CF challenge errors).
+    /// Default: true. Disable for APIs where 403 is a real auth error (e.g., Twitter).
+    pub quality_check: bool,
 }
 
 impl Default for HttpConfig {
@@ -64,6 +67,7 @@ impl Default for HttpConfig {
             cookie_provider: None,
             cookie_cache: None,
             residential_proxy: None,
+            quality_check: true,
         }
     }
 }

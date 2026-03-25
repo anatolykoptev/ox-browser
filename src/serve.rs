@@ -66,13 +66,13 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let media_config = config.media.to_media_config();
 
     let http_client = Arc::new(HttpClient::new(http_config)?);
-    let state = ox_js::AppState {
+    let state = ox_js::AppState::new(
         provider,
         cache,
         http_client,
-        defaults: defaults.clone(),
-        media_config: media_config.clone(),
-    };
+        defaults.clone(),
+        media_config.clone(),
+    );
     let rest_router = ox_js::router(state.clone());
     let mcp_router = ox_mcp::build_mcp_router(
         state.provider.clone(),

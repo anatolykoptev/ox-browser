@@ -12,7 +12,7 @@ pub async fn read(
     State(state): State<AppState>,
     Json(params): Json<ReadParams>,
 ) -> (StatusCode, Json<ox_http::content::ReadOutput>) {
-    let output = read_pipeline::read_page(&state.http_client, &params).await;
+    let output = read_pipeline::read_page(&state.http_client, &params, &state.site_handlers).await;
 
     let status = if output.error.is_some() {
         StatusCode::BAD_GATEWAY

@@ -17,14 +17,12 @@ struct ManagerState {
 }
 
 pub(crate) struct XtidManager {
-    client: wreq::Client,
     state: RwLock<ManagerState>,
 }
 
 impl XtidManager {
-    pub(crate) fn new(client: wreq::Client) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            client,
             state: RwLock::new(ManagerState {
                 ct: None,
                 last_refresh: Instant::now() - REFRESH_INTERVAL - Duration::from_secs(1),
@@ -73,17 +71,19 @@ impl XtidManager {
     }
 
     async fn fetch_url(&self, url: &str) -> Result<String, String> {
-        let resp = self
-            .client
-            .get(url)
-            .header("user-agent", crate::TWITTER_USER_AGENT)
-            .header("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("accept-language", "en-US,en;q=0.9")
-            .send()
+        let resp = crate::tw_http::twitter_http()
+            .get_with_headers(
+                url,
+                &[
+                    ("user-agent", crate::TWITTER_USER_AGENT),
+                    ("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+                    ("accept-language", "en-US,en;q=0.9"),
+                ],
+            )
             .await
             .map_err(|e| format!("request error: {e}"))?;
 
-        resp.text().await.map_err(|e| format!("read body error: {e}"))
+        Ok(resp.body)
     }
 }
 
@@ -93,8 +93,7 @@ mod tests {
 
     #[test]
     fn test_manager_starts_expired() {
-        let client = wreq::Client::builder().build().unwrap();
-        let mgr = XtidManager::new(client);
+        let mgr = XtidManager::new();
         // Verify initial state: last_refresh is in the past (beyond REFRESH_INTERVAL)
         let state = mgr.state.try_read().unwrap();
         assert!(state.ct.is_none());

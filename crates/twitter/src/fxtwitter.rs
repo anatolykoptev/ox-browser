@@ -7,16 +7,16 @@ use crate::types::{Tweet, UserProfile};
 const FXTWITTER_BASE: &str = "https://api.fxtwitter.com";
 
 /// Fetch a tweet by ID from FxTwitter API.
-pub async fn fetch_tweet(id: &str, proxy: Option<&str>) -> Option<Tweet> {
+pub async fn fetch_tweet(id: &str) -> Option<Tweet> {
     let url = format!("{FXTWITTER_BASE}/i/status/{id}");
-    let body = http_get(&url, proxy, 5).await.ok()?;
+    let body = http_get(&url).await.ok()?;
     parse_tweet_response(&body)
 }
 
 /// Fetch a user profile from FxTwitter API.
-pub async fn fetch_profile(screen_name: &str, proxy: Option<&str>) -> Option<UserProfile> {
+pub async fn fetch_profile(screen_name: &str) -> Option<UserProfile> {
     let url = format!("{FXTWITTER_BASE}/{screen_name}");
-    let body = http_get(&url, proxy, 5).await.ok()?;
+    let body = http_get(&url).await.ok()?;
     parse_profile_response(&body)
 }
 
@@ -61,30 +61,17 @@ fn parse_profile_response(body: &str) -> Option<UserProfile> {
     })
 }
 
-/// Simple HTTP GET with optional proxy and timeout.
-async fn http_get(url: &str, proxy: Option<&str>, timeout_secs: u64) -> Result<String, String> {
-    let mut builder = wreq::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs))
-        .emulation(wreq_util::Emulation::Chrome136)
-        .cookie_store(true);
-
-    if let Some(p) = proxy {
-        let proxy = wreq::Proxy::all(p).map_err(|e| e.to_string())?;
-        builder = builder.proxy(proxy);
-    }
-
-    let client = builder.build().map_err(|e| e.to_string())?;
-    let resp = client
-        .get(url)
-        .header("accept", "application/json")
-        .send()
+/// HTTP GET via shared Twitter HttpClient.
+async fn http_get(url: &str) -> Result<String, String> {
+    let resp = crate::tw_http::twitter_http()
+        .get_with_headers(url, &[("accept", "application/json")])
         .await
         .map_err(|e| e.to_string())?;
 
-    if resp.status() != wreq::StatusCode::OK {
-        return Err(format!("HTTP {}", resp.status().as_u16()));
+    if resp.status != 200 {
+        return Err(format!("HTTP {}", resp.status));
     }
-    resp.text().await.map_err(|e| e.to_string())
+    Ok(resp.body)
 }
 
 #[cfg(test)]

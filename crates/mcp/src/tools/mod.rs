@@ -14,6 +14,7 @@ mod solve;
 
 use std::sync::Arc;
 
+use ox_http::read_pipeline::SiteHandler;
 use ox_http::{CookieCache, CookieProvider, HttpClient};
 use ox_js::EndpointDefaults;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -42,6 +43,7 @@ pub struct OxMcpServer {
     pub(crate) http_client: Arc<HttpClient>,
     pub(crate) defaults: EndpointDefaults,
     pub(crate) media_config: ox_media::MediaConfig,
+    pub(crate) site_handlers: Arc<Vec<SiteHandler>>,
     pub(crate) tool_router: ToolRouter<Self>,
 }
 
@@ -53,12 +55,14 @@ impl OxMcpServer {
         defaults: EndpointDefaults,
         media_config: ox_media::MediaConfig,
     ) -> Self {
+        let handlers: Vec<SiteHandler> = vec![ox_js::site_twitter::make_twitter_handler()];
         Self {
             provider,
             cache,
             http_client,
             defaults,
             media_config,
+            site_handlers: Arc::new(handlers),
             tool_router: Self::tool_router(),
         }
     }

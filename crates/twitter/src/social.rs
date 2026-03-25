@@ -47,22 +47,14 @@ pub async fn fetch_tweet(base_url: &str, tweet_id: &str) -> Result<Tweet, String
         return Err("go-social: missing auth_token or ct0".to_string());
     }
 
-    // Twitter GraphQL client with Chrome TLS emulation and cookie store.
-    let tw_client = wreq::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .cookie_store(true)
-        .emulation(wreq_util::Emulation::Chrome136)
-        .build()
-        .map_err(|e| format!("twitter client: {e}"))?;
-
-    // Step 2: Make TweetDetail GraphQL request with auth cookies via proxy.
+    // Step 2: Make TweetDetail GraphQL request with auth cookies via shared ox-http client.
     let vars = request::tweet_detail_vars(tweet_id);
     let url = request::build_url(&graphql::TWEET_DETAIL, &vars);
 
     // Generate x-client-transaction-id header (optional — proceed without on failure)
     let xtid = crate::xtid_header("GET", &url).await;
 
-    match graphql_get_authed(&tw_client, &url, &auth_token, &ct0, xtid.as_deref()).await {
+    match graphql_get_authed(&url, &auth_token, &ct0, xtid.as_deref()).await {
         Ok(body) => match parser::parse_tweet_detail(&body) {
             Some(tweets) => {
                 if let Some(tweet) = tweets.into_iter().find(|t| t.id == tweet_id) {
@@ -117,52 +109,61 @@ async fn acquire_account(
     serde_json::from_str(&body).map_err(|e| format!("go-social acquire parse: {e}"))
 }
 
-/// Make a TweetDetail GraphQL GET request using auth cookies (auth_token + ct0).
+/// Make a TweetDetail GraphQL GET request using the shared ox-http client with Chrome TLS
+/// fingerprinting and Twitter-ordered headers.
 async fn graphql_get_authed(
-    client: &wreq::Client,
     url: &str,
     auth_token: &str,
     ct0: &str,
     xtid: Option<&str>,
 ) -> Result<String, String> {
-    let cookie_header = format!("auth_token={auth_token}; ct0={ct0}");
-    let mut builder = client
-        .get(url)
-        .header("authorization", format!("Bearer {}", graphql::BEARER_TOKEN))
-        .header("content-type", "application/json")
-        .header("x-csrf-token", ct0)
-        .header("x-twitter-active-user", "yes")
-        .header("x-twitter-auth-type", "OAuth2Session")
-        .header("x-twitter-client-language", "en")
-        // sec-ch-ua Client Hints (must match User-Agent Chrome version)
-        .header("sec-ch-ua", r#""Chromium";v="136", "Not.A/Brand";v="99", "Google Chrome";v="136""#)
-        .header("sec-ch-ua-mobile", "?0")
-        .header("sec-ch-ua-platform", r#""Windows""#)
-        .header("sec-fetch-dest", "empty")
-        .header("sec-fetch-mode", "cors")
-        .header("sec-fetch-site", "same-origin")
-        .header("cookie", cookie_header)
-        .header("user-agent", crate::TWITTER_USER_AGENT)
-        .header("accept", "*/*")
-        .header("accept-language", "en-US,en;q=0.9")
-        .header("accept-encoding", "gzip, deflate, br")
-        // Twitter backend checks referer/origin — must be twitter.com, not x.com
-        .header("referer", "https://twitter.com/")
-        .header("origin", "https://twitter.com");
+    let cookie = format!("auth_token={auth_token}; ct0={ct0}");
+    let bearer = format!("Bearer {}", graphql::BEARER_TOKEN);
 
+    let mut pairs: Vec<(&str, &str)> = vec![
+        ("authorization", &bearer),
+        ("content-type", "application/json"),
+        ("x-csrf-token", ct0),
+        ("x-twitter-active-user", "yes"),
+        ("x-twitter-auth-type", "OAuth2Session"),
+        ("x-twitter-client-language", "en"),
+        ("sec-ch-ua", r#""Chromium";v="136", "Not.A/Brand";v="99", "Google Chrome";v="136""#),
+        ("sec-ch-ua-mobile", "?0"),
+        ("sec-ch-ua-platform", r#""Windows""#),
+        ("sec-fetch-dest", "empty"),
+        ("sec-fetch-mode", "cors"),
+        ("sec-fetch-site", "same-origin"),
+        ("cookie", &cookie),
+        ("user-agent", crate::TWITTER_USER_AGENT),
+        ("accept", "*/*"),
+        ("accept-language", "en-US,en;q=0.9"),
+        ("accept-encoding", "gzip, deflate, br"),
+        ("referer", "https://twitter.com/"),
+        ("origin", "https://twitter.com"),
+    ];
     if let Some(tid) = xtid {
-        builder = builder.header("x-client-transaction-id", tid);
+        pairs.push(("x-client-transaction-id", tid));
     }
 
-    let resp = builder.send().await.map_err(|e| e.to_string())?;
-    let status = resp.status().as_u16();
-    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let headers = crate::tw_http::ordered_headers(&pairs);
+    let req = ox_http::middleware::Request {
+        method: "GET".to_string(),
+        url: url.to_string(),
+        headers,
+        body: None,
+        proxy: None,
+    };
 
-    match status {
-        200 => Ok(body),
-        401 | 403 => Err(format!("auth rejected HTTP {status}")),
-        429 => Err(format!("rate limited HTTP {status}")),
-        _ => Err(format!("GraphQL HTTP {status}")),
+    let resp = crate::tw_http::twitter_http()
+        .execute(req)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    match resp.status {
+        200 => Ok(resp.body),
+        401 | 403 => Err(format!("auth rejected HTTP {}", resp.status)),
+        429 => Err(format!("rate limited HTTP {}", resp.status)),
+        _ => Err(format!("GraphQL HTTP {}", resp.status)),
     }
 }
 

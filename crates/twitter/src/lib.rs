@@ -3,11 +3,13 @@ pub mod url;
 pub mod fxtwitter;
 pub mod graphql;
 pub mod request;
+pub(crate) mod request_vars;
 pub mod parser;
 pub mod social;
 pub mod client;
 pub mod format;
 
+pub(crate) mod tw_http;
 mod xtid_cubic;
 mod xtid_parser;
 pub(crate) mod xtid;
@@ -26,15 +28,7 @@ static XTID_MANAGER: std::sync::OnceLock<xtid_manager::XtidManager> = std::sync:
 
 /// Get or initialize the global XtidManager.
 fn xtid_mgr() -> &'static xtid_manager::XtidManager {
-    XTID_MANAGER.get_or_init(|| {
-        let client = wreq::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .emulation(wreq_util::Emulation::Chrome136)
-            .cookie_store(true)
-            .build()
-            .expect("xtid wreq client");
-        xtid_manager::XtidManager::new(client)
-    })
+    XTID_MANAGER.get_or_init(xtid_manager::XtidManager::new)
 }
 
 /// Try to generate x-client-transaction-id for a request.

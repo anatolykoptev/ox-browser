@@ -75,7 +75,9 @@ impl HttpClient {
 
         // Quality check: convert anti-bot 200s and non-CF errors (401/403/429/503)
         // to CF challenge errors so the solver middleware can handle them.
-        middlewares.push(crate::middleware_quality::quality_check_middleware());
+        if config.quality_check {
+            middlewares.push(crate::middleware_quality::quality_check_middleware());
+        }
 
         // Innermost middleware: auto-inject client hints.
         middlewares.push(client_hints_middleware());
@@ -100,6 +102,13 @@ impl HttpClient {
         for &(k, v) in extra_headers {
             req.headers.push((k.to_owned(), v.to_owned()));
         }
+        self.handler.handle(req).await
+    }
+
+    /// Execute a pre-built Request through the middleware chain.
+    ///
+    /// Use this when you need full control over headers (e.g., Twitter header ordering).
+    pub async fn execute(&self, req: Request) -> Result<HttpResponse> {
         self.handler.handle(req).await
     }
 

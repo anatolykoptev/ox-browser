@@ -12,6 +12,7 @@ mod readability;
 mod reverse_search;
 mod security;
 mod site_audit;
+pub mod site_twitter;
 mod solve;
 
 pub use solve::SolveResponse;
@@ -20,6 +21,7 @@ use std::sync::Arc;
 
 use axum::routing::{get, post};
 use axum::Router;
+use ox_http::read_pipeline::SiteHandler;
 use ox_http::{CookieCache, CookieProvider, HttpClient};
 
 /// Runtime defaults configurable via config.toml.
@@ -52,6 +54,29 @@ pub struct AppState {
     pub http_client: Arc<HttpClient>,
     pub defaults: EndpointDefaults,
     pub media_config: ox_media::MediaConfig,
+    /// Injected site-specific handlers for the read pipeline.
+    pub site_handlers: Arc<Vec<SiteHandler>>,
+}
+
+impl AppState {
+    /// Build AppState with the default set of site handlers (including Twitter).
+    pub fn new(
+        provider: Arc<dyn CookieProvider>,
+        cache: Arc<CookieCache>,
+        http_client: Arc<HttpClient>,
+        defaults: EndpointDefaults,
+        media_config: ox_media::MediaConfig,
+    ) -> Self {
+        let handlers: Vec<SiteHandler> = vec![site_twitter::make_twitter_handler()];
+        Self {
+            provider,
+            cache,
+            http_client,
+            defaults,
+            media_config,
+            site_handlers: Arc::new(handlers),
+        }
+    }
 }
 
 /// Builds the Axum router with all REST endpoints.
@@ -109,13 +134,13 @@ mod tests {
     }
 
     fn test_state() -> AppState {
-        AppState {
-            provider: Arc::new(MockProvider),
-            cache: Arc::new(CookieCache::new(Duration::from_secs(300))),
-            http_client: Arc::new(HttpClient::new(HttpConfig::default()).unwrap()),
-            defaults: EndpointDefaults::default(),
-            media_config: ox_media::MediaConfig::default(),
-        }
+        AppState::new(
+            Arc::new(MockProvider),
+            Arc::new(CookieCache::new(Duration::from_secs(300))),
+            Arc::new(HttpClient::new(HttpConfig::default()).unwrap()),
+            EndpointDefaults::default(),
+            ox_media::MediaConfig::default(),
+        )
     }
 
     #[tokio::test]
