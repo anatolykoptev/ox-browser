@@ -97,14 +97,55 @@ impl<'a> LoginFlow<'a> {
         self.wait_for_element(selectors::USERNAME_INPUT, FlowStep::Username)
             .await?;
 
-        // Focus the input via JS (more reliable than element.click() for React inputs)
+        // Debug: dump all inputs on the page
+        let debug_inputs: String = self.page
+            .evaluate(r#"(() => {
+                const inputs = document.querySelectorAll('input');
+                return Array.from(inputs).map(i =>
+                    `tag=${i.tagName} name=${i.name} ac=${i.autocomplete} type=${i.type} id=${i.id}`
+                ).join('\n');
+            })()"#)
+            .await
+            .ok()
+            .and_then(|r| r.into_value().ok())
+            .unwrap_or_default();
+        tracing::info!(inputs = %debug_inputs, "DEBUG: found inputs on page");
+
+        // Debug: take screenshot before typing
+        self.take_error_screenshot("debug-before-typing").await;
+
+        // Focus via JS and try typing
         self.focus_and_clear(selectors::USERNAME_INPUT).await?;
+
+        // Debug: check if focus worked
+        let focused: String = self.page
+            .evaluate("document.activeElement?.tagName + '.' + document.activeElement?.name")
+            .await
+            .ok()
+            .and_then(|r| r.into_value().ok())
+            .unwrap_or_default();
+        tracing::info!(focused = %focused, "DEBUG: active element after focus");
 
         let pause = self.human.reading_pause();
         tokio::time::sleep(pause).await;
 
         self.type_human(selectors::USERNAME_INPUT, &self.input.username.clone(), Speed::Fast)
             .await?;
+
+        // Debug: check value after typing
+        let value: String = self.page
+            .evaluate(format!(
+                "document.querySelector('{selector}')?.value || 'EMPTY'",
+                selector = selectors::USERNAME_INPUT
+            ))
+            .await
+            .ok()
+            .and_then(|r| r.into_value().ok())
+            .unwrap_or_default();
+        tracing::info!(value = %value, "DEBUG: input value after typing");
+
+        // Debug: take screenshot after typing
+        self.take_error_screenshot("debug-after-typing").await;
 
         Ok(())
     }
