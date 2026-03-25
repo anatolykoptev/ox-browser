@@ -33,7 +33,7 @@ impl Handler for SsrfGuard {
 }
 
 /// Validate that a URL does not target a private/reserved IP.
-fn validate_url(url_str: &str) -> Result<()> {
+pub fn validate_url(url_str: &str) -> Result<()> {
     let url = Url::parse(url_str).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
 
     let scheme = url.scheme();
