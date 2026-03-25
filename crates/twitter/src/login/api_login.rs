@@ -31,12 +31,21 @@ pub async fn login(
     let client = build_client(Arc::clone(&jar))?;
     tracing::info!("API login: client built with Chrome136 emulation");
 
-    // Step 0: pre-seed cookies by visiting x.com
+    // Step 0: pre-seed cookies by visiting x.com + set ct0 in cookie jar
     let ct0 = api_preseed::pre_seed_cookies(&client).await?;
-    tracing::info!(ct0_len = ct0.len(), "API login: ct0 pre-seeded");
+    // ct0 must be in BOTH the cookie jar AND X-Csrf-Token header
+    jar.add(
+        format!("ct0={ct0}; Domain=.x.com; Path=/; Secure").as_str(),
+        "https://api.x.com",
+    );
+    tracing::info!(ct0_len = ct0.len(), "API login: ct0 pre-seeded + added to jar");
 
-    // Step 1: get guest token
+    // Step 1: get guest token + add gt cookie
     let guest_token = get_guest_token(&client).await?;
+    jar.add(
+        format!("gt={guest_token}; Domain=.x.com; Path=/; Secure").as_str(),
+        "https://api.x.com",
+    );
     tracing::info!(guest_token = %guest_token, "API login: got guest token");
 
     // Step 2: init login flow (use pre-seeded ct0 for first request)

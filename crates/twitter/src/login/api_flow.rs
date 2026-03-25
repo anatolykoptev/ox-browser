@@ -118,6 +118,17 @@ impl FlowState {
             return Err(TwitterLoginError::RateLimited);
         }
 
+        // Log Set-Cookie headers for debugging
+        let set_cookies: Vec<_> = resp.headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(|s| s.split(';').next().unwrap_or("").to_string())
+            .collect();
+        if !set_cookies.is_empty() {
+            tracing::info!(cookies = ?set_cookies, "API login: Set-Cookie received");
+        }
+
         let body: serde_json::Value =
             resp.json().await.map_err(|e| TwitterLoginError::ApiError {
                 status,
