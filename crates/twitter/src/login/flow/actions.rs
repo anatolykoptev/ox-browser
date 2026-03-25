@@ -106,3 +106,18 @@ impl<'a> LoginFlow<'a> {
         })
     }
 }
+
+/// Generate a TOTP code from a base32-encoded secret.
+pub(super) fn generate_totp(secret_b32: &str) -> Result<String, TwitterLoginError> {
+    use totp_rs::{Algorithm, Secret, TOTP};
+
+    let secret_bytes = Secret::Encoded(secret_b32.to_string())
+        .to_bytes()
+        .map_err(|e| TwitterLoginError::TotpFailed(format!("bad base32 secret: {e}")))?;
+
+    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes)
+        .map_err(|e| TwitterLoginError::TotpFailed(format!("TOTP init: {e}")))?;
+
+    totp.generate_current()
+        .map_err(|e| TwitterLoginError::TotpFailed(format!("TOTP generate: {e}")))
+}

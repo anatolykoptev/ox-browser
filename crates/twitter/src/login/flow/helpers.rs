@@ -100,6 +100,35 @@ impl<'a> LoginFlow<'a> {
         }
     }
 
+    /// Focus an input element via JS and clear its value.
+    /// More reliable than element.click() for React-controlled inputs.
+    pub(super) async fn focus_and_clear(&self, selector: &str) -> Result<(), TwitterLoginError> {
+        let js = format!(
+            r#"(() => {{
+                const el = document.querySelector('{selector}');
+                if (!el) return false;
+                el.focus();
+                el.value = '';
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                return true;
+            }})()"#
+        );
+        let focused: bool = self
+            .page
+            .evaluate(js)
+            .await
+            .ok()
+            .and_then(|r| r.into_value().ok())
+            .unwrap_or(false);
+
+        if !focused {
+            tracing::warn!(selector, "focus_and_clear: element not found");
+        }
+        // Small delay after focus
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        Ok(())
+    }
+
     pub(super) async fn element_exists(&self, selector: &str) -> bool {
         self.page.find_element(selector).await.is_ok()
     }
@@ -157,42 +186,4 @@ impl<'a> LoginFlow<'a> {
         }
     }
 
-    pub(super) async fn wait_for_home(&mut self) -> Result<(), TwitterLoginError> {
-        let step_deadline = self.step_deadline();
-
-        loop {
-            self.check_deadline(FlowStep::WaitHome).await?;
-            if Instant::now() > step_deadline {
-                let screenshot = self.take_error_screenshot("wait-home-timeout").await;
-                return Err(TwitterLoginError::Timeout {
-                    step: FlowStep::WaitHome,
-                    screenshot,
-                });
-            }
-
-            if self.is_on_home().await {
-                return Ok(());
-            }
-
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
-    }
-}
-
-/// Generate a TOTP code from a base32-encoded secret.
-pub(super) fn generate_totp(secret_b32: &str) -> Result<String, TwitterLoginError> {
-    use totp_rs::{Algorithm, Secret, TOTP};
-
-    let secret_bytes = Secret::Encoded(secret_b32.to_string())
-        .to_bytes()
-        .map_err(|e| TwitterLoginError::TotpFailed(format!("bad base32 secret: {e}")))?;
-
-    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes)
-        .map_err(|e| TwitterLoginError::TotpFailed(format!("TOTP init: {e}")))?;
-
-    let code = totp
-        .generate_current()
-        .map_err(|e| TwitterLoginError::TotpFailed(format!("TOTP generate: {e}")))?;
-
-    Ok(code)
 }

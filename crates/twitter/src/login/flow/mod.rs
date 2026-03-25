@@ -94,15 +94,11 @@ impl<'a> LoginFlow<'a> {
     // --- Username step ---
 
     async fn enter_username(&mut self) -> Result<(), TwitterLoginError> {
-        let el = self
-            .wait_for_element(selectors::USERNAME_INPUT, FlowStep::Username)
+        self.wait_for_element(selectors::USERNAME_INPUT, FlowStep::Username)
             .await?;
 
-        el.click().await.map_err(|_| TwitterLoginError::ElementNotFound {
-            selector: selectors::USERNAME_INPUT.to_string(),
-            step: FlowStep::Username,
-            screenshot: None,
-        })?;
+        // Focus the input via JS (more reliable than element.click() for React inputs)
+        self.focus_and_clear(selectors::USERNAME_INPUT).await?;
 
         let pause = self.human.reading_pause();
         tokio::time::sleep(pause).await;
@@ -116,11 +112,10 @@ impl<'a> LoginFlow<'a> {
     // --- Password step ---
 
     async fn enter_password(&mut self) -> Result<(), TwitterLoginError> {
-        let el = self
-            .wait_for_element(selectors::PASSWORD_INPUT, FlowStep::Password)
+        self.wait_for_element(selectors::PASSWORD_INPUT, FlowStep::Password)
             .await?;
 
-        el.click().await.ok();
+        self.focus_and_clear(selectors::PASSWORD_INPUT).await?;
 
         let pause = self.human.reading_pause();
         tokio::time::sleep(pause).await;

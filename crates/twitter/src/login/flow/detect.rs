@@ -5,7 +5,7 @@ use tokio::time::Instant;
 use super::super::error::{FlowStep, TwitterLoginError};
 use super::super::human::Speed;
 use super::super::selectors;
-use super::helpers::generate_totp;
+use super::actions::generate_totp;
 use super::{LoginFlow, POLL_INTERVAL};
 
 impl<'a> LoginFlow<'a> {
@@ -72,10 +72,9 @@ impl<'a> LoginFlow<'a> {
                 .or(self.input.phone.as_deref())
                 .ok_or(TwitterLoginError::MissingEmail)?;
 
-            let el = self
-                .wait_for_element(selectors::OCF_TEXT_INPUT, FlowStep::DetectScreen)
+            self.wait_for_element(selectors::OCF_TEXT_INPUT, FlowStep::DetectScreen)
                 .await?;
-            el.click().await.ok();
+            self.focus_and_clear(selectors::OCF_TEXT_INPUT).await?;
 
             let val = confirm_value.to_string();
             self.type_human(&val, Speed::Fast).await?;
@@ -132,18 +131,15 @@ impl<'a> LoginFlow<'a> {
                 });
             }
 
-            // Check for account locked
-            let page_text: String = self
-                .page
-                .evaluate("document.body.innerText || ''")
+            // Check for account locked (via heading, lighter than full body text)
+            let heading: String = self.page
+                .evaluate(selectors::JS_READ_HEADING)
                 .await
                 .ok()
                 .and_then(|r| r.into_value().ok())
                 .unwrap_or_default();
-
-            if page_text.to_lowercase().contains("account is locked")
-                || page_text.to_lowercase().contains("suspended")
-            {
+            let h = heading.to_lowercase();
+            if h.contains("locked") || h.contains("suspended") {
                 let screenshot = self.take_error_screenshot("account-locked").await;
                 return Err(TwitterLoginError::AccountLocked { screenshot });
             }
@@ -161,10 +157,9 @@ impl<'a> LoginFlow<'a> {
 
         let code = generate_totp(secret)?;
 
-        let el = self
-            .wait_for_element(selectors::OCF_TEXT_INPUT, FlowStep::TwoFactor)
+        self.wait_for_element(selectors::OCF_TEXT_INPUT, FlowStep::TwoFactor)
             .await?;
-        el.click().await.ok();
+        self.focus_and_clear(selectors::OCF_TEXT_INPUT).await?;
 
         let pause = self.human.reading_pause();
         tokio::time::sleep(pause).await;
@@ -192,4 +187,26 @@ impl<'a> LoginFlow<'a> {
         // Wait for home page after 2FA
         self.wait_for_home().await
     }
+
+    pub(super) async fn wait_for_home(&mut self) -> Result<(), TwitterLoginError> {
+        let step_deadline = self.step_deadline();
+
+        loop {
+            self.check_deadline(FlowStep::WaitHome).await?;
+            if Instant::now() > step_deadline {
+                let screenshot = self.take_error_screenshot("wait-home-timeout").await;
+                return Err(TwitterLoginError::Timeout {
+                    step: FlowStep::WaitHome,
+                    screenshot,
+                });
+            }
+
+            if self.is_on_home().await {
+                return Ok(());
+            }
+
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    }
 }
+
