@@ -32,33 +32,17 @@ impl<'a> LoginFlow<'a> {
         // Debug screenshot to verify focus state
         tracing::debug!(selector, "type_human: element clicked, starting typing");
 
-        // Type incrementally using nativeInputValueSetter + React events
-        let mut typed = String::new();
+        // Type using execCommand('insertText') — creates trusted InputEvents
         for ch in text.chars() {
-            typed.push(ch);
-            let escaped = typed.replace('\\', "\\\\").replace('"', "\\\"");
-            let js = format!(
-                r#"(() => {{
-                    const el = document.querySelector('{selector}');
-                    if (!el) return false;
-                    const setter = Object.getOwnPropertyDescriptor(
-                        HTMLInputElement.prototype, 'value'
-                    ).set;
-                    setter.call(el, "{escaped}");
-                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    return true;
-                }})()"#
-            );
-            let ok: bool = self.page.evaluate(js).await
-                .ok()
-                .and_then(|r| r.into_value().ok())
-                .unwrap_or(false);
-            if !ok {
-                return Err(TwitterLoginError::Navigation(
-                    format!("type_human: element not found: {selector}")
-                ));
-            }
+            let escaped = match ch {
+                '\'' => "\\'".to_string(),
+                '\\' => "\\\\".to_string(),
+                _ => ch.to_string(),
+            };
+            let js = format!("document.execCommand('insertText', false, '{escaped}')");
+            self.page.evaluate(js).await.map_err(|e| {
+                TwitterLoginError::Navigation(format!("insertText: {e}"))
+            })?;
 
             let delay = self.human.char_delay(speed);
             tokio::time::sleep(delay).await;
@@ -67,6 +51,23 @@ impl<'a> LoginFlow<'a> {
                 tokio::time::sleep(self.human.micro_pause_delay()).await;
             }
         }
+
+        // Ensure React state is synced: read current value and re-set via native setter
+        let final_val = text.replace('\\', "\\\\").replace('"', "\\\"");
+        let sync_js = format!(
+            r#"(() => {{
+                const el = document.querySelector('{selector}');
+                if (!el) return;
+                const setter = Object.getOwnPropertyDescriptor(
+                    HTMLInputElement.prototype, 'value'
+                ).set;
+                setter.call(el, "{final_val}");
+                el.dispatchEvent(new InputEvent('input', {{
+                    bubbles: true, inputType: 'insertText', data: "{final_val}"
+                }}));
+            }})()"#
+        );
+        self.page.evaluate(sync_js).await.ok();
         Ok(())
     }
 
