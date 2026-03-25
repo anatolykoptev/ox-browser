@@ -14,6 +14,7 @@ mod security;
 mod site_audit;
 pub mod site_twitter;
 mod solve;
+mod chrome_interact;
 mod twitter_login;
 
 pub use solve::SolveResponse;
@@ -60,6 +61,8 @@ pub struct AppState {
     pub site_handlers: Arc<Vec<SiteHandler>>,
     pub twitter_config: ox_twitter::login::TwitterLoginConfig,
     pub twitter_semaphore: Arc<Semaphore>,
+    pub chrome_config: ox_http::chrome_session::ChromeLoginConfig,
+    pub chrome_semaphore: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -71,8 +74,10 @@ impl AppState {
         defaults: EndpointDefaults,
         media_config: ox_media::MediaConfig,
         twitter_config: ox_twitter::login::TwitterLoginConfig,
+        chrome_config: ox_http::chrome_session::ChromeLoginConfig,
     ) -> Self {
         let twitter_semaphore = Arc::new(Semaphore::new(twitter_config.max_concurrent));
+        let chrome_semaphore = Arc::new(Semaphore::new(2));
         let handlers: Vec<SiteHandler> = vec![site_twitter::make_twitter_handler()];
         Self {
             provider,
@@ -83,6 +88,8 @@ impl AppState {
             site_handlers: Arc::new(handlers),
             twitter_config,
             twitter_semaphore,
+            chrome_config,
+            chrome_semaphore,
         }
     }
 }
@@ -104,6 +111,7 @@ pub fn router(state: AppState) -> Router {
         .route("/site-audit", post(site_audit::site_audit))
         .route("/read", post(read::read))
         .route("/twitter/login", post(twitter_login::twitter_login))
+        .route("/chrome/interact", post(chrome_interact::chrome_interact_handler))
         .with_state(state)
 }
 
@@ -150,6 +158,7 @@ mod tests {
             EndpointDefaults::default(),
             ox_media::MediaConfig::default(),
             ox_twitter::login::TwitterLoginConfig::default(),
+            ox_http::chrome_session::ChromeLoginConfig::default(),
         )
     }
 
