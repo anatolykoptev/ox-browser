@@ -47,10 +47,11 @@ pub async fn fetch_tweet(base_url: &str, tweet_id: &str) -> Result<Tweet, String
         return Err("go-social: missing auth_token or ct0".to_string());
     }
 
-    // Twitter GraphQL client — no proxy needed (datacenter IP works, residential CONNECT fails).
-    // Proxy rotation handled at account level by go-social, not at request level.
+    // Twitter GraphQL client with Chrome TLS emulation and cookie store.
     let tw_client = wreq::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
+        .cookie_store(true)
+        .emulation(wreq_util::Emulation::Chrome136)
         .build()
         .map_err(|e| format!("twitter client: {e}"))?;
 
