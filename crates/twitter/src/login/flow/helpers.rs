@@ -12,7 +12,7 @@ use super::{LoginFlow, POLL_INTERVAL};
 
 impl<'a> LoginFlow<'a> {
     /// Type text character-by-character with human-like delays.
-    /// Uses React-compatible JS value setter + InputEvent per char.
+    /// Uses element.focus() + CDP DispatchKeyEvent (char input type).
     /// `selector` identifies the target input element.
     pub(super) async fn type_human(
         &mut self,
@@ -20,31 +20,41 @@ impl<'a> LoginFlow<'a> {
         text: &str,
         speed: Speed,
     ) -> Result<(), TwitterLoginError> {
-        let mut current = String::new();
+        use chromiumoxide::cdp::browser_protocol::input::{
+            DispatchKeyEventParams, DispatchKeyEventType,
+        };
+
+        // Focus the element via CDP (element.focus() calls this.focus() on the node)
+        let el = self.page.find_element(selector).await.map_err(|_| {
+            TwitterLoginError::Navigation(format!("type_human: element not found: {selector}"))
+        })?;
+        el.focus().await.map_err(|e| {
+            TwitterLoginError::Navigation(format!("type_human: focus failed: {e}"))
+        })?;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
         for ch in text.chars() {
-            current.push(ch);
-            let escaped = current.replace('\\', "\\\\").replace('\'', "\\'").replace('"', "\\\"");
-            let js = format!(
-                r#"(() => {{
-                    const el = document.querySelector('{selector}');
-                    if (!el) return false;
-                    const setter = Object.getOwnPropertyDescriptor(
-                        HTMLInputElement.prototype, 'value'
-                    ).set;
-                    setter.call(el, '{escaped}');
-                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    return true;
-                }})()"#
-            );
-            let ok: bool = self.page.evaluate(js).await
-                .ok()
-                .and_then(|r| r.into_value().ok())
-                .unwrap_or(false);
-            if !ok {
-                return Err(TwitterLoginError::Navigation(
-                    format!("type_human: element not found: {selector}")
-                ));
-            }
+            let key_str = ch.to_string();
+
+            // Char-type key event (like Puppeteer's keyboard.type)
+            let down = DispatchKeyEventParams::builder()
+                .r#type(DispatchKeyEventType::KeyDown)
+                .text(&key_str)
+                .key(&key_str)
+                .build()
+                .unwrap();
+            self.page.execute(down).await.map_err(|e| {
+                TwitterLoginError::Navigation(format!("key down: {e}"))
+            })?;
+
+            let up = DispatchKeyEventParams::builder()
+                .r#type(DispatchKeyEventType::KeyUp)
+                .key(&key_str)
+                .build()
+                .unwrap();
+            self.page.execute(up).await.map_err(|e| {
+                TwitterLoginError::Navigation(format!("key up: {e}"))
+            })?;
 
             let delay = self.human.char_delay(speed);
             tokio::time::sleep(delay).await;
