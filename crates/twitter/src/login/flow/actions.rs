@@ -12,17 +12,32 @@ impl<'a> LoginFlow<'a> {
         let pause = self.human.pre_click_delay();
         tokio::time::sleep(pause).await;
 
+        // Debug: list all buttons first
+        let debug_btns: String = self.page
+            .evaluate(r#"(() => {
+                const btns = document.querySelectorAll('button[role="button"]');
+                return Array.from(btns).map(b => `"${b.textContent.trim()}" disabled=${b.disabled}`).join(' | ');
+            })()"#)
+            .await
+            .ok()
+            .and_then(|r| r.into_value().ok())
+            .unwrap_or_default();
+        tracing::info!(buttons = %debug_btns, "DEBUG: buttons on page before click");
+
+        // Take screenshot before clicking
+        self.take_error_screenshot("debug-before-next-click").await;
+
         let js_click = r#"
             (() => {
                 const btns = document.querySelectorAll('button[role="button"]');
                 for (const b of btns) {
-                    if (b.textContent.trim() === 'Next') { b.click(); return true; }
+                    if (b.textContent.trim() === 'Next') { b.click(); return 'clicked:' + b.textContent.trim(); }
                 }
-                return false;
+                return 'not_found:' + Array.from(btns).map(b => b.textContent.trim()).join(',');
             })()
         "#;
 
-        let clicked: bool = self
+        let click_result: String = self
             .page
             .evaluate(js_click)
             .await
@@ -32,9 +47,11 @@ impl<'a> LoginFlow<'a> {
                 screenshot: None,
             })?
             .into_value()
-            .unwrap_or(false);
+            .unwrap_or_default();
 
-        if !clicked {
+        tracing::info!(result = %click_result, "DEBUG: click_next result");
+
+        if !click_result.starts_with("clicked") {
             let screenshot = self.take_error_screenshot("click-next-failed").await;
             return Err(TwitterLoginError::ElementNotFound {
                 selector: "Next button".to_string(),
