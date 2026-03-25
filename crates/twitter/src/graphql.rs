@@ -12,7 +12,7 @@ pub struct Endpoint {
 }
 
 pub const TWEET_DETAIL: Endpoint = Endpoint {
-    id: "zXaXQgfyR4GxE21uwYQSyA",
+    id: "VWFGPVAGkZMGRKGe3GFFnA",
     name: "TweetDetail",
 };
 
@@ -110,7 +110,7 @@ mod tests {
     fn endpoint_url_format() {
         assert_eq!(
             TWEET_DETAIL.url(),
-            "https://x.com/i/api/graphql/zXaXQgfyR4GxE21uwYQSyA/TweetDetail"
+            "https://x.com/i/api/graphql/VWFGPVAGkZMGRKGe3GFFnA/TweetDetail"
         );
     }
 
