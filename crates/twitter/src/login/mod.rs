@@ -35,6 +35,7 @@ pub struct LoginResult {
     pub ct0: String,
     pub cookies: HashMap<String, String>,
     pub user_agent: String,
+    pub method: String,
 }
 
 /// Runtime config for the login endpoint.
@@ -61,22 +62,49 @@ impl Default for TwitterLoginConfig {
     }
 }
 
-/// Perform Twitter login via headless Chrome.
+/// Perform Twitter login with API→Chrome fallback.
 ///
-/// Launches Chrome, navigates to Twitter login page, enters credentials
-/// with human-like behavior, handles 2FA, extracts auth cookies.
-/// Browser is always cleaned up regardless of success/failure.
+/// First tries fast API login (no Chrome needed). If API login fails
+/// with a non-permanent error, falls back to headless Chrome login.
+/// Permanent errors (wrong credentials, locked, missing email) fail immediately.
 pub async fn login(
     req: &LoginRequest,
     config: &TwitterLoginConfig,
     semaphore: &Semaphore,
 ) -> Result<LoginResult, TwitterLoginError> {
+    // Primary: API login (fast, no Chrome)
+    match api_login::login(req).await {
+        Ok(result) => {
+            tracing::info!(username = %req.username, "API login successful");
+            return Ok(LoginResult {
+                auth_token: result.auth_token,
+                ct0: result.ct0,
+                cookies: result.cookies,
+                user_agent: crate::TWITTER_USER_AGENT.to_string(),
+                method: "api".into(),
+            });
+        }
+        Err(e) if e.is_permanent() => {
+            tracing::warn!(username = %req.username, error = %e, "API login permanently failed");
+            return Err(e);
+        }
+        Err(e) => {
+            tracing::warn!(username = %req.username, error = %e, "API login failed, trying Chrome");
+        }
+    }
+
+    // Fallback: Chrome login
     let _permit = semaphore.acquire().await.map_err(|e| {
         TwitterLoginError::ChromeLaunch(format!("semaphore closed: {e}"))
     })?;
+    tracing::info!(username = %req.username, "starting Chrome login fallback");
+    chrome_login(req, config).await
+}
 
-    tracing::info!(username = %req.username, "starting Twitter login flow");
-
+async fn chrome_login(
+    req: &LoginRequest,
+    config: &TwitterLoginConfig,
+) -> Result<LoginResult, TwitterLoginError> {
     let chrome_config = ChromeLoginConfig {
         proxy_url: req.proxy.clone().or_else(|| config.default_proxy.clone()),
         chrome_path: req.chrome_path.clone().or_else(|| config.default_chrome_path.clone()),
@@ -97,25 +125,22 @@ pub async fn login(
     };
 
     let mut login_flow = flow::LoginFlow::new(
-        &page,
-        &input,
+        &page, &input,
         config.screenshot_dir.clone(),
         config.screenshot_on_error,
         config.timeout,
     );
 
     let result = login_flow.run().await;
-
-    // Always cleanup Chrome
     session.shutdown().await;
-
     let output = result?;
-    tracing::info!(username = %req.username, "login successful");
 
+    tracing::info!(username = %req.username, "Chrome login successful");
     Ok(LoginResult {
         auth_token: output.auth_token,
         ct0: output.ct0,
         cookies: output.cookies,
         user_agent: output.user_agent,
+        method: "chrome".into(),
     })
 }

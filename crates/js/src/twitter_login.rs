@@ -41,6 +41,8 @@ pub struct TwitterLoginResponse {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
 }
 
 pub async fn twitter_login(
@@ -71,6 +73,7 @@ pub async fn twitter_login(
                 error: None,
                 message: None,
                 screenshot: None,
+                method: Some(result.method),
             }),
         ),
         Err(e) => {
@@ -95,6 +98,7 @@ pub async fn twitter_login(
                     error: Some(e.error_code().into()),
                     message: Some(e.to_string()),
                     screenshot: e.screenshot().map(|p| p.display().to_string()),
+                    method: None,
                 }),
             )
         }
