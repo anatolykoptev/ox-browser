@@ -52,22 +52,8 @@ impl<'a> LoginFlow<'a> {
             }
         }
 
-        // Ensure React state is synced: read current value and re-set via native setter
-        let final_val = text.replace('\\', "\\\\").replace('"', "\\\"");
-        let sync_js = format!(
-            r#"(() => {{
-                const el = document.querySelector('{selector}');
-                if (!el) return;
-                const setter = Object.getOwnPropertyDescriptor(
-                    HTMLInputElement.prototype, 'value'
-                ).set;
-                setter.call(el, "{final_val}");
-                el.dispatchEvent(new InputEvent('input', {{
-                    bubbles: true, inputType: 'insertText', data: "{final_val}"
-                }}));
-            }})()"#
-        );
-        self.page.evaluate(sync_js).await.ok();
+        // No nativeInputValueSetter — execCommand creates trusted events
+        // that React picks up via its synthetic event system.
         Ok(())
     }
 
