@@ -32,13 +32,33 @@ impl<'a> LoginFlow<'a> {
         // Debug screenshot to verify focus state
         tracing::debug!(selector, "type_human: element clicked, starting typing");
 
+        // Type incrementally using nativeInputValueSetter + React events
+        let mut typed = String::new();
         for ch in text.chars() {
-            let escaped = if ch == '\'' { "\\'" } else { &ch.to_string() };
-            // execCommand('insertText') creates trusted InputEvents
-            let js = format!("document.execCommand('insertText', false, '{escaped}')");
-            self.page.evaluate(js).await.map_err(|e| {
-                TwitterLoginError::Navigation(format!("insertText '{ch}': {e}"))
-            })?;
+            typed.push(ch);
+            let escaped = typed.replace('\\', "\\\\").replace('"', "\\\"");
+            let js = format!(
+                r#"(() => {{
+                    const el = document.querySelector('{selector}');
+                    if (!el) return false;
+                    const setter = Object.getOwnPropertyDescriptor(
+                        HTMLInputElement.prototype, 'value'
+                    ).set;
+                    setter.call(el, "{escaped}");
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    return true;
+                }})()"#
+            );
+            let ok: bool = self.page.evaluate(js).await
+                .ok()
+                .and_then(|r| r.into_value().ok())
+                .unwrap_or(false);
+            if !ok {
+                return Err(TwitterLoginError::Navigation(
+                    format!("type_human: element not found: {selector}")
+                ));
+            }
 
             let delay = self.human.char_delay(speed);
             tokio::time::sleep(delay).await;
