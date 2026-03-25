@@ -2352,8 +2352,13 @@ dependencies = [
 name = "ox-twitter"
 version = "0.8.0"
 dependencies = [
+ "base64",
+ "once_cell",
+ "rand 0.8.5",
+ "regex",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

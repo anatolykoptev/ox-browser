@@ -59,7 +59,10 @@ pub async fn fetch_tweet(base_url: &str, tweet_id: &str) -> Result<Tweet, String
     let vars = request::tweet_detail_vars(tweet_id);
     let url = request::build_url(&graphql::TWEET_DETAIL, &vars);
 
-    match graphql_get_authed(&tw_client, &url, &auth_token, &ct0).await {
+    // Generate x-client-transaction-id header (optional — proceed without on failure)
+    let xtid = crate::xtid_header("GET", &url).await;
+
+    match graphql_get_authed(&tw_client, &url, &auth_token, &ct0, xtid.as_deref()).await {
         Ok(body) => match parser::parse_tweet_detail(&body) {
             Some(tweets) => {
                 if let Some(tweet) = tweets.into_iter().find(|t| t.id == tweet_id) {
@@ -120,9 +123,10 @@ async fn graphql_get_authed(
     url: &str,
     auth_token: &str,
     ct0: &str,
+    xtid: Option<&str>,
 ) -> Result<String, String> {
     let cookie_header = format!("auth_token={auth_token}; ct0={ct0}");
-    let resp = client
+    let mut builder = client
         .get(url)
         .header("authorization", format!("Bearer {}", graphql::BEARER_TOKEN))
         .header("content-type", "application/json")
@@ -144,11 +148,13 @@ async fn graphql_get_authed(
         .header("accept-encoding", "gzip, deflate, br")
         // Twitter backend checks referer/origin — must be twitter.com, not x.com
         .header("referer", "https://twitter.com/")
-        .header("origin", "https://twitter.com")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .header("origin", "https://twitter.com");
 
+    if let Some(tid) = xtid {
+        builder = builder.header("x-client-transaction-id", tid);
+    }
+
+    let resp = builder.send().await.map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
     let body = resp.text().await.map_err(|e| e.to_string())?;
 

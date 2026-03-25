@@ -105,8 +105,11 @@ pub async fn execute(
     // Get or activate guest token
     let guest_token = get_or_activate_guest_token(&client).await?;
 
+    // Generate xtid header (optional)
+    let xtid = crate::xtid_header("GET", url).await;
+
     // First attempt with guest token
-    let resp = do_graphql_get(&client, url, &guest_token).await?;
+    let resp = do_graphql_get(&client, url, &guest_token, xtid.as_deref()).await?;
     let status = resp.0;
     let body = resp.1;
 
@@ -121,7 +124,7 @@ pub async fn execute(
         let new_token = activate_guest_token(&client).await?;
         save_guest_token(&new_token);
 
-        let resp2 = do_graphql_get(&client, url, &new_token).await?;
+        let resp2 = do_graphql_get(&client, url, &new_token, xtid.as_deref()).await?;
         if resp2.0 == 200 {
             return Ok(resp2.1);
         }
@@ -150,8 +153,9 @@ async fn do_graphql_get(
     client: &wreq::Client,
     url: &str,
     guest_token: &str,
+    xtid: Option<&str>,
 ) -> Result<(u16, String), String> {
-    let resp = client
+    let mut builder = client
         .get(url)
         .header("authorization", format!("Bearer {BEARER_TOKEN}"))
         .header("x-guest-token", guest_token)
@@ -162,11 +166,13 @@ async fn do_graphql_get(
         .header("accept", "*/*")
         .header("accept-language", "en-US,en;q=0.9")
         .header("referer", "https://twitter.com/")
-        .header("origin", "https://twitter.com")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .header("origin", "https://twitter.com");
 
+    if let Some(tid) = xtid {
+        builder = builder.header("x-client-transaction-id", tid);
+    }
+
+    let resp = builder.send().await.map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
     let body = resp.text().await.map_err(|e| e.to_string())?;
     Ok((status, body))
