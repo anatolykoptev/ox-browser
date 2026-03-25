@@ -1,6 +1,7 @@
 //! MCP tool definitions and routing for ox-browser.
 
 mod analyze;
+mod chrome_interact;
 mod crawl;
 mod fetch;
 mod image_search;
@@ -14,8 +15,10 @@ mod solve;
 
 use std::sync::Arc;
 
+use ox_http::chrome_session::ChromeLoginConfig;
 use ox_http::read_pipeline::SiteHandler;
 use ox_http::{CookieCache, CookieProvider, HttpClient};
+use tokio::sync::Semaphore;
 use ox_js::EndpointDefaults;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -23,6 +26,7 @@ use rmcp::model::*;
 use rmcp::ErrorData as McpError;
 use rmcp::{tool, tool_router};
 
+pub use chrome_interact::ChromeInteractInput;
 pub use analyze::AnalyzeInput;
 pub use fetch::{FetchInput, FetchSmartInput};
 pub use media_download::MediaDownloadInput;
@@ -44,6 +48,8 @@ pub struct OxMcpServer {
     pub(crate) defaults: EndpointDefaults,
     pub(crate) media_config: ox_media::MediaConfig,
     pub(crate) site_handlers: Arc<Vec<SiteHandler>>,
+    pub(crate) chrome_config: ChromeLoginConfig,
+    pub(crate) chrome_semaphore: Arc<Semaphore>,
     pub(crate) tool_router: ToolRouter<Self>,
 }
 
@@ -54,6 +60,8 @@ impl OxMcpServer {
         http_client: Arc<HttpClient>,
         defaults: EndpointDefaults,
         media_config: ox_media::MediaConfig,
+        chrome_config: ChromeLoginConfig,
+        chrome_semaphore: Arc<Semaphore>,
     ) -> Self {
         let handlers: Vec<SiteHandler> = vec![ox_js::site_twitter::make_twitter_handler()];
         Self {
@@ -63,6 +71,8 @@ impl OxMcpServer {
             defaults,
             media_config,
             site_handlers: Arc::new(handlers),
+            chrome_config,
+            chrome_semaphore,
             tool_router: Self::tool_router(),
         }
     }
@@ -200,5 +210,16 @@ impl OxMcpServer {
         Parameters(input): Parameters<SiteAuditInput>,
     ) -> Result<CallToolResult, McpError> {
         self.do_site_audit(input).await
+    }
+
+    #[tool(
+        name = "chrome_interact",
+        description = "Headless Chrome page interaction. Navigate to URL, then execute sequential actions: click elements, type text (React-safe), wait for selectors, take screenshots, evaluate JavaScript, press keys. Use for SPA rendering, form filling, JS-dependent content extraction."
+    )]
+    async fn chrome_interact(
+        &self,
+        Parameters(input): Parameters<ChromeInteractInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.do_chrome_interact(input).await
     }
 }

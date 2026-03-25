@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use ox_http::{DomainLimiter, HttpClient};
 use ox_js::EndpointDefaults;
+use tokio::sync::Semaphore;
 
 use crate::config::{self, ServerConfig};
 
@@ -77,6 +78,17 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
             .or_else(|| std::env::var("RESIDENTIAL_PROXY_URL").ok()),
     };
 
+    let chrome_config = ox_http::chrome_session::ChromeLoginConfig {
+        proxy_url: config.proxy.residential_url.clone()
+            .or_else(|| std::env::var("RESIDENTIAL_PROXY_URL").ok()),
+        chrome_path: config.solver.chromium_path.clone()
+            .or_else(|| std::env::var("CHROME_PATH").ok()),
+        screenshot_dir: config.chrome.screenshot_dir.clone().into(),
+        screenshot_on_error: true,
+    };
+
+    let chrome_semaphore = Arc::new(Semaphore::new(config.chrome.max_concurrent));
+
     let http_client = Arc::new(HttpClient::new(http_config)?);
     let state = ox_js::AppState::new(
         provider,
@@ -85,6 +97,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         defaults.clone(),
         media_config.clone(),
         twitter_config,
+        chrome_config.clone(),
     );
     let rest_router = ox_js::router(state.clone());
     let mcp_router = ox_mcp::build_mcp_router(
@@ -93,6 +106,8 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         state.http_client.clone(),
         defaults,
         media_config,
+        chrome_config,
+        chrome_semaphore,
     );
     let app = rest_router.merge(mcp_router);
 

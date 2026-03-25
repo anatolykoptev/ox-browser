@@ -9,8 +9,10 @@ pub mod tools;
 use std::sync::Arc;
 
 use axum::Router;
+use ox_http::chrome_session::ChromeLoginConfig;
 use ox_http::{CookieCache, CookieProvider, HttpClient};
 use ox_js::EndpointDefaults;
+use tokio::sync::Semaphore;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::*;
 use rmcp::tool_handler;
@@ -41,8 +43,18 @@ pub fn build_mcp_router(
     http_client: Arc<HttpClient>,
     defaults: EndpointDefaults,
     media_config: ox_media::MediaConfig,
+    chrome_config: ChromeLoginConfig,
+    chrome_semaphore: Arc<Semaphore>,
 ) -> Router {
-    let server = OxMcpServer::new(provider, cache, http_client, defaults, media_config);
+    let server = OxMcpServer::new(
+        provider,
+        cache,
+        http_client,
+        defaults,
+        media_config,
+        chrome_config,
+        chrome_semaphore,
+    );
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
         LocalSessionManager::default().into(),
