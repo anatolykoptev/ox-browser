@@ -102,14 +102,9 @@ impl<'a> LoginFlow<'a> {
         el.click().await.ok();
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
-        // Type using chromiumoxide's native type_str (DispatchKeyEvent)
-        // This verifies CDP typing works at all
-        el.type_str(&self.input.username).await.map_err(|e| {
-            TwitterLoginError::Navigation(format!("type_str username: {e}"))
-        })?;
-
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        self.take_error_screenshot("debug-after-username").await;
+        // Type using native DispatchKeyEvent (works in headless Chrome)
+        self.type_human(selectors::USERNAME_INPUT, &self.input.username.clone(), Speed::Fast)
+            .await?;
 
         Ok(())
     }

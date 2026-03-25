@@ -12,57 +12,39 @@ impl<'a> LoginFlow<'a> {
         let pause = self.human.pre_click_delay();
         tokio::time::sleep(pause).await;
 
-        // Debug: list all buttons first
-        let debug_btns: String = self.page
+        // Debug: dump all buttons with their attributes to find the right selector
+        let btn_debug: String = self.page
             .evaluate(r#"(() => {
-                const btns = document.querySelectorAll('button[role="button"]');
-                return Array.from(btns).map(b => `"${b.textContent.trim()}" disabled=${b.disabled}`).join(' | ');
+                const btns = document.querySelectorAll('button, div[role="button"]');
+                return Array.from(btns).map(b => {
+                    const testid = b.getAttribute('data-testid') || '';
+                    const role = b.getAttribute('role') || '';
+                    const txt = b.textContent.trim().substring(0, 30);
+                    return `<${b.tagName} testid="${testid}" role="${role}"> "${txt}"`;
+                }).join('\n');
             })()"#)
             .await
             .ok()
             .and_then(|r| r.into_value().ok())
             .unwrap_or_default();
-        tracing::info!(buttons = %debug_btns, "DEBUG: buttons on page before click");
+        tracing::info!(buttons = %btn_debug, "DEBUG: all clickable elements");
 
-        // Take screenshot before clicking
-        self.take_error_screenshot("debug-before-next-click").await;
-
-        let js_click = r#"
-            (() => {
-                const btns = document.querySelectorAll('button[role="button"]');
-                for (const b of btns) {
-                    if (b.textContent.trim() === 'Next') { b.click(); return 'clicked:' + b.textContent.trim(); }
+        // Try CDP mouse click on first button containing "Next"
+        // Find all buttons, iterate to find "Next"
+        if let Ok(elements) = self.page.find_elements(r#"button[role="button"]"#).await {
+            for el in &elements {
+                if let Ok(Some(text)) = el.inner_text().await {
+                    if text.trim() == "Next" {
+                        el.click().await.ok();
+                        tracing::info!("clicked Next via CDP mouse click");
+                        break;
+                    }
                 }
-                return 'not_found:' + Array.from(btns).map(b => b.textContent.trim()).join(',');
-            })()
-        "#;
-
-        let click_result: String = self
-            .page
-            .evaluate(js_click)
-            .await
-            .map_err(|_| TwitterLoginError::ElementNotFound {
-                selector: "Next button click".to_string(),
-                step: FlowStep::ClickNext,
-                screenshot: None,
-            })?
-            .into_value()
-            .unwrap_or_default();
-
-        tracing::info!(result = %click_result, "DEBUG: click_next result");
-
-        if !click_result.starts_with("clicked") {
-            let screenshot = self.take_error_screenshot("click-next-failed").await;
-            return Err(TwitterLoginError::ElementNotFound {
-                selector: "Next button".to_string(),
-                step: FlowStep::ClickNext,
-                screenshot,
-            });
+            }
         }
 
-        // Wait for navigation (SPA may not fire frameNavigated — timeout is ok)
+        // Wait for navigation/DOM update
         self.wait_for_navigation_or_timeout().await;
-        // Small human pause after transition
         let pause = self.human.pre_click_delay();
         tokio::time::sleep(pause).await;
         Ok(())
