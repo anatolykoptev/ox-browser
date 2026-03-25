@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::api_preseed;
 use super::error::TwitterLoginError;
 use super::LoginRequest;
 
@@ -22,21 +23,34 @@ pub struct ApiLoginResult {
 }
 
 /// Perform login via Twitter's internal API (no browser needed).
-pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginError> {
+pub async fn login(
+    req: &LoginRequest,
+) -> Result<ApiLoginResult, TwitterLoginError> {
+    tracing::info!(username = %req.username, "API login: starting");
     let jar = Arc::new(wreq::cookie::Jar::default());
     let client = build_client(Arc::clone(&jar))?;
+    tracing::info!("API login: client built with Chrome136 emulation");
+
+    // Step 0: pre-seed cookies by visiting x.com
+    let ct0 = api_preseed::pre_seed_cookies(&client).await?;
+    tracing::info!(ct0_len = ct0.len(), "API login: ct0 pre-seeded");
 
     // Step 1: get guest token
     let guest_token = get_guest_token(&client).await?;
+    tracing::info!(guest_token = %guest_token, "API login: got guest token");
 
     // Step 2: init login flow
-    let mut state = flow::FlowState::init(&client, &guest_token).await?;
+    let mut state =
+        flow::FlowState::init(&client, &guest_token, Some(&ct0)).await?;
+    tracing::info!(task = %state.current_task(), "API login: flow initialized");
 
-    // Step 3: JS instrumentation (send empty response)
+    // Step 3: JS instrumentation
     state.js_instrumentation(&client).await?;
+    tracing::info!(task = %state.current_task(), "API login: js instrumentation");
 
     // Step 4: enter username
     state.enter_username(&client, &req.username).await?;
+    tracing::info!(task = %state.current_task(), "API login: username entered");
 
     // Step 4a: alternate identifier if needed
     if state.current_task() == "LoginEnterAlternateIdentifierSubtask" {
@@ -48,11 +62,13 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
         state
             .enter_text(&client, "LoginEnterAlternateIdentifierSubtask", alt)
             .await?;
+        tracing::info!(task = %state.current_task(), "API login: alt id entered");
     }
 
-    // Check for denial
     if state.current_task() == "DenyLoginSubtask" {
-        let msg = state.deny_message().unwrap_or_else(|| "login denied".into());
+        let msg = state
+            .deny_message()
+            .unwrap_or_else(|| "login denied".into());
         return Err(TwitterLoginError::WrongCredentials {
             message: msg,
             screenshot: None,
@@ -61,6 +77,7 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
 
     // Step 5: enter password
     state.enter_password(&client, &req.password).await?;
+    tracing::info!(task = %state.current_task(), "API login: password entered");
 
     if state.current_task() == "DenyLoginSubtask" {
         let msg = state
@@ -74,14 +91,14 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
 
     // Step 5a: 2FA if needed
     if state.current_task() == "LoginTwoFactorAuthChallenge" {
-        let secret = req
-            .totp_secret
-            .as_deref()
-            .ok_or_else(|| TwitterLoginError::TotpFailed("no TOTP secret".into()))?;
+        let secret = req.totp_secret.as_deref().ok_or_else(|| {
+            TwitterLoginError::TotpFailed("no TOTP secret".into())
+        })?;
         let code = super::flow::actions::generate_totp(secret)?;
         state
             .enter_text(&client, "LoginTwoFactorAuthChallenge", &code)
             .await?;
+        tracing::info!(task = %state.current_task(), "API login: 2FA done");
     }
 
     // Step 5b: LoginAcid (email verification)
@@ -91,6 +108,7 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
 
     // Step 6: duplication check
     state.duplication_check(&client).await?;
+    tracing::info!("API login: duplication check done");
 
     // Extract cookies from the shared jar
     let cookies = extract_cookies(&jar);
@@ -98,22 +116,30 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
         .get("auth_token")
         .cloned()
         .ok_or(TwitterLoginError::CookiesNotFound)?;
-    let ct0 = cookies
+    let final_ct0 = cookies
         .get("ct0")
         .cloned()
         .ok_or(TwitterLoginError::CookiesNotFound)?;
 
+    tracing::info!(
+        username = %req.username,
+        cookie_count = cookies.len(),
+        "API login: success"
+    );
     Ok(ApiLoginResult {
         auth_token,
-        ct0,
+        ct0: final_ct0,
         cookies,
     })
 }
 
-fn build_client(jar: Arc<wreq::cookie::Jar>) -> Result<wreq::Client, TwitterLoginError> {
+fn build_client(
+    jar: Arc<wreq::cookie::Jar>,
+) -> Result<wreq::Client, TwitterLoginError> {
     wreq::Client::builder()
         .cookie_provider(jar)
         .user_agent(crate::TWITTER_USER_AGENT)
+        .emulation(wreq_util::Emulation::Chrome136)
         .build()
         .map_err(|e| TwitterLoginError::ApiError {
             status: 0,
@@ -121,7 +147,9 @@ fn build_client(jar: Arc<wreq::cookie::Jar>) -> Result<wreq::Client, TwitterLogi
         })
 }
 
-async fn get_guest_token(client: &wreq::Client) -> Result<String, TwitterLoginError> {
+async fn get_guest_token(
+    client: &wreq::Client,
+) -> Result<String, TwitterLoginError> {
     let resp = client
         .post(format!("{API_BASE}{GUEST_ACTIVATE}"))
         .header(
@@ -136,10 +164,11 @@ async fn get_guest_token(client: &wreq::Client) -> Result<String, TwitterLoginEr
         })?;
 
     let status = resp.status().as_u16();
-    let body: serde_json::Value = resp.json().await.map_err(|e| TwitterLoginError::ApiError {
-        status,
-        body: e.to_string(),
-    })?;
+    let body: serde_json::Value =
+        resp.json().await.map_err(|e| TwitterLoginError::ApiError {
+            status,
+            body: e.to_string(),
+        })?;
 
     body["guest_token"]
         .as_str()

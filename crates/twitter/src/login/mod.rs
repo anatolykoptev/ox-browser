@@ -1,5 +1,8 @@
 pub mod api_login;
 mod api_flow;
+mod api_headers;
+mod api_preseed;
+mod api_subtasks;
 pub mod chrome;
 pub mod error;
 pub mod flow;
