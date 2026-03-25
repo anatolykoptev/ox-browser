@@ -13,19 +13,21 @@ const TWITTER_BASE_URL: &str = "https://x.com";
 struct SocialAcquireResponse {
     id: String,
     credentials: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    proxy: String,
 }
 
 /// Fetch tweet via go-social: acquire auth credentials, make GraphQL request, report outcome.
 pub async fn fetch_tweet(base_url: &str, tweet_id: &str) -> Result<Tweet, String> {
     let token = std::env::var(GO_SOCIAL_TOKEN_ENV).unwrap_or_default();
 
-    let client = wreq::Client::builder()
+    let api_client = wreq::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
 
     // Step 1: Acquire credentials from go-social.
-    let social = acquire_account(&client, base_url, &token).await?;
+    let social = acquire_account(&api_client, base_url, &token).await?;
 
     let auth_token = social
         .credentials
@@ -39,27 +41,39 @@ pub async fn fetch_tweet(base_url: &str, tweet_id: &str) -> Result<Tweet, String
         .unwrap_or_default();
 
     if auth_token.is_empty() || ct0.is_empty() {
-        let _ = report(&client, base_url, &token, &social.id, "auth_error").await;
+        let _ = report(&api_client, base_url, &token, &social.id, "auth_error").await;
         return Err("go-social: missing auth_token or ct0".to_string());
     }
 
-    // Step 2: Make TweetDetail GraphQL request with auth cookies.
+    // Build a proxy-aware client for the GraphQL request to Twitter.
+    let tw_client = if social.proxy.is_empty() {
+        api_client.clone()
+    } else {
+        let proxy = wreq::Proxy::all(&social.proxy).map_err(|e| format!("proxy parse: {e}"))?;
+        wreq::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .proxy(proxy)
+            .build()
+            .map_err(|e| format!("proxy client: {e}"))?
+    };
+
+    // Step 2: Make TweetDetail GraphQL request with auth cookies via proxy.
     let vars = request::tweet_detail_vars(tweet_id);
     let url = request::build_url(&graphql::TWEET_DETAIL, &vars);
 
-    match graphql_get_authed(&client, &url, &auth_token, &ct0).await {
+    match graphql_get_authed(&tw_client, &url, &auth_token, &ct0).await {
         Ok(body) => match parser::parse_tweet_detail(&body) {
             Some(tweets) => {
                 if let Some(tweet) = tweets.into_iter().find(|t| t.id == tweet_id) {
-                    let _ = report(&client, base_url, &token, &social.id, "success").await;
+                    let _ = report(&api_client, base_url, &token, &social.id, "success").await;
                     Ok(tweet)
                 } else {
-                    let _ = report(&client, base_url, &token, &social.id, "auth_error").await;
+                    let _ = report(&api_client, base_url, &token, &social.id, "auth_error").await;
                     Err(format!("go-social: tweet {tweet_id} not found in response"))
                 }
             }
             None => {
-                let _ = report(&client, base_url, &token, &social.id, "auth_error").await;
+                let _ = report(&api_client, base_url, &token, &social.id, "auth_error").await;
                 Err("go-social: failed to parse GraphQL response".to_string())
             }
         },
@@ -69,7 +83,7 @@ pub async fn fetch_tweet(base_url: &str, tweet_id: &str) -> Result<Tweet, String
             } else {
                 "auth_error"
             };
-            let _ = report(&client, base_url, &token, &social.id, report_status).await;
+            let _ = report(&api_client, base_url, &token, &social.id, report_status).await;
             Err(format!("go-social GraphQL: {e}"))
         }
     }
