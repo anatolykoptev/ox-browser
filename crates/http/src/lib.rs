@@ -31,6 +31,8 @@ pub mod retry;
 pub mod retry_parse;
 pub mod solver_byparr;
 pub mod solver_chromium;
+pub mod chrome_session;
+pub use chrome_session::{ChromeSession, ChromeLoginConfig};
 
 pub use cloudflare::{detect_cloudflare, ChallengeType, CloudflareChallenge};
 pub use cookie_cache::CookieCache;
