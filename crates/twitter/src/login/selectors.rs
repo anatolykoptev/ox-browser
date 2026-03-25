@@ -3,12 +3,12 @@
 
 // --- CSS selectors (used with page.find_element) ---
 
-pub const USERNAME_INPUT: &str = "input[autocomplete='username']";
-pub const PASSWORD_INPUT: &str = "input[name='password']";
-pub const LOGIN_BUTTON: &str = "button[data-testid='LoginForm_Login_Button']";
-pub const OCF_TEXT_INPUT: &str = "input[data-testid='ocfEnterTextTextInput']";
-pub const HOME_INDICATOR: &str = "a[data-testid='AppTabBar_Home_Link']";
-pub const ERROR_MESSAGE: &str = "div[data-testid='error-detail']";
+pub const USERNAME_INPUT: &str = r#"input[autocomplete="username"]"#;
+pub const PASSWORD_INPUT: &str = r#"input[name="password"]"#;
+pub const LOGIN_BUTTON: &str = r#"button[data-testid="LoginForm_Login_Button"]"#;
+pub const OCF_TEXT_INPUT: &str = r#"input[data-testid="ocfEnterTextTextInput"]"#;
+pub const HOME_INDICATOR: &str = r#"a[data-testid="AppTabBar_Home_Link"]"#;
+pub const ERROR_MESSAGE: &str = r#"div[data-testid="error-detail"]"#;
 
 // --- JS evaluate snippets (for elements not findable by CSS alone) ---
 
