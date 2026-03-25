@@ -6,6 +6,7 @@ use crate::{graphql, parser, request, types::Tweet};
 
 const GO_SOCIAL_TOKEN_ENV: &str = "GO_SOCIAL_TOKEN";
 
+#[allow(dead_code)]
 const TWITTER_BASE_URL: &str = "https://x.com";
 
 /// Response from go-social `GET /twitter/account`.
@@ -14,6 +15,7 @@ struct SocialAcquireResponse {
     id: String,
     credentials: std::collections::HashMap<String, String>,
     #[serde(default)]
+    #[allow(dead_code)]
     proxy: String,
 }
 
@@ -45,17 +47,12 @@ pub async fn fetch_tweet(base_url: &str, tweet_id: &str) -> Result<Tweet, String
         return Err("go-social: missing auth_token or ct0".to_string());
     }
 
-    // Build a proxy-aware client for the GraphQL request to Twitter.
-    let tw_client = if social.proxy.is_empty() {
-        api_client.clone()
-    } else {
-        let proxy = wreq::Proxy::all(&social.proxy).map_err(|e| format!("proxy parse: {e}"))?;
-        wreq::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .proxy(proxy)
-            .build()
-            .map_err(|e| format!("proxy client: {e}"))?
-    };
+    // Twitter GraphQL client — no proxy needed (datacenter IP works, residential CONNECT fails).
+    // Proxy rotation handled at account level by go-social, not at request level.
+    let tw_client = wreq::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("twitter client: {e}"))?;
 
     // Step 2: Make TweetDetail GraphQL request with auth cookies via proxy.
     let vars = request::tweet_detail_vars(tweet_id);
