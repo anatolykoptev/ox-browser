@@ -12,15 +12,15 @@ use super::{LoginFlow, POLL_INTERVAL};
 
 impl<'a> LoginFlow<'a> {
     /// Type text character-by-character with human-like delays.
-    /// Uses element.click() for focus + document.execCommand('insertText')
-    /// per char — creates trusted InputEvents that React accepts.
+    /// Uses CDP Input.insertText per char (Playwright approach).
+    /// This generates native InputEvents that React picks up.
     pub(super) async fn type_human(
         &mut self,
         selector: &str,
         text: &str,
         speed: Speed,
     ) -> Result<(), TwitterLoginError> {
-        // Click the element (CDP mouse dispatch → establishes browser-level focus)
+        // Click element to establish browser-level focus
         let el = self.page.find_element(selector).await.map_err(|_| {
             TwitterLoginError::Navigation(format!("type_human: element not found: {selector}"))
         })?;
@@ -29,43 +29,14 @@ impl<'a> LoginFlow<'a> {
         })?;
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-        // Debug screenshot to verify focus state
-        tracing::debug!(selector, "type_human: element clicked, starting typing");
-
-        // React controlled inputs: set value via native setter + trigger
-        // React's internal onChange via a synthetic-looking InputEvent.
-        // We set the full value at once, then simulate human-like delay.
-        let mut typed = String::new();
+        // Type per character using InsertText CDP command
         for ch in text.chars() {
-            typed.push(ch);
-            let escaped = typed.replace('\\', "\\\\").replace('"', "\\\"");
-            // Use React fiber trick: get native setter, set value, then
-            // dispatch InputEvent that React's onChange handler will process.
-            let js = format!(
-                r#"(() => {{
-                    const el = document.querySelector('{selector}');
-                    if (!el) return false;
-                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                        window.HTMLInputElement.prototype, 'value'
-                    ).set;
-                    nativeInputValueSetter.call(el, "{escaped}");
-                    const ev = new Event('input', {{ bubbles: true }});
-                    // React 16+ checks _valueTracker — reset it so React sees the change
-                    const tracker = el._valueTracker;
-                    if (tracker) tracker.setValue('');
-                    el.dispatchEvent(ev);
-                    return true;
-                }})()"#
-            );
-            let ok: bool = self.page.evaluate(js).await
-                .ok()
-                .and_then(|r| r.into_value().ok())
-                .unwrap_or(false);
-            if !ok {
-                return Err(TwitterLoginError::Navigation(
-                    format!("type_human: element not found: {selector}")
-                ));
-            }
+            let params = chromiumoxide::cdp::browser_protocol::input::InsertTextParams {
+                text: ch.to_string(),
+            };
+            self.page.execute(params).await.map_err(|e| {
+                TwitterLoginError::Navigation(format!("InsertText '{ch}': {e}"))
+            })?;
 
             let delay = self.human.char_delay(speed);
             tokio::time::sleep(delay).await;
