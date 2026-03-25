@@ -94,58 +94,22 @@ impl<'a> LoginFlow<'a> {
     // --- Username step ---
 
     async fn enter_username(&mut self) -> Result<(), TwitterLoginError> {
-        self.wait_for_element(selectors::USERNAME_INPUT, FlowStep::Username)
+        let el = self
+            .wait_for_element(selectors::USERNAME_INPUT, FlowStep::Username)
             .await?;
 
-        // Debug: dump all inputs on the page
-        let debug_inputs: String = self.page
-            .evaluate(r#"(() => {
-                const inputs = document.querySelectorAll('input');
-                return Array.from(inputs).map(i =>
-                    `tag=${i.tagName} name=${i.name} ac=${i.autocomplete} type=${i.type} id=${i.id}`
-                ).join('\n');
-            })()"#)
-            .await
-            .ok()
-            .and_then(|r| r.into_value().ok())
-            .unwrap_or_default();
-        tracing::info!(inputs = %debug_inputs, "DEBUG: found inputs on page");
+        // Click to establish browser-level focus
+        el.click().await.ok();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
-        // Debug: take screenshot before typing
-        self.take_error_screenshot("debug-before-typing").await;
+        // Type using chromiumoxide's native type_str (DispatchKeyEvent)
+        // This verifies CDP typing works at all
+        el.type_str(&self.input.username).await.map_err(|e| {
+            TwitterLoginError::Navigation(format!("type_str username: {e}"))
+        })?;
 
-        // Focus via JS and try typing
-        self.focus_and_clear(selectors::USERNAME_INPUT).await?;
-
-        // Debug: check if focus worked
-        let focused: String = self.page
-            .evaluate("document.activeElement?.tagName + '.' + document.activeElement?.name")
-            .await
-            .ok()
-            .and_then(|r| r.into_value().ok())
-            .unwrap_or_default();
-        tracing::info!(focused = %focused, "DEBUG: active element after focus");
-
-        let pause = self.human.reading_pause();
-        tokio::time::sleep(pause).await;
-
-        self.type_human(selectors::USERNAME_INPUT, &self.input.username.clone(), Speed::Fast)
-            .await?;
-
-        // Debug: check value after typing
-        let value: String = self.page
-            .evaluate(format!(
-                "document.querySelector('{selector}')?.value || 'EMPTY'",
-                selector = selectors::USERNAME_INPUT
-            ))
-            .await
-            .ok()
-            .and_then(|r| r.into_value().ok())
-            .unwrap_or_default();
-        tracing::info!(value = %value, "DEBUG: input value after typing");
-
-        // Debug: take screenshot after typing
-        self.take_error_screenshot("debug-after-typing").await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        self.take_error_screenshot("debug-after-username").await;
 
         Ok(())
     }
