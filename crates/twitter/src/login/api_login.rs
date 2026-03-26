@@ -57,19 +57,21 @@ pub async fn login(
         flow::FlowState::init(&client, &guest_token, None).await?;
     tracing::info!(task = %state.current_task(), "API login: flow initialized");
 
-    // After init, Twitter sets ct0 in Set-Cookie — extract and use it
-    if let Some(real_ct0) = extract_ct0_from_jar(&jar) {
-        tracing::info!(ct0_len = real_ct0.len(), "API login: got real ct0 from jar");
-        state.set_csrf_token(&real_ct0);
+    // After init, check if Twitter returned a REAL ct0 (not our pre-seeded one)
+    if let Some(server_ct0) = extract_server_ct0(&jar, &ct0) {
+        tracing::info!(ct0_len = server_ct0.len(), "API login: got server ct0");
+        state.set_csrf_token(&server_ct0);
     }
+    // If no server ct0 yet, DON'T set csrf — twikit only sends x-csrf-token
+    // when the server has actually issued a ct0 cookie
 
     // Step 3: JS instrumentation
     state.js_instrumentation(&client).await?;
     tracing::info!(task = %state.current_task(), "API login: js instrumentation");
 
-    // Twitter may update ct0 after each step — refresh from jar
-    if let Some(updated_ct0) = extract_ct0_from_jar(&jar) {
-        state.set_csrf_token(&updated_ct0);
+    // Check for server ct0 again after js_instrumentation
+    if let Some(server_ct0) = extract_server_ct0(&jar, &ct0) {
+        state.set_csrf_token(&server_ct0);
     }
 
     // Step 4: enter username
@@ -255,12 +257,13 @@ fn extract_cookies(jar: &wreq::cookie::Jar) -> HashMap<String, String> {
     map
 }
 
-/// Extract ct0 cookie from jar (set by Twitter via Set-Cookie after init).
-fn extract_ct0_from_jar(jar: &wreq::cookie::Jar) -> Option<String> {
+/// Extract ct0 from jar, but only if it differs from our pre-seeded one.
+/// This ensures we only use server-issued ct0 values.
+fn extract_server_ct0(jar: &wreq::cookie::Jar, pre_seeded: &str) -> Option<String> {
     for cookie in jar.get_all() {
         if cookie.name() == "ct0" {
             let val = cookie.value().to_string();
-            if !val.is_empty() {
+            if !val.is_empty() && val != pre_seeded {
                 return Some(val);
             }
         }
