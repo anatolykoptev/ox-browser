@@ -45,8 +45,16 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
     // After init, check if server set ct0 cookie
     update_csrf_from_jar(&jar, &mut state);
 
-    // Step 4: JS instrumentation
-    state.js_instrumentation(&client).await?;
+    // Step 4: Fetch and solve ui_metrics challenge
+    let ui_metrics = fetch_and_solve_ui_metrics(&client).await;
+    let ui_response = ui_metrics.as_deref().unwrap_or("");
+    tracing::info!(
+        has_metrics = !ui_response.is_empty(),
+        len = ui_response.len(),
+        "API login: ui_metrics solved"
+    );
+
+    state.js_instrumentation(&client, ui_response).await?;
     tracing::info!(task = %state.current_task(), "API login: js instrumentation");
     update_csrf_from_jar(&jar, &mut state);
 
@@ -172,6 +180,30 @@ async fn sso_init(client: &wreq::Client, guest_token: &str) -> Result<(), Twitte
         .send().await
         .map_err(|e| TwitterLoginError::ApiError { status: 0, body: format!("sso_init: {e}") })?;
     Ok(())
+}
+
+/// Fetch ui_metrics JS challenge and solve it.
+/// Uses twitter.com (not x.com) — twikit keeps twitter.com here intentionally.
+async fn fetch_and_solve_ui_metrics(client: &wreq::Client) -> Option<String> {
+    let resp = client
+        .get("https://twitter.com/i/js_inst?c_name=ui_metrics")
+        .send()
+        .await
+        .ok()?;
+
+    let code = resp.text().await.ok()?;
+    if code.is_empty() {
+        tracing::warn!("ui_metrics: empty response from js_inst");
+        return None;
+    }
+
+    match super::ui_metrics::solve(&code) {
+        Ok(result) => Some(result),
+        Err(e) => {
+            tracing::warn!(error = %e, "ui_metrics: solver failed, sending empty");
+            None
+        }
+    }
 }
 
 /// If server set ct0 cookie, use it as CSRF token for subsequent requests.

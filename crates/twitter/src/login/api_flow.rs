@@ -122,8 +122,8 @@ impl FlowState {
         Ok(())
     }
 
-    pub async fn js_instrumentation(&mut self, client: &wreq::Client) -> Result<(), TwitterLoginError> {
-        self.execute_task(client, api_subtasks::js_instrumentation()).await
+    pub async fn js_instrumentation(&mut self, client: &wreq::Client, ui_metrics_response: &str) -> Result<(), TwitterLoginError> {
+        self.execute_task(client, api_subtasks::js_instrumentation(ui_metrics_response)).await
     }
 
     pub async fn enter_username(&mut self, client: &wreq::Client, username: &str) -> Result<(), TwitterLoginError> {

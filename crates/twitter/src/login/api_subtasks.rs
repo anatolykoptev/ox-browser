@@ -43,10 +43,10 @@ pub(super) fn task_body(flow_token: &str, subtask_data: Value) -> Value {
     })
 }
 
-pub(super) fn js_instrumentation() -> Value {
+pub(super) fn js_instrumentation(ui_metrics_response: &str) -> Value {
     json!({
         "subtask_id": "LoginJsInstrumentationSubtask",
-        "js_instrumentation": { "response": "{}", "link": "next_link" }
+        "js_instrumentation": { "response": ui_metrics_response, "link": "next_link" }
     })
 }
 
