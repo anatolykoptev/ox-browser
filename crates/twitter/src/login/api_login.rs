@@ -35,8 +35,8 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
     let guest_token = get_guest_token(&client).await?;
     tracing::info!(guest_token = %guest_token, "API login: got guest token");
 
-    // Step 2: sso_init (twikit calls this before login flow, result discarded)
-    let _ = sso_init(&client, &guest_token).await;
+    // Step 2: sso_init — DISABLED (twikit does this but it may cause side effects)
+    // let _ = sso_init(&client, &guest_token).await;
 
     // Step 3: init login flow (no csrf token — server hasn't issued one yet)
     let mut state = flow::FlowState::init(&client, &guest_token, None).await?;

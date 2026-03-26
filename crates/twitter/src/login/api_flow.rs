@@ -35,6 +35,15 @@ impl FlowState {
         self.csrf_token = Some(ct0.to_string());
     }
 
+    /// Add x-client-transaction-id if xtid manager is available.
+    async fn with_xtid(headers: &mut wreq::header::HeaderMap, url: &str) {
+        if let Some(xtid) = crate::xtid_header("POST", url).await {
+            if let Ok(v) = wreq::header::HeaderValue::from_str(&xtid) {
+                headers.insert("x-client-transaction-id", v);
+            }
+        }
+    }
+
     pub async fn init(
         client: &wreq::Client,
         guest_token: &str,
@@ -48,10 +57,11 @@ impl FlowState {
         };
 
         let url = format!("{API_BASE}{ONBOARDING_TASK}");
-        let headers = api_headers::onboarding_headers(
+        let mut headers = api_headers::onboarding_headers(
             &state.guest_token,
             state.csrf_token.as_deref(),
         );
+        Self::with_xtid(&mut headers, &url).await;
 
         let resp = client
             .post(&url)
@@ -72,10 +82,11 @@ impl FlowState {
         subtask_data: serde_json::Value,
     ) -> Result<(), TwitterLoginError> {
         let url = format!("{API_BASE}{ONBOARDING_TASK}");
-        let headers = api_headers::onboarding_headers(
+        let mut headers = api_headers::onboarding_headers(
             &self.guest_token,
             self.csrf_token.as_deref(),
         );
+        Self::with_xtid(&mut headers, &url).await;
 
         let resp = client
             .post(&url)
