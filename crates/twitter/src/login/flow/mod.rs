@@ -69,11 +69,23 @@ impl<'a> LoginFlow<'a> {
     /// Execute the full login flow, returning cookies on success.
     pub async fn run(&mut self) -> Result<LoginOutput, TwitterLoginError> {
         self.navigate().await?;
+
+        self.take_error_screenshot("step1-before-username").await;
         self.enter_username().await?;
+        tracing::info!("chrome: username entered");
+
+        self.take_error_screenshot("step2-after-username").await;
         self.click_next_button().await?;
+        tracing::info!("chrome: next clicked");
+
+        self.take_error_screenshot("step3-after-next").await;
         self.handle_post_username().await?;
+        tracing::info!("chrome: post-username handled");
+
         self.enter_password().await?;
+        tracing::info!("chrome: password entered");
         self.click_login_button().await?;
+        tracing::info!("chrome: login clicked");
         self.handle_post_login().await?;
         self.extract_cookies().await
     }
