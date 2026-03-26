@@ -52,9 +52,9 @@ pub async fn login(
     let _ = sso_init(&client, &guest_token).await;
     tracing::info!("API login: sso_init done");
 
-    // Step 2: init login flow (use pre-seeded ct0 for first request)
+    // Step 2: init login flow (NO csrf token yet — server hasn't issued one)
     let mut state =
-        flow::FlowState::init(&client, &guest_token, Some(&ct0)).await?;
+        flow::FlowState::init(&client, &guest_token, None).await?;
     tracing::info!(task = %state.current_task(), "API login: flow initialized");
 
     // After init, Twitter sets ct0 in Set-Cookie — extract and use it
