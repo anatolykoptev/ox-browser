@@ -28,7 +28,7 @@ pub async fn login(
 ) -> Result<ApiLoginResult, TwitterLoginError> {
     tracing::info!(username = %req.username, "API login: starting");
     let jar = Arc::new(wreq::cookie::Jar::default());
-    let client = build_client(Arc::clone(&jar))?;
+    let client = build_client(Arc::clone(&jar), req.proxy.as_deref())?;
     tracing::info!("API login: client built with Chrome136 emulation");
 
     // Step 0: pre-seed cookies by visiting x.com + set ct0 in cookie jar
@@ -155,16 +155,26 @@ pub async fn login(
 
 fn build_client(
     jar: Arc<wreq::cookie::Jar>,
+    proxy: Option<&str>,
 ) -> Result<wreq::Client, TwitterLoginError> {
-    wreq::Client::builder()
+    let mut builder = wreq::Client::builder()
         .cookie_provider(jar)
         .user_agent(crate::TWITTER_USER_AGENT)
-        .emulation(wreq_util::Emulation::Chrome136)
-        .build()
-        .map_err(|e| TwitterLoginError::ApiError {
+        .emulation(wreq_util::Emulation::Chrome136);
+
+    if let Some(proxy_url) = proxy {
+        let p = wreq::Proxy::all(proxy_url).map_err(|e| TwitterLoginError::ApiError {
             status: 0,
-            body: format!("client build: {e}"),
-        })
+            body: format!("proxy config: {e}"),
+        })?;
+        builder = builder.proxy(p);
+        tracing::info!(proxy = proxy_url, "API login: using proxy");
+    }
+
+    builder.build().map_err(|e| TwitterLoginError::ApiError {
+        status: 0,
+        body: format!("client build: {e}"),
+    })
 }
 
 async fn get_guest_token(
