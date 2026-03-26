@@ -124,14 +124,19 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
     Ok(ApiLoginResult { auth_token, ct0, cookies })
 }
 
-/// Build wreq client — NO TLS emulation (twikit uses plain httpx).
+/// Safari UA matching twikit exactly.
+const TWIKIT_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6_1) \
+    AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15";
+
+/// Build wreq client with Safari 17.5 TLS fingerprint (matches twikit).
 fn build_client(
     jar: Arc<wreq::cookie::Jar>,
     proxy: Option<&str>,
 ) -> Result<wreq::Client, TwitterLoginError> {
     let mut builder = wreq::Client::builder()
         .cookie_provider(jar)
-        .user_agent(crate::TWITTER_USER_AGENT);
+        .user_agent(TWIKIT_UA)
+        .emulation(wreq_util::Emulation::Safari17_5);
 
     if let Some(proxy_url) = proxy {
         let p = wreq::Proxy::all(proxy_url).map_err(|e| TwitterLoginError::ApiError {
