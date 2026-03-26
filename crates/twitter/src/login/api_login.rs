@@ -1,10 +1,12 @@
-//! Twitter API login — twikit-style HTTP flow via onboarding/task.json.
+//! Twitter API login — matches twikit's exact HTTP flow.
 //! No browser needed: direct HTTP POST with flow_token chaining.
+//!
+//! Flow: guest_activate → sso_init → onboarding/task.json (login flow)
+//! No pre-seeding, no xtid, no TLS emulation — matches twikit exactly.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::api_preseed;
 use super::error::TwitterLoginError;
 use super::LoginRequest;
 
@@ -13,7 +15,6 @@ mod flow {
 }
 
 const API_BASE: &str = "https://api.x.com";
-const GUEST_ACTIVATE: &str = "/1.1/guest/activate.json";
 
 /// Successful API login result.
 pub struct ApiLoginResult {
@@ -23,62 +24,37 @@ pub struct ApiLoginResult {
 }
 
 /// Perform login via Twitter's internal API (no browser needed).
-pub async fn login(
-    req: &LoginRequest,
-) -> Result<ApiLoginResult, TwitterLoginError> {
+/// Matches twikit's flow exactly: no pre-seeding, no xtid, no TLS emulation.
+pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginError> {
     tracing::info!(username = %req.username, "API login: starting");
+
     let jar = Arc::new(wreq::cookie::Jar::default());
     let client = build_client(Arc::clone(&jar), req.proxy.as_deref())?;
-    tracing::info!("API login: client built with Chrome136 emulation");
 
-    // Step 0: pre-seed cookies by visiting x.com + set ct0 in cookie jar
-    let ct0 = api_preseed::pre_seed_cookies(&client).await?;
-    // ct0 must be in BOTH the cookie jar AND X-Csrf-Token header
-    jar.add(
-        format!("ct0={ct0}; Domain=.x.com; Path=/; Secure").as_str(),
-        "https://api.x.com",
-    );
-    tracing::info!(ct0_len = ct0.len(), "API login: ct0 pre-seeded + added to jar");
-
-    // Step 1: get guest token + add gt cookie
+    // Step 1: get guest token
     let guest_token = get_guest_token(&client).await?;
-    jar.add(
-        format!("gt={guest_token}; Domain=.x.com; Path=/; Secure").as_str(),
-        "https://api.x.com",
-    );
     tracing::info!(guest_token = %guest_token, "API login: got guest token");
 
-    // Step 1.5: sso_init (twikit calls this before login flow)
+    // Step 2: sso_init (twikit calls this before login flow, result discarded)
     let _ = sso_init(&client, &guest_token).await;
-    tracing::info!("API login: sso_init done");
 
-    // Step 2: init login flow (NO csrf token yet — server hasn't issued one)
-    let mut state =
-        flow::FlowState::init(&client, &guest_token, None).await?;
+    // Step 3: init login flow (no csrf token — server hasn't issued one yet)
+    let mut state = flow::FlowState::init(&client, &guest_token, None).await?;
     tracing::info!(task = %state.current_task(), "API login: flow initialized");
 
-    // After init, check if Twitter returned a REAL ct0 (not our pre-seeded one)
-    if let Some(server_ct0) = extract_server_ct0(&jar, &ct0) {
-        tracing::info!(ct0_len = server_ct0.len(), "API login: got server ct0");
-        state.set_csrf_token(&server_ct0);
-    }
-    // If no server ct0 yet, DON'T set csrf — twikit only sends x-csrf-token
-    // when the server has actually issued a ct0 cookie
+    // After init, check if server set ct0 cookie
+    update_csrf_from_jar(&jar, &mut state);
 
-    // Step 3: JS instrumentation
+    // Step 4: JS instrumentation
     state.js_instrumentation(&client).await?;
     tracing::info!(task = %state.current_task(), "API login: js instrumentation");
+    update_csrf_from_jar(&jar, &mut state);
 
-    // Check for server ct0 again after js_instrumentation
-    if let Some(server_ct0) = extract_server_ct0(&jar, &ct0) {
-        state.set_csrf_token(&server_ct0);
-    }
-
-    // Step 4: enter username
+    // Step 5: enter username
     state.enter_username(&client, &req.username).await?;
     tracing::info!(task = %state.current_task(), "API login: username entered");
 
-    // Step 4a: alternate identifier if needed
+    // Step 5a: alternate identifier if needed
     if state.current_task() == "LoginEnterAlternateIdentifierSubtask" {
         let alt = req
             .email
@@ -92,81 +68,62 @@ pub async fn login(
     }
 
     if state.current_task() == "DenyLoginSubtask" {
-        let msg = state
-            .deny_message()
-            .unwrap_or_else(|| "login denied".into());
+        let msg = state.deny_message().unwrap_or_else(|| "login denied".into());
         return Err(TwitterLoginError::WrongCredentials {
             message: msg,
             screenshot: None,
         });
     }
 
-    // Step 5: enter password
+    // Step 6: enter password
     state.enter_password(&client, &req.password).await?;
     tracing::info!(task = %state.current_task(), "API login: password entered");
 
     if state.current_task() == "DenyLoginSubtask" {
-        let msg = state
-            .deny_message()
-            .unwrap_or_else(|| "wrong password".into());
+        let msg = state.deny_message().unwrap_or_else(|| "wrong password".into());
         return Err(TwitterLoginError::WrongCredentials {
             message: msg,
             screenshot: None,
         });
     }
 
-    // Step 5a: 2FA if needed
+    // Step 6a: 2FA if needed
     if state.current_task() == "LoginTwoFactorAuthChallenge" {
         let secret = req.totp_secret.as_deref().ok_or_else(|| {
             TwitterLoginError::TotpFailed("no TOTP secret".into())
         })?;
         let code = super::flow::actions::generate_totp(secret)?;
-        state
-            .enter_text(&client, "LoginTwoFactorAuthChallenge", &code)
-            .await?;
+        state.enter_text(&client, "LoginTwoFactorAuthChallenge", &code).await?;
         tracing::info!(task = %state.current_task(), "API login: 2FA done");
     }
 
-    // Step 5b: LoginAcid (email verification)
+    // Step 6b: LoginAcid (email verification)
     if state.current_task() == "LoginAcid" {
         return Err(TwitterLoginError::EmailVerificationRequired);
     }
 
-    // Step 6: duplication check
+    // Step 7: duplication check
     state.duplication_check(&client).await?;
-    tracing::info!("API login: duplication check done");
 
-    // Extract cookies from the shared jar
+    // Extract cookies
     let cookies = extract_cookies(&jar);
-    let auth_token = cookies
-        .get("auth_token")
-        .cloned()
+    let auth_token = cookies.get("auth_token").cloned()
         .ok_or(TwitterLoginError::CookiesNotFound)?;
-    let final_ct0 = cookies
-        .get("ct0")
-        .cloned()
+    let ct0 = cookies.get("ct0").cloned()
         .ok_or(TwitterLoginError::CookiesNotFound)?;
 
-    tracing::info!(
-        username = %req.username,
-        cookie_count = cookies.len(),
-        "API login: success"
-    );
-    Ok(ApiLoginResult {
-        auth_token,
-        ct0: final_ct0,
-        cookies,
-    })
+    tracing::info!(username = %req.username, "API login: success");
+    Ok(ApiLoginResult { auth_token, ct0, cookies })
 }
 
+/// Build wreq client — NO TLS emulation (twikit uses plain httpx).
 fn build_client(
     jar: Arc<wreq::cookie::Jar>,
     proxy: Option<&str>,
 ) -> Result<wreq::Client, TwitterLoginError> {
     let mut builder = wreq::Client::builder()
         .cookie_provider(jar)
-        .user_agent(crate::TWITTER_USER_AGENT)
-        .emulation(wreq_util::Emulation::Chrome136);
+        .user_agent(crate::TWITTER_USER_AGENT);
 
     if let Some(proxy_url) = proxy {
         let p = wreq::Proxy::all(proxy_url).map_err(|e| TwitterLoginError::ApiError {
@@ -183,70 +140,51 @@ fn build_client(
     })
 }
 
-async fn get_guest_token(
-    client: &wreq::Client,
-) -> Result<String, TwitterLoginError> {
-    let url = format!("{API_BASE}{GUEST_ACTIVATE}");
-
-    // Generate xtid for guest/activate too
-    let mut headers = super::api_headers::guest_activate_headers();
-    if let Some(xtid) = crate::xtid_header("POST", &url).await {
-        if let Ok(v) = wreq::header::HeaderValue::from_str(&xtid) {
-            headers.insert("x-client-transaction-id", v);
-        }
-    }
+/// POST /1.1/guest/activate.json — get guest token.
+async fn get_guest_token(client: &wreq::Client) -> Result<String, TwitterLoginError> {
+    let url = format!("{API_BASE}/1.1/guest/activate.json");
+    let headers = super::api_headers::guest_activate_headers();
 
     let resp = client
         .post(&url)
         .headers(headers)
-        .body("{}")  // twikit sends data={} (empty form), httpx sends Content-Length: 0
         .send()
         .await
-        .map_err(|e| TwitterLoginError::ApiError {
-            status: 0,
-            body: e.to_string(),
-        })?;
+        .map_err(|e| TwitterLoginError::ApiError { status: 0, body: e.to_string() })?;
 
     let status = resp.status().as_u16();
-    let body: serde_json::Value =
-        resp.json().await.map_err(|e| TwitterLoginError::ApiError {
-            status,
-            body: e.to_string(),
-        })?;
+    let body: serde_json::Value = resp.json().await
+        .map_err(|e| TwitterLoginError::ApiError { status, body: e.to_string() })?;
 
-    body["guest_token"]
-        .as_str()
-        .map(|s| s.to_string())
+    body["guest_token"].as_str().map(|s| s.to_string())
         .ok_or_else(|| TwitterLoginError::ApiError {
             status,
             body: "no guest_token in response".into(),
         })
 }
 
-/// Call sso_init('apple') — twikit does this before the login flow.
-/// Response is discarded, but it may set server-side session state.
-async fn sso_init(
-    client: &wreq::Client,
-    guest_token: &str,
-) -> Result<(), TwitterLoginError> {
+/// POST /1.1/onboarding/sso_init.json — twikit calls this, result discarded.
+async fn sso_init(client: &wreq::Client, guest_token: &str) -> Result<(), TwitterLoginError> {
     let url = format!("{API_BASE}/1.1/onboarding/sso_init.json");
-    let mut headers = super::api_headers::onboarding_headers(guest_token, None);
-    if let Some(xtid) = crate::xtid_header("POST", &url).await {
-        if let Ok(v) = wreq::header::HeaderValue::from_str(&xtid) {
-            headers.insert("x-client-transaction-id", v);
+    let headers = super::api_headers::onboarding_headers(guest_token, None);
+    client.post(&url).headers(headers)
+        .json(&serde_json::json!({"provider": "apple"}))
+        .send().await
+        .map_err(|e| TwitterLoginError::ApiError { status: 0, body: format!("sso_init: {e}") })?;
+    Ok(())
+}
+
+/// If server set ct0 cookie, use it as CSRF token for subsequent requests.
+fn update_csrf_from_jar(jar: &wreq::cookie::Jar, state: &mut flow::FlowState) {
+    for cookie in jar.get_all() {
+        if cookie.name() == "ct0" {
+            let val = cookie.value().to_string();
+            if !val.is_empty() {
+                state.set_csrf_token(&val);
+                return;
+            }
         }
     }
-    client
-        .post(&url)
-        .headers(headers)
-        .json(&serde_json::json!({"provider": "apple"}))
-        .send()
-        .await
-        .map_err(|e| TwitterLoginError::ApiError {
-            status: 0,
-            body: format!("sso_init: {e}"),
-        })?;
-    Ok(())
 }
 
 fn extract_cookies(jar: &wreq::cookie::Jar) -> HashMap<String, String> {
@@ -255,18 +193,4 @@ fn extract_cookies(jar: &wreq::cookie::Jar) -> HashMap<String, String> {
         map.insert(cookie.name().to_string(), cookie.value().to_string());
     }
     map
-}
-
-/// Extract ct0 from jar, but only if it differs from our pre-seeded one.
-/// This ensures we only use server-issued ct0 values.
-fn extract_server_ct0(jar: &wreq::cookie::Jar, pre_seeded: &str) -> Option<String> {
-    for cookie in jar.get_all() {
-        if cookie.name() == "ct0" {
-            let val = cookie.value().to_string();
-            if !val.is_empty() && val != pre_seeded {
-                return Some(val);
-            }
-        }
-    }
-    None
 }
