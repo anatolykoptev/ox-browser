@@ -63,6 +63,10 @@ pub(super) fn login_headers(
         HeaderValue::from_static("\"Windows\""),
     );
 
+    // Accept
+    h.insert("accept", HeaderValue::from_static("*/*"));
+    h.insert("accept-language", HeaderValue::from_static("en-US,en;q=0.9"));
+
     // Origin / referer
     h.insert("referer", HeaderValue::from_static("https://x.com/"));
     h.insert("origin", HeaderValue::from_static("https://x.com"));
@@ -152,13 +156,13 @@ mod tests {
     fn total_header_count_without_csrf() {
         let h = login_headers("guest123", None);
         // 6 auth + 6 security + 2 origin = 14 (no csrf)
-        assert_eq!(h.len(), 14);
+        assert_eq!(h.len(), 16);
     }
 
     #[test]
     fn total_header_count_with_csrf() {
         let h = login_headers("guest123", Some("token"));
         // 14 + csrf = 15
-        assert_eq!(h.len(), 15);
+        assert_eq!(h.len(), 17);
     }
 }
