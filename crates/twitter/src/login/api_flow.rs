@@ -38,7 +38,7 @@ impl FlowState {
     }
 
     fn headers(&self) -> HeaderMap {
-        api_headers::login_headers(
+        api_headers::onboarding_headers(
             &self.guest_token,
             self.csrf_token.as_deref(),
         )

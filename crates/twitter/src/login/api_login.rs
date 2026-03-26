@@ -48,6 +48,10 @@ pub async fn login(
     );
     tracing::info!(guest_token = %guest_token, "API login: got guest token");
 
+    // Step 1.5: sso_init (twikit calls this before login flow)
+    let _ = sso_init(&client, &guest_token).await;
+    tracing::info!("API login: sso_init done");
+
     // Step 2: init login flow (use pre-seeded ct0 for first request)
     let mut state =
         flow::FlowState::init(&client, &guest_token, Some(&ct0)).await?;
@@ -180,12 +184,20 @@ fn build_client(
 async fn get_guest_token(
     client: &wreq::Client,
 ) -> Result<String, TwitterLoginError> {
+    let url = format!("{API_BASE}{GUEST_ACTIVATE}");
+
+    // Generate xtid for guest/activate too
+    let mut headers = super::api_headers::guest_activate_headers();
+    if let Some(xtid) = crate::xtid_header("POST", &url).await {
+        if let Ok(v) = wreq::header::HeaderValue::from_str(&xtid) {
+            headers.insert("x-client-transaction-id", v);
+        }
+    }
+
     let resp = client
-        .post(format!("{API_BASE}{GUEST_ACTIVATE}"))
-        .header(
-            "authorization",
-            format!("Bearer {}", crate::graphql::BEARER_TOKEN),
-        )
+        .post(&url)
+        .headers(headers)
+        .body("{}")  // twikit sends data={} (empty form), httpx sends Content-Length: 0
         .send()
         .await
         .map_err(|e| TwitterLoginError::ApiError {
@@ -207,6 +219,32 @@ async fn get_guest_token(
             status,
             body: "no guest_token in response".into(),
         })
+}
+
+/// Call sso_init('apple') — twikit does this before the login flow.
+/// Response is discarded, but it may set server-side session state.
+async fn sso_init(
+    client: &wreq::Client,
+    guest_token: &str,
+) -> Result<(), TwitterLoginError> {
+    let url = format!("{API_BASE}/1.1/onboarding/sso_init.json");
+    let mut headers = super::api_headers::onboarding_headers(guest_token, None);
+    if let Some(xtid) = crate::xtid_header("POST", &url).await {
+        if let Ok(v) = wreq::header::HeaderValue::from_str(&xtid) {
+            headers.insert("x-client-transaction-id", v);
+        }
+    }
+    client
+        .post(&url)
+        .headers(headers)
+        .json(&serde_json::json!({"provider": "apple"}))
+        .send()
+        .await
+        .map_err(|e| TwitterLoginError::ApiError {
+            status: 0,
+            body: format!("sso_init: {e}"),
+        })?;
+    Ok(())
 }
 
 fn extract_cookies(jar: &wreq::cookie::Jar) -> HashMap<String, String> {

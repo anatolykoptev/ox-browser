@@ -31,7 +31,8 @@ pub(super) fn init_body() -> Value {
                 "start_location": { "location": "splash_screen" }
             }
         },
-        "subtask_versions": subtask_versions()
+        "subtask_versions": subtask_versions(),
+        "subtask_inputs": []
     })
 }
 
