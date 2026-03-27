@@ -33,7 +33,12 @@ pub mod solver_byparr;
 pub mod solver_chromium;
 pub mod chrome_session;
 pub mod chrome_interact;
+pub mod session_pool;
+pub mod browser_pool;
+pub(crate) mod browser_pool_tab;
 pub use chrome_session::{ChromeSession, ChromeLoginConfig};
+pub use session_pool::SessionPool;
+pub use browser_pool::BrowserPool;
 
 pub use cloudflare::{detect_cloudflare, ChallengeType, CloudflareChallenge};
 pub use cookie_cache::CookieCache;

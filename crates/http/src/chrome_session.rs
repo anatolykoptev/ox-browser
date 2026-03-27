@@ -7,8 +7,8 @@ use chromiumoxide::{Browser, Page};
 use futures::StreamExt;
 use tokio::task::JoinHandle;
 
-/// Stealth bootstrap script (shared with CF solver).
-const STEALTH_JS: &str = include_str!("stealth.js");
+/// Stealth bootstrap script (shared with CF solver and browser pool).
+pub(crate) const STEALTH_JS: &str = include_str!("stealth.js");
 
 /// User-Agent matching the stealth script's Client Hints.
 pub const STEALTH_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
