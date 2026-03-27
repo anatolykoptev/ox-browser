@@ -338,15 +338,28 @@ async fn do_hover(page: &Page, selector: &str) -> Result<ActionOutput, String> {
 }
 
 async fn do_go_back(page: &Page) -> Result<ActionOutput, String> {
-    let can_go_back: bool = page
-        .evaluate("window.history.length > 1")
-        .await
-        .map_err(|e| format!("go_back check: {e}"))?
-        .into_value()
-        .unwrap_or(false);
+    use chromiumoxide::cdp::browser_protocol::page::GetNavigationHistoryParams;
 
-    if !can_go_back {
+    // Use CDP to check if there's a previous entry to go back to.
+    let history = page
+        .execute(GetNavigationHistoryParams {})
+        .await
+        .map_err(|e| format!("go_back history: {e}"))?;
+
+    let idx = history.result.current_index as usize;
+    if idx == 0 {
+        // Already at the first entry — nothing to go back to.
         return Ok(ActionOutput::None);
+    }
+
+    // Check the previous entry isn't about:blank (Chrome's initial page).
+    let entries = &history.result.entries;
+    if idx > 0 {
+        if let Some(prev) = entries.get(idx - 1) {
+            if prev.url == "about:blank" {
+                return Ok(ActionOutput::None);
+            }
+        }
     }
 
     page.evaluate("window.history.back()")
