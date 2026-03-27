@@ -44,11 +44,14 @@ pub struct ChromeSession {
     /// Spawned CDP listener tasks (dialog auto-dismiss, log listeners).
     /// Aborted during `shutdown()` to prevent memory leaks.
     pub listener_tasks: Vec<JoinHandle<()>>,
+    /// Unique temp data dir for this session — cleaned up on shutdown.
+    pub data_dir: Option<PathBuf>,
 }
 
 impl ChromeSession {
     /// Launch headless Chrome with stealth.js pre-injected.
     pub async fn launch(config: &ChromeLoginConfig) -> Result<(Self, Page), String> {
+        let data_dir = PathBuf::from(format!("/tmp/ox-chrome-{:016x}", rand::random::<u64>()));
         let mut builder = BrowserConfig::builder()
             .no_sandbox()
             .new_headless_mode()
@@ -57,7 +60,8 @@ impl ChromeSession {
             .arg("--no-first-run")
             .arg("--disable-blink-features=AutomationControlled")
             .arg("--window-size=1920,1080")
-            .arg("--lang=en-US,en");
+            .arg("--lang=en-US,en")
+            .arg(format!("--user-data-dir={}", data_dir.display()));
 
         if config.incognito {
             builder = builder.arg("--incognito");
@@ -121,6 +125,7 @@ impl ChromeSession {
             browser,
             handler_task,
             listener_tasks,
+            data_dir: Some(data_dir),
         };
         Ok((session, page))
     }
@@ -297,5 +302,9 @@ impl ChromeSession {
         }
         let _ = self.browser.close().await;
         self.handler_task.abort();
+        // Clean up unique data dir to prevent disk leak
+        if let Some(ref dir) = self.data_dir {
+            let _ = tokio::fs::remove_dir_all(dir).await;
+        }
     }
 }
