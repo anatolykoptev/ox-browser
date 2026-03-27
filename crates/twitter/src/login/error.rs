@@ -74,6 +74,12 @@ pub enum TwitterLoginError {
 
     #[error("email verification required (LoginAcid)")]
     EmailVerificationRequired,
+
+    #[error("bot detected: {message}")]
+    BotDetected {
+        message: String,
+        screenshot: Option<PathBuf>,
+    },
 }
 
 impl TwitterLoginError {
@@ -92,6 +98,7 @@ impl TwitterLoginError {
             Self::ApiError { .. } => "api_error",
             Self::RateLimited => "rate_limited",
             Self::EmailVerificationRequired => "email_verification_required",
+            Self::BotDetected { .. } => "bot_detected",
         }
     }
 
@@ -102,6 +109,7 @@ impl TwitterLoginError {
             Self::WrongCredentials { .. }
                 | Self::AccountLocked { .. }
                 | Self::MissingEmail
+                | Self::BotDetected { .. }
         )
     }
 
@@ -111,7 +119,8 @@ impl TwitterLoginError {
             | Self::WrongCredentials { screenshot, .. }
             | Self::AccountLocked { screenshot, .. }
             | Self::CaptchaRequired { screenshot, .. }
-            | Self::Timeout { screenshot, .. } => screenshot.as_ref(),
+            | Self::Timeout { screenshot, .. }
+            | Self::BotDetected { screenshot, .. } => screenshot.as_ref(),
             _ => None,
         }
     }

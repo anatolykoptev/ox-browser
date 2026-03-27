@@ -33,3 +33,18 @@ pub const JS_READ_HEADING: &str = r#"
 
 /// Check if current URL contains /home (login success indicator).
 pub const JS_CHECK_HOME_URL: &str = "window.location.href.includes('/home')";
+
+/// Detect toast/alert with bot detection message (399 error).
+pub const JS_DETECT_TOAST: &str = r#"
+    (() => {
+        const selectors = ['div[data-testid="toast"]', 'div[role="alert"]'];
+        for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el) {
+                const text = el.textContent || '';
+                if (text.toLowerCase().includes('could not log you in')) return text.trim();
+            }
+        }
+        return null;
+    })()
+"#;

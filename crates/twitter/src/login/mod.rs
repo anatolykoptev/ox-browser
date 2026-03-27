@@ -2,6 +2,7 @@ pub mod api_login;
 mod api_flow;
 mod api_headers;
 mod api_preseed; // kept for future use
+mod castle;
 mod ui_metrics;
 mod api_subtasks;
 pub mod chrome;
@@ -75,6 +76,7 @@ pub async fn login(
     req: &LoginRequest,
     config: &TwitterLoginConfig,
     semaphore: &Semaphore,
+    pool: &ox_http::SessionPool,
 ) -> Result<LoginResult, TwitterLoginError> {
     // Primary: API login (fast, no Chrome)
     match api_login::login(req).await {
@@ -102,23 +104,21 @@ pub async fn login(
         TwitterLoginError::ChromeLaunch(format!("semaphore closed: {e}"))
     })?;
     tracing::info!(username = %req.username, "starting Chrome login fallback");
-    chrome_login(req, config).await
+    chrome_login(req, config, pool).await
 }
 
 async fn chrome_login(
     req: &LoginRequest,
     config: &TwitterLoginConfig,
+    pool: &ox_http::SessionPool,
 ) -> Result<LoginResult, TwitterLoginError> {
-    let chrome_config = ChromeLoginConfig {
-        proxy_url: req.proxy.clone().or_else(|| config.default_proxy.clone()),
-        chrome_path: req.chrome_path.clone().or_else(|| config.default_chrome_path.clone()),
-        screenshot_dir: config.screenshot_dir.clone(),
-        screenshot_on_error: config.screenshot_on_error,
-    };
-
-    let (session, page) = ChromeSession::launch(&chrome_config)
-        .await
+    // Use the pool to get cookie persistence and Castle.io JS execution.
+    let proxy = req.proxy.as_deref().or(config.default_proxy.as_deref());
+    let session_id = pool.create(proxy).await
         .map_err(TwitterLoginError::ChromeLaunch)?;
+
+    let page = pool.get(&session_id).await
+        .ok_or_else(|| TwitterLoginError::ChromeLaunch("session lost after create".into()))?;
 
     let input = flow::LoginInput {
         username: req.username.clone(),
@@ -136,7 +136,10 @@ async fn chrome_login(
     );
 
     let result = login_flow.run().await;
-    session.shutdown().await;
+
+    // Always destroy pool session after login (success or fail).
+    pool.destroy(&session_id).await;
+
     let output = result?;
 
     tracing::info!(username = %req.username, "Chrome login successful");

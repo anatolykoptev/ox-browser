@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use chromiumoxide::cdp::browser_protocol::network::SetCookieParams;
 use chromiumoxide::Page;
+use rand::Rng;
 use tokio::time::Instant;
 
 use super::error::{FlowStep, TwitterLoginError};
@@ -92,7 +94,36 @@ impl<'a> LoginFlow<'a> {
 
     // --- Navigation ---
 
+    /// Generate a random 32-char hex CUID and set it as a cookie on `.x.com`
+    /// before the first navigation. Castle.io binds its fingerprint to this cookie.
+    async fn set_cuid_cookie(&self) -> Result<(), TwitterLoginError> {
+        let mut bytes = [0u8; 16];
+        rand::thread_rng().fill(&mut bytes);
+        let cuid: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        tracing::info!(cuid = %cuid, "chrome login: setting __cuid cookie on .x.com");
+
+        let params = SetCookieParams::builder()
+            .name("__cuid")
+            .value(&cuid)
+            .domain(".x.com")
+            .path("/")
+            .secure(true)
+            .http_only(false)
+            .build()
+            .map_err(|e| TwitterLoginError::Navigation(format!("build __cuid cookie: {e}")))?;
+
+        self.page
+            .execute(params)
+            .await
+            .map_err(|e| TwitterLoginError::Navigation(format!("set __cuid cookie: {e}")))?;
+
+        Ok(())
+    }
+
     async fn navigate(&mut self) -> Result<(), TwitterLoginError> {
+        // Set __cuid cookie before first navigation — Castle.io fingerprint binding.
+        self.set_cuid_cookie().await?;
+
         // Step 1: Visit x.com first to get cookies (avoids bot detection).
         tracing::info!("chrome login: pre-navigating to x.com");
         self.page

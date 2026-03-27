@@ -50,6 +50,7 @@ pub struct OxMcpServer {
     pub(crate) site_handlers: Arc<Vec<SiteHandler>>,
     pub(crate) chrome_config: ChromeLoginConfig,
     pub(crate) chrome_semaphore: Arc<Semaphore>,
+    pub(crate) session_pool: ox_http::SessionPool,
     pub(crate) tool_router: ToolRouter<Self>,
 }
 
@@ -62,6 +63,7 @@ impl OxMcpServer {
         media_config: ox_media::MediaConfig,
         chrome_config: ChromeLoginConfig,
         chrome_semaphore: Arc<Semaphore>,
+        session_pool: ox_http::SessionPool,
     ) -> Self {
         let handlers: Vec<SiteHandler> = vec![ox_js::site_twitter::make_twitter_handler()];
         Self {
@@ -73,6 +75,7 @@ impl OxMcpServer {
             site_handlers: Arc::new(handlers),
             chrome_config,
             chrome_semaphore,
+            session_pool,
             tool_router: Self::tool_router(),
         }
     }

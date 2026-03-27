@@ -1,6 +1,6 @@
 (function() {
     Object.defineProperty(Navigator.prototype, 'platform', {
-        get: () => 'Win32', configurable: true
+        get: () => 'MacIntel', configurable: true
     });
     Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', {
         get: () => 8, configurable: true

@@ -12,6 +12,7 @@ pub(super) struct FlowState {
     pub response: serde_json::Value,
     guest_token: String,
     csrf_token: Option<String>,
+    castle_token: Option<String>,
 }
 
 impl FlowState {
@@ -35,6 +36,11 @@ impl FlowState {
         self.csrf_token = Some(ct0.to_string());
     }
 
+    pub fn set_castle_token(&mut self, cuid: &str, token: &str) {
+        let _ = cuid; // cuid is stored in __cuid cookie by the client; token goes in header
+        self.castle_token = Some(token.to_string());
+    }
+
     /// Add x-client-transaction-id if xtid manager is available.
     async fn with_xtid(headers: &mut wreq::header::HeaderMap, url: &str) {
         if let Some(xtid) = crate::xtid_header("POST", url).await {
@@ -54,12 +60,14 @@ impl FlowState {
             response: serde_json::Value::Null,
             guest_token: guest_token.to_string(),
             csrf_token: csrf_token.map(|s| s.to_string()),
+            castle_token: None,
         };
 
         let url = format!("{API_BASE}{ONBOARDING_TASK}");
         let mut headers = api_headers::onboarding_headers(
             &state.guest_token,
             state.csrf_token.as_deref(),
+            state.castle_token.as_deref(),
         );
         Self::with_xtid(&mut headers, &url).await;
 
@@ -85,6 +93,7 @@ impl FlowState {
         let mut headers = api_headers::onboarding_headers(
             &self.guest_token,
             self.csrf_token.as_deref(),
+            self.castle_token.as_deref(),
         );
         Self::with_xtid(&mut headers, &url).await;
 
@@ -138,11 +147,13 @@ impl FlowState {
     }
 
     pub async fn enter_username(&mut self, client: &wreq::Client, username: &str) -> Result<(), TwitterLoginError> {
-        self.execute_task(client, api_subtasks::enter_username(username)).await
+        let data = api_subtasks::enter_username(username, self.castle_token.as_deref());
+        self.execute_task(client, data).await
     }
 
     pub async fn enter_password(&mut self, client: &wreq::Client, password: &str) -> Result<(), TwitterLoginError> {
-        self.execute_task(client, api_subtasks::enter_password(password)).await
+        let data = api_subtasks::enter_password(password, self.castle_token.as_deref());
+        self.execute_task(client, data).await
     }
 
     pub async fn enter_text(&mut self, client: &wreq::Client, subtask_id: &str, text: &str) -> Result<(), TwitterLoginError> {

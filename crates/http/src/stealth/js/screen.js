@@ -9,5 +9,5 @@
     Object.defineProperty(window, 'outerHeight', { get: () => 1040 });
     Object.defineProperty(window, 'innerWidth', { get: () => 1920 });
     Object.defineProperty(window, 'innerHeight', { get: () => 953 });
-    Object.defineProperty(window, 'devicePixelRatio', { get: () => 1.0 });
+    Object.defineProperty(window, 'devicePixelRatio', { get: () => 2.0 });
 })();

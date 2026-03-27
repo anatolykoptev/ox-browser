@@ -85,9 +85,13 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
             .or_else(|| std::env::var("CHROME_PATH").ok()),
         screenshot_dir: config.chrome.screenshot_dir.clone().into(),
         screenshot_on_error: true,
+        incognito: true,
     };
 
     let chrome_semaphore = Arc::new(Semaphore::new(config.chrome.max_concurrent));
+
+    let session_pool = ox_http::SessionPool::new(chrome_config.clone());
+    let _reaper_handle = session_pool.clone().start_reaper();
 
     let http_client = Arc::new(HttpClient::new(http_config)?);
     let state = ox_js::AppState::new(
@@ -98,6 +102,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         media_config.clone(),
         twitter_config,
         chrome_config.clone(),
+        session_pool.clone(),
     );
     let rest_router = ox_js::router(state.clone());
     let mcp_router = ox_mcp::build_mcp_router(
@@ -108,6 +113,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         media_config,
         chrome_config,
         chrome_semaphore,
+        session_pool,
     );
     let app = rest_router.merge(mcp_router);
 

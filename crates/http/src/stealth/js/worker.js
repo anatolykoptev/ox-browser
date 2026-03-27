@@ -11,7 +11,7 @@
             get: () => 8, configurable: true
         });
         Object.defineProperty(Navigator.prototype, 'platform', {
-            get: () => 'Win32', configurable: true
+            get: () => 'MacIntel', configurable: true
         });
         Object.defineProperty(Navigator.prototype, 'languages', {
             get: () => Object.freeze(['en-US', 'en']), configurable: true

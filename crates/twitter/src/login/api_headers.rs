@@ -13,8 +13,9 @@ use wreq::header::{HeaderMap, HeaderValue};
 pub(super) fn onboarding_headers(
     guest_token: &str,
     csrf_token: Option<&str>,
+    castle_token: Option<&str>,
 ) -> HeaderMap {
-    let mut h = HeaderMap::with_capacity(6);
+    let mut h = HeaderMap::with_capacity(7);
 
     h.insert(
         "authorization",
@@ -30,6 +31,13 @@ pub(super) fn onboarding_headers(
         if let Ok(v) = HeaderValue::from_str(ct0) {
             h.insert("x-csrf-token", v);
             h.insert("x-twitter-auth-type", HeaderValue::from_static("OAuth2Session"));
+        }
+    }
+
+    // Castle.io anti-bot token — optional, best-effort
+    if let Some(token) = castle_token {
+        if let Ok(v) = HeaderValue::from_str(token) {
+            h.insert("x-castle-request-token", v);
         }
     }
 
@@ -60,21 +68,28 @@ mod tests {
 
     #[test]
     fn onboarding_without_csrf() {
-        let h = onboarding_headers("guest123", None);
+        let h = onboarding_headers("guest123", None, None);
         assert!(h.get("authorization").is_some());
         assert!(h.get("x-guest-token").is_some());
         assert!(h.get("x-csrf-token").is_none());
         assert!(h.get("x-twitter-auth-type").is_none());
-        // No sec-fetch-*, no sec-ch-ua-*
+        assert!(h.get("x-castle-request-token").is_none());
         assert!(h.get("sec-fetch-dest").is_none());
         assert!(h.get("sec-ch-ua").is_none());
     }
 
     #[test]
     fn onboarding_with_csrf() {
-        let h = onboarding_headers("guest123", Some("abc123"));
+        let h = onboarding_headers("guest123", Some("abc123"), None);
         assert_eq!(h.get("x-csrf-token").unwrap(), "abc123");
         assert_eq!(h.get("x-twitter-auth-type").unwrap(), "OAuth2Session");
+        assert!(h.get("x-castle-request-token").is_none());
+    }
+
+    #[test]
+    fn onboarding_with_castle_token() {
+        let h = onboarding_headers("guest123", None, Some("castle_token_value"));
+        assert_eq!(h.get("x-castle-request-token").unwrap(), "castle_token_value");
     }
 
     #[test]

@@ -43,6 +43,19 @@ impl<'a> LoginFlow<'a> {
                 });
             }
 
+            // Check for bot detection toast (399 "Could not log you in")
+            if let Ok(val) = self.eval_isolated(selectors::JS_DETECT_TOAST).await {
+                if let Some(msg) = val.as_str() {
+                    if !msg.is_empty() {
+                        let screenshot = self.take_error_screenshot("bot-detected").await;
+                        return Err(TwitterLoginError::BotDetected {
+                            message: msg.to_string(),
+                            screenshot,
+                        });
+                    }
+                }
+            }
+
             tokio::time::sleep(POLL_INTERVAL).await;
         }
     }

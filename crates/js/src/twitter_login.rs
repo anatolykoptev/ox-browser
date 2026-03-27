@@ -61,7 +61,7 @@ pub async fn twitter_login(
         chrome_path: None,
     };
 
-    match ox_twitter::login::login(&login_req, &state.twitter_config, &state.twitter_semaphore).await {
+    match ox_twitter::login::login(&login_req, &state.twitter_config, &state.twitter_semaphore, &state.session_pool).await {
         Ok(result) => (
             StatusCode::OK,
             Json(TwitterLoginResponse {
@@ -81,6 +81,7 @@ pub async fn twitter_login(
                 ox_twitter::login::TwitterLoginError::WrongCredentials { .. } => StatusCode::UNAUTHORIZED,
                 ox_twitter::login::TwitterLoginError::AccountLocked { .. } => StatusCode::FORBIDDEN,
                 ox_twitter::login::TwitterLoginError::CaptchaRequired { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+                ox_twitter::login::TwitterLoginError::BotDetected { .. } => StatusCode::FORBIDDEN,
                 ox_twitter::login::TwitterLoginError::MissingEmail => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };

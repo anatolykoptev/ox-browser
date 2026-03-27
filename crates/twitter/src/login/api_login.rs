@@ -35,11 +35,25 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
     let guest_token = get_guest_token(&client).await?;
     tracing::info!(guest_token = %guest_token, "API login: got guest token");
 
+    // Step 1.5: get Castle.io token (optional, best-effort)
+    let castle_result = super::castle::fetch_castle_token(&client, crate::TWITTER_USER_AGENT).await;
+    if let Some((ref cuid, _)) = castle_result {
+        // Set __cuid cookie — Castle.io binds fingerprint to this cookie
+        let cookie_str = format!("__cuid={cuid}; Domain=.x.com; Path=/; Secure");
+        jar.add(cookie_str.as_str(), "https://x.com");
+        tracing::info!(cuid = %cuid, "API login: got castle token + set __cuid cookie");
+    }
+
     // Step 2: sso_init — DISABLED (twikit does this but it may cause side effects)
     // let _ = sso_init(&client, &guest_token).await;
 
     // Step 3: init login flow (no csrf token — server hasn't issued one yet)
     let mut state = flow::FlowState::init(&client, &guest_token, None).await?;
+
+    // Step 3.1: attach castle token to flow state (used in all subsequent onboarding headers)
+    if let Some((cuid, token)) = castle_result {
+        state.set_castle_token(&cuid, &token);
+    }
     tracing::info!(task = %state.current_task(), "API login: flow initialized");
 
     // After init, check if server set ct0 cookie
@@ -175,7 +189,7 @@ async fn get_guest_token(client: &wreq::Client) -> Result<String, TwitterLoginEr
 /// POST /1.1/onboarding/sso_init.json — twikit calls this, result discarded.
 async fn sso_init(client: &wreq::Client, guest_token: &str) -> Result<(), TwitterLoginError> {
     let url = format!("{API_BASE}/1.1/onboarding/sso_init.json");
-    let headers = super::api_headers::onboarding_headers(guest_token, None);
+    let headers = super::api_headers::onboarding_headers(guest_token, None, None);
     client.post(&url).headers(headers)
         .json(&serde_json::json!({"provider": "apple"}))
         .send().await

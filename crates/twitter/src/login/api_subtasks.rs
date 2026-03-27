@@ -50,24 +50,26 @@ pub(super) fn js_instrumentation(ui_metrics_response: &str) -> Value {
     })
 }
 
-pub(super) fn enter_username(username: &str) -> Value {
-    json!({
-        "subtask_id": "LoginEnterUserIdentifierSSO",
-        "settings_list": {
-            "setting_responses": [{
-                "key": "user_identifier",
-                "response_data": { "text_data": { "result": username } }
-            }],
-            "link": "next_link"
-        }
-    })
+pub(super) fn enter_username(username: &str, castle_token: Option<&str>) -> Value {
+    let mut settings = json!({
+        "setting_responses": [{
+            "key": "user_identifier",
+            "response_data": { "text_data": { "result": username } }
+        }],
+        "link": "next_link"
+    });
+    if let Some(token) = castle_token {
+        settings["castle_token"] = json!(token);
+    }
+    json!({ "subtask_id": "LoginEnterUserIdentifierSSO", "settings_list": settings })
 }
 
-pub(super) fn enter_password(password: &str) -> Value {
-    json!({
-        "subtask_id": "LoginEnterPassword",
-        "enter_password": { "password": password, "link": "next_link" }
-    })
+pub(super) fn enter_password(password: &str, castle_token: Option<&str>) -> Value {
+    let mut pw = json!({ "password": password, "link": "next_link" });
+    if let Some(token) = castle_token {
+        pw["castle_token"] = json!(token);
+    }
+    json!({ "subtask_id": "LoginEnterPassword", "enter_password": pw })
 }
 
 pub(super) fn enter_text(subtask_id: &str, text: &str) -> Value {

@@ -4,6 +4,10 @@
 /// Public bearer token from Twitter's web app JS (decoded form for Authorization header).
 pub const BEARER_TOKEN: &str = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
+/// Alternative bearer token (from imperatrona/twitter-scraper) — does NOT require
+/// x-client-transaction-id header. Used for login flow only.
+pub const BEARER_TOKEN_LOGIN: &str = "AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw=";
+
 const BASE_URL: &str = "https://x.com/i/api/graphql";
 
 pub struct Endpoint {

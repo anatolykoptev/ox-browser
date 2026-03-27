@@ -7,12 +7,12 @@
                 { brand: "Not=A?Brand", version: "24" }
             ],
             mobile: false,
-            platform: "Windows",
+            platform: "macOS",
             getHighEntropyValues: async function(hints) {
                 const values = {};
                 for (const hint of hints) {
                     if (hint === 'platform') values.platform = "Windows";
-                    else if (hint === 'platformVersion') values.platformVersion = "19.0.0";
+                    else if (hint === 'platformVersion') values.platformVersion = "14.5.0";
                     else if (hint === 'architecture') values.architecture = "x86";
                     else if (hint === 'model') values.model = "";
                     else if (hint === 'bitness') values.bitness = "64";
