@@ -9,8 +9,8 @@ use tokio::time::Instant;
 
 use super::logs::SessionLogs;
 use super::types::{
-    ActionOutput, ChromeAction, CookieEntry, CookieInput, EvalResult,
-    ScreenshotResult,
+    ActionAccumulator, ActionOutput, ChromeAction, CookieEntry, CookieInput,
+    EvalResult, ScreenshotResult,
 };
 
 const POLL_INTERVAL_MS: u64 = 300;
@@ -22,10 +22,15 @@ pub async fn execute_action(
     action: &ChromeAction,
     deadline: Instant,
     logs: Option<&SessionLogs>,
+    acc: &mut ActionAccumulator,
 ) -> Result<ActionOutput, String> {
     match action {
-        ChromeAction::Click { selector } => do_click(page, selector).await,
-        ChromeAction::TypeText { selector, text } => do_type(page, selector, text).await,
+        ChromeAction::Click { selector, humanize } => {
+            do_click(page, selector, *humanize, acc).await
+        }
+        ChromeAction::TypeText { selector, text, humanize } => {
+            do_type(page, selector, text, *humanize, acc).await
+        }
         ChromeAction::WaitFor { selector, timeout_ms } => {
             do_wait(page, selector, *timeout_ms, deadline).await
         }
@@ -47,7 +52,9 @@ pub async fn execute_action(
         ChromeAction::HandleDialog { accept, prompt_text } => {
             super::navigation::do_handle_dialog(page, *accept, prompt_text.as_deref()).await
         }
-        ChromeAction::Hover { selector } => super::navigation::do_hover(page, selector).await,
+        ChromeAction::Hover { selector, humanize } => {
+            super::navigation::do_hover(page, selector, *humanize, acc).await
+        }
         ChromeAction::GoBack => super::navigation::do_go_back(page).await,
         ChromeAction::GetLogs => do_get_logs(logs).await,
     }
@@ -64,7 +71,21 @@ async fn do_get_logs(logs: Option<&SessionLogs>) -> Result<ActionOutput, String>
     }
 }
 
-async fn do_click(page: &Page, selector: &str) -> Result<ActionOutput, String> {
+async fn do_click(
+    page: &Page,
+    selector: &str,
+    humanize: bool,
+    acc: &mut ActionAccumulator,
+) -> Result<ActionOutput, String> {
+    if humanize {
+        use super::humanize::bezier::Point;
+        use super::humanize::mouse::humanized_click;
+        let from = Point::new(acc.cursor_x, acc.cursor_y);
+        let target = humanized_click(page, from, selector).await?;
+        acc.cursor_x = target.x;
+        acc.cursor_y = target.y;
+        return Ok(ActionOutput::None);
+    }
     let el = page
         .find_element(selector)
         .await
@@ -73,14 +94,21 @@ async fn do_click(page: &Page, selector: &str) -> Result<ActionOutput, String> {
     Ok(ActionOutput::None)
 }
 
-async fn do_type(page: &Page, selector: &str, text: &str) -> Result<ActionOutput, String> {
-    let el = page
-        .find_element(selector)
-        .await
-        .map_err(|e| format!("type: element '{selector}' not found: {e}"))?;
-    el.click().await.map_err(|e| format!("type: focus click '{selector}': {e}"))?;
+async fn do_type(
+    page: &Page,
+    selector: &str,
+    text: &str,
+    humanize: bool,
+    acc: &mut ActionAccumulator,
+) -> Result<ActionOutput, String> {
+    // Focus via click (humanized if requested)
+    do_click(page, selector, humanize, acc).await?;
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
+    if humanize {
+        super::humanize::keyboard::humanized_type(page, text).await?;
+        return Ok(ActionOutput::None);
+    }
     for ch in text.chars() {
         let params = InsertTextParams { text: ch.to_string() };
         page.execute(params).await.map_err(|e| format!("InsertText '{ch}': {e}"))?;

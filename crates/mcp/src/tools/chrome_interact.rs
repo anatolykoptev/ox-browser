@@ -40,10 +40,21 @@ fn default_wait() -> u64 {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChromeActionInput {
     /// Click an element by CSS selector.
-    Click { selector: String },
+    Click {
+        selector: String,
+        /// Enable human-like Bezier mouse movement and random click offset.
+        #[serde(default)]
+        humanize: bool,
+    },
     /// Type text into an input (React-safe via InsertText CDP).
     #[serde(rename = "type_text")]
-    TypeText { selector: String, text: String },
+    TypeText {
+        selector: String,
+        text: String,
+        /// Enable human-like typing with variable delays.
+        #[serde(default)]
+        humanize: bool,
+    },
     /// Wait for an element to appear.
     WaitFor {
         selector: String,
@@ -81,6 +92,9 @@ pub enum ChromeActionInput {
     /// Hover over an element (triggers CSS :hover and JS mouseover).
     Hover {
         selector: String,
+        /// Enable human-like mouse movement to element.
+        #[serde(default)]
+        humanize: bool,
     },
     /// Navigate back in browser history.
     GoBack,
@@ -115,9 +129,11 @@ pub struct CookieInputMcp {
 impl From<ChromeActionInput> for ChromeAction {
     fn from(a: ChromeActionInput) -> Self {
         match a {
-            ChromeActionInput::Click { selector } => Self::Click { selector },
-            ChromeActionInput::TypeText { selector, text } => {
-                Self::TypeText { selector, text }
+            ChromeActionInput::Click { selector, humanize } => {
+                Self::Click { selector, humanize }
+            }
+            ChromeActionInput::TypeText { selector, text, humanize } => {
+                Self::TypeText { selector, text, humanize }
             }
             ChromeActionInput::WaitFor {
                 selector,
@@ -139,7 +155,9 @@ impl From<ChromeActionInput> for ChromeAction {
             ChromeActionInput::HandleDialog { accept, prompt_text } => {
                 Self::HandleDialog { accept, prompt_text }
             }
-            ChromeActionInput::Hover { selector } => Self::Hover { selector },
+            ChromeActionInput::Hover { selector, humanize } => {
+                Self::Hover { selector, humanize }
+            }
             ChromeActionInput::GoBack => Self::GoBack,
             ChromeActionInput::GetLogs => Self::GetLogs,
         }

@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use ox_http::chrome_interact::{
-    execute_action, ChromeAction, ActionOutput, SessionLogs,
+    execute_action, ActionAccumulator, ChromeAction, ActionOutput, SessionLogs,
 };
 use ox_http::chrome_session::{ChromeLoginConfig, ChromeSession};
 use ox_http::session_pool::SessionPool;
@@ -57,8 +57,9 @@ async fn test_snapshot_returns_accessibility_tree() {
     let (session, page, logs) = launch_and_navigate(html).await;
     let deadline = default_deadline();
 
+    let mut acc = ActionAccumulator::default();
     let action = ChromeAction::Snapshot { label: None };
-    let result = execute_action(&page, &action, deadline, Some(&logs))
+    let result = execute_action(&page, &action, deadline, Some(&logs), &mut acc)
         .await
         .expect("snapshot failed");
 
@@ -101,10 +102,11 @@ async fn test_snapshot_with_label() {
     let (session, page, logs) = launch_and_navigate(html).await;
     let deadline = default_deadline();
 
+    let mut acc = ActionAccumulator::default();
     let action = ChromeAction::Snapshot {
         label: Some("my_custom_label".to_string()),
     };
-    let result = execute_action(&page, &action, deadline, Some(&logs))
+    let result = execute_action(&page, &action, deadline, Some(&logs), &mut acc)
         .await
         .expect("snapshot failed");
 
@@ -128,11 +130,14 @@ async fn test_hover_triggers_on_element() {
     let (session, page, logs) = launch_and_navigate(html).await;
     let deadline = default_deadline();
 
+    let mut acc = ActionAccumulator::default();
+
     // Hover on #target
     let hover = ChromeAction::Hover {
         selector: "#target".to_string(),
+        humanize: false,
     };
-    execute_action(&page, &hover, deadline, Some(&logs))
+    execute_action(&page, &hover, deadline, Some(&logs), &mut acc)
         .await
         .expect("hover failed");
 
@@ -140,7 +145,7 @@ async fn test_hover_triggers_on_element() {
     let eval = ChromeAction::Evaluate {
         js: "document.title".to_string(),
     };
-    let result = execute_action(&page, &eval, deadline, Some(&logs))
+    let result = execute_action(&page, &eval, deadline, Some(&logs), &mut acc)
         .await
         .expect("evaluate failed");
 
@@ -167,16 +172,18 @@ async fn test_go_back_navigates_history() {
     let (session, page, logs) = launch_and_navigate(html).await;
     let deadline = default_deadline();
 
+    let mut acc = ActionAccumulator::default();
+
     // Go back from #page2 to #page1
     let go_back = ChromeAction::GoBack;
-    execute_action(&page, &go_back, deadline, Some(&logs))
+    execute_action(&page, &go_back, deadline, Some(&logs), &mut acc)
         .await
         .expect("go_back failed");
 
     let eval = ChromeAction::Evaluate {
         js: "window.location.hash".to_string(),
     };
-    let result = execute_action(&page, &eval, deadline, Some(&logs))
+    let result = execute_action(&page, &eval, deadline, Some(&logs), &mut acc)
         .await
         .expect("evaluate failed");
 
@@ -203,14 +210,16 @@ async fn test_get_logs_captures_network() {
     let (session, page, logs) = launch_and_navigate(html).await;
     let deadline = default_deadline();
 
+    let mut acc = ActionAccumulator::default();
+
     // Wait for the fetch to fire
     let sleep = ChromeAction::Sleep { ms: 2000 };
-    execute_action(&page, &sleep, deadline, Some(&logs))
+    execute_action(&page, &sleep, deadline, Some(&logs), &mut acc)
         .await
         .expect("sleep failed");
 
     let get_logs = ChromeAction::GetLogs;
-    let result = execute_action(&page, &get_logs, deadline, Some(&logs))
+    let result = execute_action(&page, &get_logs, deadline, Some(&logs), &mut acc)
         .await
         .expect("get_logs failed");
 
@@ -237,14 +246,16 @@ async fn test_get_logs_captures_console() {
     let (session, page, logs) = launch_and_navigate(html).await;
     let deadline = default_deadline();
 
+    let mut acc = ActionAccumulator::default();
+
     // Wait for console event to be captured
     let sleep = ChromeAction::Sleep { ms: 1000 };
-    execute_action(&page, &sleep, deadline, Some(&logs))
+    execute_action(&page, &sleep, deadline, Some(&logs), &mut acc)
         .await
         .expect("sleep failed");
 
     let get_logs = ChromeAction::GetLogs;
-    let result = execute_action(&page, &get_logs, deadline, Some(&logs))
+    let result = execute_action(&page, &get_logs, deadline, Some(&logs), &mut acc)
         .await
         .expect("get_logs failed");
 
@@ -279,15 +290,17 @@ async fn test_handle_dialog_dismiss() {
     let (session, page, logs) = launch_and_navigate(html).await;
     let deadline = default_deadline();
 
+    let mut acc = ActionAccumulator::default();
+
     let sleep = ChromeAction::Sleep { ms: 500 };
-    execute_action(&page, &sleep, deadline, Some(&logs))
+    execute_action(&page, &sleep, deadline, Some(&logs), &mut acc)
         .await
         .expect("sleep failed");
 
     let eval = ChromeAction::Evaluate {
         js: "String(window.result)".to_string(),
     };
-    let result = execute_action(&page, &eval, deadline, Some(&logs))
+    let result = execute_action(&page, &eval, deadline, Some(&logs), &mut acc)
         .await
         .expect("evaluate failed");
 
@@ -330,8 +343,9 @@ async fn test_session_persistence_with_new_actions() {
         .expect("goto failed");
     tokio::time::sleep(Duration::from_millis(500)).await;
 
+    let mut acc = ActionAccumulator::default();
     let snap1 = ChromeAction::Snapshot { label: None };
-    let result1 = execute_action(&page, &snap1, deadline, Some(&logs1))
+    let result1 = execute_action(&page, &snap1, deadline, Some(&logs1), &mut acc)
         .await
         .expect("snapshot1 failed");
     assert!(matches!(result1, ActionOutput::Snapshot(_)));
@@ -345,7 +359,7 @@ async fn test_session_persistence_with_new_actions() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let snap2 = ChromeAction::Snapshot { label: None };
-    let result2 = execute_action(&page2, &snap2, deadline, Some(&logs1))
+    let result2 = execute_action(&page2, &snap2, deadline, Some(&logs1), &mut acc)
         .await
         .expect("snapshot2 failed");
     if let ActionOutput::Snapshot(s) = result2 {
@@ -376,8 +390,9 @@ async fn test_snapshot_empty_page() {
 
     // Page starts on about:blank (from launch)
     let logs = SessionLogs::new();
+    let mut acc = ActionAccumulator::default();
     let action = ChromeAction::Snapshot { label: None };
-    let result = execute_action(&page, &action, deadline, Some(&logs))
+    let result = execute_action(&page, &action, deadline, Some(&logs), &mut acc)
         .await
         .expect("snapshot failed");
 
@@ -404,6 +419,7 @@ async fn test_multiple_snapshots_in_one_request() {
     let (session, page, logs) = launch_and_navigate(html).await;
     let deadline = default_deadline();
 
+    let mut acc = ActionAccumulator::default();
     let snap1 = ChromeAction::Snapshot {
         label: Some("first".to_string()),
     };
@@ -411,10 +427,10 @@ async fn test_multiple_snapshots_in_one_request() {
         label: Some("second".to_string()),
     };
 
-    let r1 = execute_action(&page, &snap1, deadline, Some(&logs))
+    let r1 = execute_action(&page, &snap1, deadline, Some(&logs), &mut acc)
         .await
         .expect("snapshot1 failed");
-    let r2 = execute_action(&page, &snap2, deadline, Some(&logs))
+    let r2 = execute_action(&page, &snap2, deadline, Some(&logs), &mut acc)
         .await
         .expect("snapshot2 failed");
 

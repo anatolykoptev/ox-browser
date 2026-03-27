@@ -27,11 +27,15 @@ pub struct InteractRequest {
 pub enum ChromeAction {
     Click {
         selector: String,
+        #[serde(default)]
+        humanize: bool,
     },
     #[serde(alias = "type")]
     TypeText {
         selector: String,
         text: String,
+        #[serde(default)]
+        humanize: bool,
     },
     WaitFor {
         selector: String,
@@ -66,6 +70,8 @@ pub enum ChromeAction {
     },
     Hover {
         selector: String,
+        #[serde(default)]
+        humanize: bool,
     },
     GoBack,
     GetLogs,
@@ -139,13 +145,30 @@ pub struct InteractResponse {
     pub console_log: Vec<ConsoleEntry>,
 }
 
-#[derive(Default)]
-pub(crate) struct ActionAccumulator {
+pub struct ActionAccumulator {
     pub screenshots: Vec<ScreenshotResult>,
     pub evaluations: Vec<EvalResult>,
     pub snapshots: Vec<SnapshotResult>,
     pub network_log: Vec<NetworkEntry>,
     pub console_log: Vec<ConsoleEntry>,
+    /// Current virtual cursor X position (for humanized movements).
+    pub cursor_x: f64,
+    /// Current virtual cursor Y position (for humanized movements).
+    pub cursor_y: f64,
+}
+
+impl Default for ActionAccumulator {
+    fn default() -> Self {
+        Self {
+            screenshots: Vec::new(),
+            evaluations: Vec::new(),
+            snapshots: Vec::new(),
+            network_log: Vec::new(),
+            console_log: Vec::new(),
+            cursor_x: 960.0,
+            cursor_y: 540.0,
+        }
+    }
 }
 
 impl InteractResponse {

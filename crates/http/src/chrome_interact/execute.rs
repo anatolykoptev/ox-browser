@@ -123,7 +123,7 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
                 get_page_state(page).await,
             );
         }
-        match execute_action(page, action, deadline, Some(&logs)).await {
+        match execute_action(page, action, deadline, Some(&logs), &mut acc).await {
             Ok(ActionOutput::None) => {}
             Ok(ActionOutput::Screenshot(s)) => acc.screenshots.push(s),
             Ok(ActionOutput::Eval(e)) => acc.evaluations.push(e),

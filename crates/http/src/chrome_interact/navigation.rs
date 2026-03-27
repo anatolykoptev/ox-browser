@@ -36,7 +36,25 @@ pub(crate) async fn do_handle_dialog(
 pub(crate) async fn do_hover(
     page: &Page,
     selector: &str,
+    humanize: bool,
+    acc: &mut super::types::ActionAccumulator,
 ) -> Result<ActionOutput, String> {
+    if humanize {
+        use super::humanize::bezier::Point;
+        use super::humanize::mouse::{ensure_visible, move_to};
+        let bounds = ensure_visible(page, selector).await?;
+        let target = Point::new(
+            bounds.x + bounds.width / 2.0,
+            bounds.y + bounds.height / 2.0,
+        );
+        let from = Point::new(acc.cursor_x, acc.cursor_y);
+        move_to(page, from, target, false).await?;
+        acc.cursor_x = target.x;
+        acc.cursor_y = target.y;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        return Ok(ActionOutput::None);
+    }
+
     let js = format!(
         r#"(() => {{
             const el = document.querySelector('{}');

@@ -6,6 +6,7 @@
 
 pub mod types;
 pub mod logs;
+pub mod humanize;
 mod actions;
 mod execute;
 mod navigation;
@@ -16,7 +17,7 @@ pub use actions::execute_action;
 pub use execute::execute;
 pub use logs::{ConsoleEntry, NetworkEntry, SessionLogs};
 pub use types::{
-    ActionOutput, ChromeAction, CookieEntry, CookieInput, EvalResult,
-    InteractRequest, InteractResponse, InteractStatus, ScreenshotResult,
-    SnapshotResult,
+    ActionAccumulator, ActionOutput, ChromeAction, CookieEntry, CookieInput,
+    EvalResult, InteractRequest, InteractResponse, InteractStatus,
+    ScreenshotResult, SnapshotResult,
 };
