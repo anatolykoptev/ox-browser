@@ -81,6 +81,13 @@ impl ChromeSession {
 
         if let Some(ref path) = config.chrome_path {
             builder = builder.chrome_executable(path);
+            if path.contains("cloakbrowser") {
+                builder = builder
+                    .arg("--fingerprint=79849")
+                    .arg("--fingerprint-platform=windows")
+                    .arg("--fingerprint-gpu-vendor=Google Inc. (NVIDIA)")
+                    .arg("--fingerprint-gpu-renderer=ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 (0x00002484) Direct3D11 vs_5_0 ps_5_0, D3D11)");
+            }
         }
         if let Some(ref proxy) = config.proxy_url {
             builder = builder.arg(format!("--proxy-server={proxy}"));
