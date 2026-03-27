@@ -123,12 +123,12 @@ fn build_browser_config(
     if let Some(ref path) = config.chrome_path {
         builder = builder.chrome_executable(path);
         // CloakBrowser needs fingerprint flags to activate C++ patches.
+        // Note: args with spaces/commas must be avoided (chromiumoxide splits on whitespace).
         if path.contains("cloakbrowser") {
+            tracing::info!("CloakBrowser detected, adding fingerprint flags");
             builder = builder
                 .arg("--fingerprint=79849")
-                .arg("--fingerprint-platform=windows")
-                .arg("--fingerprint-gpu-vendor=Google Inc. (NVIDIA)")
-                .arg("--fingerprint-gpu-renderer=ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 (0x00002484) Direct3D11 vs_5_0 ps_5_0, D3D11)");
+                .arg("--fingerprint-platform=windows");
         }
     }
     if let Some(proxy) = proxy {
