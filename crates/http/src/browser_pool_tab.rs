@@ -47,11 +47,15 @@ pub(super) async fn launch_browser(
 ///
 /// Used for CloakBrowser sidecar: fingerprint patches are active at the C++ level,
 /// no need to pass `--fingerprint-*` args through chromiumoxide.
+///
+/// `ws_url` can be `ws://host:port` — the actual debugger URL (with browser GUID)
+/// is discovered from the `/json/version` HTTP endpoint automatically.
 pub(super) async fn connect_browser(ws_url: &str) -> Result<BrowserEntry, String> {
-    tracing::info!(ws_url = %ws_url, "connecting to remote Chrome (sidecar)");
-    let (browser, mut handler) = Browser::connect(ws_url)
+    let actual_url = discover_ws_url(ws_url).await?;
+    tracing::info!(ws_url = %actual_url, "connecting to remote Chrome (sidecar)");
+    let (browser, mut handler) = Browser::connect(&actual_url)
         .await
-        .map_err(|e| format!("chrome connect to {ws_url}: {e}"))?;
+        .map_err(|e| format!("chrome connect to {actual_url}: {e}"))?;
     let handler_task = tokio::spawn(async move {
         while handler.next().await.is_some() {}
     });
@@ -61,6 +65,43 @@ pub(super) async fn connect_browser(ws_url: &str) -> Result<BrowserEntry, String
         tab_count: 0,
         created_at: Instant::now(),
     })
+}
+
+/// Discover the real WebSocket debugger URL from Chrome's `/json/version` endpoint.
+///
+/// Converts `ws://host:port` → `http://host:port/json/version`, fetches the JSON,
+/// and extracts `webSocketDebuggerUrl` (which includes the per-session browser GUID).
+async fn discover_ws_url(ws_url: &str) -> Result<String, String> {
+    let http_url = ws_url
+        .replace("ws://", "http://")
+        .replace("wss://", "https://");
+    let version_url = format!("{http_url}/json/version");
+
+    let resp = wreq::get(&version_url)
+        .send()
+        .await
+        .map_err(|e| format!("CDP version endpoint {version_url}: {e}"))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("CDP version read body: {e}"))?;
+    let body: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("CDP version JSON parse: {e}"))?;
+
+    body["webSocketDebuggerUrl"]
+        .as_str()
+        .map(|url: &str| {
+            // Replace 127.0.0.1 with original host (container networking).
+            let original_host = ws_url
+                .trim_start_matches("ws://")
+                .trim_start_matches("wss://")
+                .split(':')
+                .next()
+                .unwrap_or("127.0.0.1");
+            url.replace("127.0.0.1", original_host)
+                .replace("0.0.0.0", original_host)
+        })
+        .ok_or_else(|| "webSocketDebuggerUrl not found in /json/version".into())
 }
 
 /// Create isolated BrowserContext + Page in an existing Browser.
