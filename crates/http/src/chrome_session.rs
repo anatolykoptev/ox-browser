@@ -175,9 +175,9 @@ impl ChromeSession {
             .map_err(|e| format!("GetFrameTree: {e}"))?;
         let frame_id = tree.result.frame_tree.frame.id;
 
-        // 2. Create isolated world (name "utility" — not "__playwright__").
+        // 2. Create isolated world (random UUID — avoids detection by Castle.io).
         let mut params = CreateIsolatedWorldParams::new(frame_id);
-        params.world_name = Some("utility".into());
+        params.world_name = Some(uuid::Uuid::new_v4().to_string());
         params.grant_univeral_access = Some(true);
 
         let world = page

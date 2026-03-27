@@ -95,8 +95,11 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
     // Attach log listeners BEFORE navigation (fixes empty GetLogs bug).
     // Returned handles are detached -- tasks run until the page/browser closes.
     let logs = SessionLogs::new();
-    if let Err(e) = ChromeSession::attach_log_listeners(page, &logs).await {
-        tracing::warn!(error = %e, "failed to attach log listeners");
+    let needs_logs = has_get_logs_action(&req.actions);
+    if needs_logs {
+        if let Err(e) = ChromeSession::attach_log_listeners(page, &logs).await {
+            tracing::warn!(error = %e, "failed to attach log listeners");
+        }
     }
 
     if let Err(e) = page.goto(&req.url).await {
@@ -115,7 +118,7 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
                 get_page_state(page).await,
             );
         }
-        match execute_action(page, action, deadline, Some(&logs), &mut acc).await {
+        match execute_action(page, action, deadline, if needs_logs { Some(&logs) } else { None }, &mut acc).await {
             Ok(ActionOutput::None) => {}
             Ok(ActionOutput::Screenshot(s)) => acc.screenshots.push(s),
             Ok(ActionOutput::Eval(e)) => acc.evaluations.push(e),
@@ -155,6 +158,10 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
 
 fn has_destroy_action(actions: &[ChromeAction]) -> bool {
     actions.iter().any(|a| matches!(a, ChromeAction::DestroySession))
+}
+
+fn has_get_logs_action(actions: &[ChromeAction]) -> bool {
+    actions.iter().any(|a| matches!(a, ChromeAction::GetLogs))
 }
 
 async fn finalize_session(
