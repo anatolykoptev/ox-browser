@@ -114,6 +114,7 @@ pub async fn move_to(
 
     let mut path = bezier_path(from, to, steps);
     if overshoot && distance > 50.0 {
+        // Generate before any .await to avoid holding !Send ThreadRng across suspension.
         let overshoot_px = rand::thread_rng().gen_range(3.0..12.0);
         with_overshoot(&mut path, to, overshoot_px);
     }
@@ -129,6 +130,7 @@ pub async fn move_to(
             .map_err(|e| format!("mouse move: {e}"))?;
         page.execute(params).await.map_err(|e| format!("mouse dispatch: {e}"))?;
 
+        // Generate jitter before .await to avoid holding !Send ThreadRng across suspension.
         let jitter = rand::thread_rng().gen_range(0u64..=2);
         tokio::time::sleep(std::time::Duration::from_millis(base_delay_ms + jitter)).await;
     }
@@ -144,12 +146,15 @@ pub async fn humanized_click(
     // 1. Ensure element is in viewport
     let bounds = ensure_visible(page, selector).await?;
 
-    // 2. Pick random point within element bounds (biased toward center)
-    let mut rng = rand::thread_rng();
-    let target = Point::new(
-        bounds.x + bounds.width * rng.gen_range(0.25..0.75),
-        bounds.y + bounds.height * rng.gen_range(0.25..0.75),
-    );
+    // 2. Pick random point within element bounds (biased toward center).
+    // Generate all random values upfront to avoid holding !Send ThreadRng across .await.
+    let target = {
+        let mut rng = rand::thread_rng();
+        Point::new(
+            bounds.x + bounds.width * rng.gen_range(0.25..0.75),
+            bounds.y + bounds.height * rng.gen_range(0.25..0.75),
+        )
+    };
 
     // 3. Check clickability (not obscured by overlay)
     if !is_clickable(page, selector, target.x, target.y).await? {
@@ -162,8 +167,8 @@ pub async fn humanized_click(
     // 4. Move mouse along Bezier curve
     move_to(page, from, target, true).await?;
 
-    // 5. Hesitation before click (50-150ms)
-    let hesitation = rng.gen_range(50u64..150);
+    // 5. Hesitation before click (50-150ms) — generate before .await
+    let hesitation = rand::thread_rng().gen_range(50u64..150);
     tokio::time::sleep(std::time::Duration::from_millis(hesitation)).await;
 
     // 6. Mouse down
@@ -177,8 +182,8 @@ pub async fn humanized_click(
         .map_err(|e| format!("mouse down: {e}"))?;
     page.execute(down).await.map_err(|e| format!("click down: {e}"))?;
 
-    // 7. Hold (30-80ms)
-    let hold = rng.gen_range(30u64..80);
+    // 7. Hold (30-80ms) — generate before .await
+    let hold = rand::thread_rng().gen_range(30u64..80);
     tokio::time::sleep(std::time::Duration::from_millis(hold)).await;
 
     // 8. Mouse up

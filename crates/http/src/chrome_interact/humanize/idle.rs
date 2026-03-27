@@ -14,15 +14,22 @@ pub async fn idle_drift(
     center_y: f64,
     duration_ms: u64,
 ) -> Result<(), String> {
-    let mut rng = rand::thread_rng();
     let deadline = tokio::time::Instant::now()
         + std::time::Duration::from_millis(duration_ms);
     let mut x = center_x;
     let mut y = center_y;
 
     while tokio::time::Instant::now() < deadline {
-        x = (x + rng.gen_range(-3.0..3.0)).clamp(center_x - 15.0, center_x + 15.0);
-        y = (y + rng.gen_range(-3.0..3.0)).clamp(center_y - 15.0, center_y + 15.0);
+        // Generate values before .await to avoid holding !Send ThreadRng across it.
+        let (new_x, new_y, sleep_ms) = {
+            let mut rng = rand::thread_rng();
+            let nx = (x + rng.gen_range(-3.0..3.0)).clamp(center_x - 15.0, center_x + 15.0);
+            let ny = (y + rng.gen_range(-3.0..3.0)).clamp(center_y - 15.0, center_y + 15.0);
+            let ms: u64 = rng.gen_range(300..800);
+            (nx, ny, ms)
+        };
+        x = new_x;
+        y = new_y;
 
         let params = DispatchMouseEventParams::builder()
             .r#type(DispatchMouseEventType::MouseMoved)
@@ -31,9 +38,7 @@ pub async fn idle_drift(
             .map_err(|e| format!("idle drift: {e}"))?;
         page.execute(params).await.map_err(|e| format!("idle: {e}"))?;
 
-        tokio::time::sleep(std::time::Duration::from_millis(
-            rng.gen_range(300..800),
-        )).await;
+        tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
     }
     Ok(())
 }

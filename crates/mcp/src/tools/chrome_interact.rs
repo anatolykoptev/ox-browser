@@ -196,7 +196,7 @@ impl OxMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let req: InteractRequest = input.into();
         let resp =
-            chrome_interact::execute(req, &self.chrome_config, &self.chrome_semaphore, &self.session_pool).await;
+            chrome_interact::execute(req, &self.chrome_semaphore, &self.session_pool).await;
 
         let json = serde_json::to_string(&resp).unwrap_or_default();
         if resp.error.is_some() {

@@ -12,7 +12,6 @@ use super::types::{
     ActionAccumulator, ActionOutput, ChromeAction, EvalResult, InteractRequest,
     InteractResponse, InteractStatus,
 };
-use crate::chrome_session::ChromeLoginConfig;
 use crate::ChromeSession;
 
 /// Execute a chrome interaction session.
@@ -20,10 +19,9 @@ use crate::ChromeSession;
 /// Validates URL (SSRF), acquires semaphore, dispatches to session path:
 /// - `Some("new")` -- new persistent session
 /// - `Some(id)` -- reuse existing
-/// - `None` -- ephemeral (launch + shutdown per request)
+/// - `None` -- ephemeral (one-shot tab from pool, no persistent state)
 pub async fn execute(
     req: InteractRequest,
-    config: &ChromeLoginConfig,
     semaphore: &Semaphore,
     pool: &crate::SessionPool,
 ) -> InteractResponse {
@@ -41,7 +39,7 @@ pub async fn execute(
             let id = id.to_owned();
             execute_existing_session(req, &id, pool).await
         }
-        None => execute_ephemeral(req, config).await,
+        None => execute_ephemeral(req, pool).await,
     }
 }
 
@@ -80,21 +78,15 @@ async fn execute_existing_session(
 
 async fn execute_ephemeral(
     req: InteractRequest,
-    config: &ChromeLoginConfig,
+    pool: &crate::SessionPool,
 ) -> InteractResponse {
-    let launch_config = if req.proxy.is_some() {
-        let mut c = config.clone();
-        c.proxy_url.clone_from(&req.proxy);
-        c
-    } else {
-        config.clone()
-    };
-    let (session, page) = match ChromeSession::launch(&launch_config).await {
+    let browser_pool = pool.browser_pool();
+    let (session_id, page) = match browser_pool.create(req.proxy.as_deref()).await {
         Ok(sp) => sp,
         Err(e) => return InteractResponse::error(format!("chrome launch: {e}")),
     };
     let result = run_actions(&page, &req).await;
-    session.shutdown().await;
+    browser_pool.destroy(&session_id).await;
     result
 }
 

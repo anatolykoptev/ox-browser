@@ -63,6 +63,7 @@ pub struct AppState {
     pub twitter_semaphore: Arc<Semaphore>,
     pub chrome_config: ox_http::chrome_session::ChromeLoginConfig,
     pub chrome_semaphore: Arc<Semaphore>,
+    pub session_pool: ox_http::SessionPool,
 }
 
 impl AppState {
@@ -75,6 +76,7 @@ impl AppState {
         media_config: ox_media::MediaConfig,
         twitter_config: ox_twitter::login::TwitterLoginConfig,
         chrome_config: ox_http::chrome_session::ChromeLoginConfig,
+        session_pool: ox_http::SessionPool,
     ) -> Self {
         let twitter_semaphore = Arc::new(Semaphore::new(twitter_config.max_concurrent));
         let chrome_semaphore = Arc::new(Semaphore::new(2));
@@ -90,6 +92,7 @@ impl AppState {
             twitter_semaphore,
             chrome_config,
             chrome_semaphore,
+            session_pool,
         }
     }
 }
@@ -112,6 +115,7 @@ pub fn router(state: AppState) -> Router {
         .route("/read", post(read::read))
         .route("/twitter/login", post(twitter_login::twitter_login))
         .route("/chrome/interact", post(chrome_interact::chrome_interact_handler))
+        .route("/chrome/session/{id}", axum::routing::delete(chrome_interact::destroy_session_handler))
         .with_state(state)
 }
 
@@ -151,6 +155,8 @@ mod tests {
     }
 
     fn test_state() -> AppState {
+        let chrome_config = ox_http::chrome_session::ChromeLoginConfig::default();
+        let session_pool = ox_http::SessionPool::new(chrome_config.clone());
         AppState::new(
             Arc::new(MockProvider),
             Arc::new(CookieCache::new(Duration::from_secs(300))),
@@ -158,7 +164,8 @@ mod tests {
             EndpointDefaults::default(),
             ox_media::MediaConfig::default(),
             ox_twitter::login::TwitterLoginConfig::default(),
-            ox_http::chrome_session::ChromeLoginConfig::default(),
+            chrome_config,
+            session_pool,
         )
     }
 
