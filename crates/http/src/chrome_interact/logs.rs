@@ -20,6 +20,9 @@ pub struct ConsoleEntry {
     pub text: String,
 }
 
+/// Maximum entries per log type to prevent unbounded memory growth.
+const MAX_LOG_ENTRIES: usize = 1000;
+
 #[derive(Clone)]
 pub struct SessionLogs {
     network: Arc<Mutex<Vec<NetworkEntry>>>,
@@ -35,11 +38,17 @@ impl SessionLogs {
     }
 
     pub async fn push_network(&self, entry: NetworkEntry) {
-        self.network.lock().await.push(entry);
+        let mut log = self.network.lock().await;
+        if log.len() < MAX_LOG_ENTRIES {
+            log.push(entry);
+        }
     }
 
     pub async fn push_console(&self, entry: ConsoleEntry) {
-        self.console.lock().await.push(entry);
+        let mut log = self.console.lock().await;
+        if log.len() < MAX_LOG_ENTRIES {
+            log.push(entry);
+        }
     }
 
     /// Drain and return all network entries.

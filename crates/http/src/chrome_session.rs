@@ -41,6 +41,9 @@ impl Default for ChromeLoginConfig {
 pub struct ChromeSession {
     pub browser: Browser,
     pub handler_task: JoinHandle<()>,
+    /// Spawned CDP listener tasks (dialog auto-dismiss, log listeners).
+    /// Aborted during `shutdown()` to prevent memory leaks.
+    pub listener_tasks: Vec<JoinHandle<()>>,
 }
 
 impl ChromeSession {
@@ -94,12 +97,13 @@ impl ChromeSession {
             .map_err(|e| format!("set_user_agent: {e}"))?;
 
         // Auto-dismiss JS dialogs to prevent session freeze
+        let mut listener_tasks = Vec::new();
         if let Ok(mut events) = page
             .event_listener::<chromiumoxide::cdp::browser_protocol::page::EventJavascriptDialogOpening>()
             .await
         {
             let page_for_dialog = page.clone();
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 while let Some(_event) = futures::StreamExt::next(&mut events).await {
                     let params =
                         chromiumoxide::cdp::browser_protocol::page::HandleJavaScriptDialogParams::builder()
@@ -110,11 +114,13 @@ impl ChromeSession {
                     }
                 }
             });
+            listener_tasks.push(handle);
         }
 
         let session = Self {
             browser,
             handler_task,
+            listener_tasks,
         };
         Ok((session, page))
     }
@@ -196,10 +202,13 @@ impl ChromeSession {
     }
 
     /// Attach network + console CDP listeners to a page, feeding into `SessionLogs`.
+    ///
+    /// Returns `JoinHandle`s for the spawned listener tasks so the caller can
+    /// abort them during shutdown (prevents leaked tasks / unbounded memory).
     pub async fn attach_log_listeners(
         page: &Page,
         logs: &crate::chrome_interact::SessionLogs,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<JoinHandle<()>>, String> {
         use chromiumoxide::cdp::browser_protocol::network::{
             EnableParams as NetEnableParams, EventLoadingFailed, EventResponseReceived,
         };
@@ -218,10 +227,12 @@ impl ChromeSession {
             .await
             .map_err(|e| format!("runtime.enable: {e}"))?;
 
+        let mut handles = Vec::with_capacity(3);
+
         // Response listener
         let logs_r = logs.clone();
         let page_r = page.clone();
-        tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             if let Ok(mut events) = page_r.event_listener::<EventResponseReceived>().await {
                 while let Some(ev) = futures::StreamExt::next(&mut events).await {
                     logs_r
@@ -234,12 +245,12 @@ impl ChromeSession {
                         .await;
                 }
             }
-        });
+        }));
 
         // Loading failure listener
         let logs_f = logs.clone();
         let page_f = page.clone();
-        tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             if let Ok(mut events) = page_f.event_listener::<EventLoadingFailed>().await {
                 while let Some(ev) = futures::StreamExt::next(&mut events).await {
                     logs_f
@@ -252,12 +263,12 @@ impl ChromeSession {
                         .await;
                 }
             }
-        });
+        }));
 
         // Console listener
         let logs_c = logs.clone();
         let page_c = page.clone();
-        tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             if let Ok(mut events) = page_c.event_listener::<EventConsoleApiCalled>().await {
                 while let Some(ev) = futures::StreamExt::next(&mut events).await {
                     let text = ev
@@ -274,13 +285,16 @@ impl ChromeSession {
                         .await;
                 }
             }
-        });
+        }));
 
-        Ok(())
+        Ok(handles)
     }
 
-    /// Shut down browser and handler task.
+    /// Shut down browser and all spawned tasks.
     pub async fn shutdown(mut self) {
+        for task in &self.listener_tasks {
+            task.abort();
+        }
         let _ = self.browser.close().await;
         self.handler_task.abort();
     }
