@@ -11,7 +11,7 @@ use chromiumoxide::{Browser, Page};
 use futures::StreamExt;
 use tokio::task::JoinHandle;
 
-use crate::stealth::{STEALTH_JS, STEALTH_UA};
+use crate::chrome_session::{stealth_js, stealth_ua};
 use crate::ChromeLoginConfig;
 
 /// A running Chrome process with its CDP handler.
@@ -46,6 +46,7 @@ pub(super) async fn launch_browser(
 /// Create isolated BrowserContext + Page in an existing Browser.
 pub(super) async fn create_tab(
     browser: &Browser,
+    chrome_path: &Option<String>,
 ) -> Result<(BrowserContextId, Page, Vec<JoinHandle<()>>), String> {
     let ctx_params = CreateBrowserContextParams::builder()
         .dispose_on_detach(true)
@@ -62,13 +63,16 @@ pub(super) async fn create_tab(
         .await
         .map_err(|e| format!("new page: {e}"))?;
 
-    page.evaluate_on_new_document(STEALTH_JS)
+    page.evaluate_on_new_document(stealth_js(chrome_path))
         .await
         .map_err(|e| format!("stealth inject: {e}"))?;
 
-    page.set_user_agent(STEALTH_UA)
-        .await
-        .map_err(|e| format!("set UA: {e}"))?;
+    let ua = stealth_ua(chrome_path);
+    if !ua.is_empty() {
+        page.set_user_agent(ua)
+            .await
+            .map_err(|e| format!("set UA: {e}"))?;
+    }
 
     let dialog_handle = setup_dialog_handler(&page);
 

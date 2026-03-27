@@ -73,7 +73,7 @@ impl BrowserPool {
                 bmap.insert(key.clone(), e);
             }
             let entry = bmap.get(&key).ok_or("browser disappeared")?;
-            let result = browser_pool_tab::create_tab(&entry.browser).await?;
+            let result = browser_pool_tab::create_tab(&entry.browser, &self.config.chrome_path).await?;
             bmap.get_mut(&key).unwrap().tab_count += 1;
             result
         };

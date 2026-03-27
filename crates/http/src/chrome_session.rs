@@ -7,8 +7,24 @@ use chromiumoxide::{Browser, Page};
 use futures::StreamExt;
 use tokio::task::JoinHandle;
 
-pub(crate) use crate::stealth::STEALTH_JS;
-pub use crate::stealth::STEALTH_UA;
+/// Select stealth profile based on whether we're using CloakBrowser.
+/// CloakBrowser has C++ patches — only need lite JS patches to complement.
+pub(crate) fn stealth_js(chrome_path: &Option<String>) -> &'static str {
+    if chrome_path.as_ref().is_some_and(|p| p.contains("cloakbrowser")) {
+        crate::stealth::STEALTH_JS_LITE
+    } else {
+        crate::stealth::STEALTH_JS
+    }
+}
+
+/// Select UA — CloakBrowser sets its own UA via C++, no override needed.
+pub fn stealth_ua(chrome_path: &Option<String>) -> &'static str {
+    if chrome_path.as_ref().is_some_and(|p| p.contains("cloakbrowser")) {
+        crate::stealth::STEALTH_UA_NONE
+    } else {
+        crate::stealth::STEALTH_UA
+    }
+}
 
 /// Configuration for launching Chrome for login.
 #[derive(Debug, Clone)]
@@ -88,13 +104,16 @@ impl ChromeSession {
             .await
             .map_err(|e| format!("new_page: {e}"))?;
 
-        page.evaluate_on_new_document(STEALTH_JS)
+        page.evaluate_on_new_document(stealth_js(&config.chrome_path))
             .await
             .map_err(|e| format!("stealth inject: {e}"))?;
 
-        page.set_user_agent(STEALTH_UA)
-            .await
-            .map_err(|e| format!("set_user_agent: {e}"))?;
+        let ua = stealth_ua(&config.chrome_path);
+        if !ua.is_empty() {
+            page.set_user_agent(ua)
+                .await
+                .map_err(|e| format!("set_user_agent: {e}"))?;
+        }
 
         // Auto-dismiss JS dialogs to prevent session freeze
         let mut listener_tasks = Vec::new();

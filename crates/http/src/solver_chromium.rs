@@ -17,6 +17,7 @@ use crate::cloudflare::ChallengeType;
 use crate::cookie_provider::{CookieProvider, SolvedChallenge};
 
 use crate::stealth::{STEALTH_JS, STEALTH_UA};
+// Solver always uses stock Chromium with full stealth (not CloakBrowser).
 
 /// Cookie name set by Cloudflare after a successful challenge.
 const CF_CLEARANCE: &str = "cf_clearance";
