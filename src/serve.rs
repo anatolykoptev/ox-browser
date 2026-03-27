@@ -86,7 +86,15 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         screenshot_dir: config.chrome.screenshot_dir.clone().into(),
         screenshot_on_error: true,
         incognito: true,
+        remote_ws_url: std::env::var("CLOAKBROWSER_WS_URL").ok(),
     };
+
+    if chrome_config.remote_ws_url.is_some() {
+        tracing::info!(
+            ws_url = ?chrome_config.remote_ws_url,
+            "CloakBrowser sidecar mode enabled"
+        );
+    }
 
     let chrome_semaphore = Arc::new(Semaphore::new(config.chrome.max_concurrent));
 

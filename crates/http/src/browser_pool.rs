@@ -64,16 +64,34 @@ impl BrowserPool {
     /// TOCTOU race with the reaper closing an empty browser before tab_count
     /// is incremented.
     pub async fn create(&self, proxy: Option<&str>) -> Result<(String, Page), String> {
-        let key = proxy.map_or(ProxyKey::None, |p| ProxyKey::Proxy(p.to_owned()));
+        let use_sidecar = self.config.remote_ws_url.is_some();
+
+        // Sidecar mode: single shared browser, proxy set per-context.
+        // Local mode: separate browser per proxy group.
+        let key = if use_sidecar {
+            ProxyKey::None
+        } else {
+            proxy.map_or(ProxyKey::None, |p| ProxyKey::Proxy(p.to_owned()))
+        };
+
+        let context_proxy = if use_sidecar { proxy } else { None };
 
         let (context_id, page, listener_tasks) = {
             let mut bmap = self.browsers.write().await;
             if !bmap.contains_key(&key) {
-                let e = browser_pool_tab::launch_browser(&self.config, proxy).await?;
+                let e = if let Some(ref ws_url) = self.config.remote_ws_url {
+                    browser_pool_tab::connect_browser(ws_url).await?
+                } else {
+                    browser_pool_tab::launch_browser(&self.config, proxy).await?
+                };
                 bmap.insert(key.clone(), e);
             }
             let entry = bmap.get(&key).ok_or("browser disappeared")?;
-            let result = browser_pool_tab::create_tab(&entry.browser, &self.config.chrome_path).await?;
+            let result = browser_pool_tab::create_tab(
+                &entry.browser,
+                &self.config.chrome_path,
+                context_proxy,
+            ).await?;
             bmap.get_mut(&key).unwrap().tab_count += 1;
             result
         };
@@ -88,7 +106,7 @@ impl BrowserPool {
             proxy_key: key,
         };
         self.sessions.write().await.insert(id.clone(), tab);
-        tracing::info!(session_id = %id, "browser pool: session created");
+        tracing::info!(session_id = %id, sidecar = use_sidecar, "browser pool: session created");
         Ok((id, page))
     }
 
@@ -176,6 +194,7 @@ impl BrowserPool {
     async fn close_empty_browsers(&self) {
         // Single write lock to atomically find and remove empty browsers,
         // preventing TOCTOU race with concurrent create().
+        let use_sidecar = self.config.remote_ws_url.is_some();
         let empty: Vec<(ProxyKey, BrowserEntry)> = {
             let mut m = self.browsers.write().await;
             let keys: Vec<ProxyKey> = m
@@ -184,7 +203,13 @@ impl BrowserPool {
                 .map(|(k, _)| k.clone())
                 .collect();
             keys.into_iter()
-                .filter_map(|k| m.remove(&k).map(|e| (k, e)))
+                .filter_map(|k| {
+                    // Never close the sidecar browser — it's managed by Docker.
+                    if use_sidecar && k == ProxyKey::None {
+                        return None;
+                    }
+                    m.remove(&k).map(|e| (k, e))
+                })
                 .collect()
         };
         for (key, mut e) in empty {

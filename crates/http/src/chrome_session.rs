@@ -35,6 +35,9 @@ pub struct ChromeLoginConfig {
     pub screenshot_on_error: bool,
     /// Launch Chrome in incognito mode for ephemeral sessions (no cookie persistence).
     pub incognito: bool,
+    /// WebSocket URL of a remote Chrome (CloakBrowser sidecar).
+    /// When set, BrowserPool uses `Browser::connect()` instead of `Browser::launch()`.
+    pub remote_ws_url: Option<String>,
 }
 
 impl Default for ChromeLoginConfig {
@@ -45,6 +48,7 @@ impl Default for ChromeLoginConfig {
             screenshot_dir: PathBuf::from("/tmp/ox-browser/twitter-login"),
             screenshot_on_error: true,
             incognito: true,
+            remote_ws_url: None,
         }
     }
 }

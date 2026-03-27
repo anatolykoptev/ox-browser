@@ -43,14 +43,39 @@ pub(super) async fn launch_browser(
     })
 }
 
+/// Connect to an already-running Chrome via WebSocket (CDP).
+///
+/// Used for CloakBrowser sidecar: fingerprint patches are active at the C++ level,
+/// no need to pass `--fingerprint-*` args through chromiumoxide.
+pub(super) async fn connect_browser(ws_url: &str) -> Result<BrowserEntry, String> {
+    tracing::info!(ws_url = %ws_url, "connecting to remote Chrome (sidecar)");
+    let (browser, mut handler) = Browser::connect(ws_url)
+        .await
+        .map_err(|e| format!("chrome connect to {ws_url}: {e}"))?;
+    let handler_task = tokio::spawn(async move {
+        while handler.next().await.is_some() {}
+    });
+    Ok(BrowserEntry {
+        browser,
+        handler_task,
+        tab_count: 0,
+        created_at: Instant::now(),
+    })
+}
+
 /// Create isolated BrowserContext + Page in an existing Browser.
 pub(super) async fn create_tab(
     browser: &Browser,
     chrome_path: &Option<String>,
+    context_proxy: Option<&str>,
 ) -> Result<(BrowserContextId, Page, Vec<JoinHandle<()>>), String> {
-    let ctx_params = CreateBrowserContextParams::builder()
-        .dispose_on_detach(true)
-        .build();
+    let mut ctx_builder = CreateBrowserContextParams::builder()
+        .dispose_on_detach(true);
+    if let Some(proxy) = context_proxy {
+        tracing::info!(proxy = %proxy, "setting per-context proxy");
+        ctx_builder = ctx_builder.proxy_server(proxy);
+    }
+    let ctx_params = ctx_builder.build();
     let context_id = browser
         .create_browser_context(ctx_params)
         .await
@@ -134,6 +159,13 @@ fn build_browser_config(
     if let Some(proxy) = proxy {
         builder = builder.arg(format!("--proxy-server={proxy}"));
     }
+
+    // Debug: log all Chrome args for troubleshooting fingerprint issues.
+    tracing::debug!(
+        chrome_path = ?config.chrome_path,
+        proxy = ?proxy,
+        "building Chrome config for local launch"
+    );
 
     builder.build().map_err(|e| format!("chrome config: {e}"))
 }
