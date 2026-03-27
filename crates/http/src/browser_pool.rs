@@ -74,7 +74,10 @@ impl BrowserPool {
             proxy.map_or(ProxyKey::None, |p| ProxyKey::Proxy(p.to_owned()))
         };
 
-        let context_proxy = if use_sidecar { proxy } else { None };
+        // CDP per-context proxy doesn't support auth credentials (user:pass@host).
+        // For now, sidecar browser navigates directly via egress network.
+        // TODO: Implement CDP Fetch.authRequired handler for proxy auth.
+        let context_proxy: Option<&str> = None;
 
         let (context_id, page, listener_tasks) = {
             let mut bmap = self.browsers.write().await;
