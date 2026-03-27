@@ -2232,6 +2232,7 @@ dependencies = [
  "futures",
  "htmd",
  "rand 0.8.5",
+ "rand_distr",
  "readabilityrs",
  "serde",
  "serde_json",
