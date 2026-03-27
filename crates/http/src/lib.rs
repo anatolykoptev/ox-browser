@@ -31,6 +31,7 @@ pub mod retry;
 pub mod retry_parse;
 pub mod solver_byparr;
 pub mod solver_chromium;
+pub mod stealth;
 pub mod chrome_session;
 pub mod chrome_interact;
 pub mod session_pool;

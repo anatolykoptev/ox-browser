@@ -7,12 +7,8 @@ use chromiumoxide::{Browser, Page};
 use futures::StreamExt;
 use tokio::task::JoinHandle;
 
-/// Stealth bootstrap script (shared with CF solver and browser pool).
-pub(crate) const STEALTH_JS: &str = include_str!("stealth.js");
-
-/// User-Agent matching the stealth script's Client Hints.
-pub const STEALTH_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
-    AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+pub(crate) use crate::stealth::STEALTH_JS;
+pub use crate::stealth::STEALTH_UA;
 
 /// Configuration for launching Chrome for login.
 #[derive(Debug, Clone)]

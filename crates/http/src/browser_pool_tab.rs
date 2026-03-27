@@ -11,7 +11,7 @@ use chromiumoxide::{Browser, Page};
 use futures::StreamExt;
 use tokio::task::JoinHandle;
 
-use crate::chrome_session::{STEALTH_JS, STEALTH_UA};
+use crate::stealth::{STEALTH_JS, STEALTH_UA};
 use crate::ChromeLoginConfig;
 
 /// A running Chrome process with its CDP handler.

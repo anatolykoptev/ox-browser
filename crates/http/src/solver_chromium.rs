@@ -16,15 +16,10 @@ use tokio::sync::Semaphore;
 use crate::cloudflare::ChallengeType;
 use crate::cookie_provider::{CookieProvider, SolvedChallenge};
 
-/// Stealth bootstrap script injected before page navigation.
-const STEALTH_JS: &str = include_str!("stealth.js");
+use crate::stealth::{STEALTH_JS, STEALTH_UA};
 
 /// Cookie name set by Cloudflare after a successful challenge.
 const CF_CLEARANCE: &str = "cf_clearance";
-
-/// User-Agent that matches the stealth script's Client Hints profile.
-const STEALTH_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
-    AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
 /// Configuration for the chromiumoxide-based solver.
 #[derive(Debug, Clone)]
