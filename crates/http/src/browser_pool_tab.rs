@@ -77,7 +77,11 @@ async fn discover_ws_url(ws_url: &str) -> Result<String, String> {
         .replace("wss://", "https://");
     let version_url = format!("{http_url}/json/version");
 
+    // Chrome DevTools rejects Host headers that aren't IP/localhost.
+    // Override to "127.0.0.1:port" for Docker networking compatibility.
+    let port = ws_url.rsplit(':').next().unwrap_or("9222");
     let resp = wreq::get(&version_url)
+        .header("Host", format!("127.0.0.1:{port}"))
         .send()
         .await
         .map_err(|e| format!("CDP version endpoint {version_url}: {e}"))?;
