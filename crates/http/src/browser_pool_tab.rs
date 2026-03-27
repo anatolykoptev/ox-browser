@@ -46,7 +46,7 @@ pub(super) async fn launch_browser(
 /// Create isolated BrowserContext + Page in an existing Browser.
 pub(super) async fn create_tab(
     browser: &Browser,
-) -> Result<(BrowserContextId, Page), String> {
+) -> Result<(BrowserContextId, Page, Vec<JoinHandle<()>>), String> {
     let ctx_params = CreateBrowserContextParams::builder()
         .dispose_on_detach(true)
         .build();
@@ -70,13 +70,13 @@ pub(super) async fn create_tab(
         .await
         .map_err(|e| format!("set UA: {e}"))?;
 
-    setup_dialog_handler(&page);
+    let dialog_handle = setup_dialog_handler(&page);
 
-    Ok((context_id, page))
+    Ok((context_id, page, vec![dialog_handle]))
 }
 
 /// Spawn a background task that auto-dismisses JS dialogs on a page.
-fn setup_dialog_handler(page: &Page) {
+fn setup_dialog_handler(page: &Page) -> JoinHandle<()> {
     let page_clone = page.clone();
     tokio::spawn(async move {
         if let Ok(mut events) = page_clone
@@ -92,7 +92,7 @@ fn setup_dialog_handler(page: &Page) {
                 }
             }
         }
-    });
+    })
 }
 
 fn build_browser_config(

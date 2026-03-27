@@ -69,7 +69,7 @@ impl BrowserPool {
                 bmap.insert(key.clone(), e);
             }
         }
-        let (context_id, page) = {
+        let (context_id, page, listener_tasks) = {
             let bmap = self.browsers.read().await;
             let e = bmap.get(&key).ok_or("browser disappeared")?;
             browser_pool_tab::create_tab(&e.browser).await?
@@ -82,7 +82,7 @@ impl BrowserPool {
         let tab = TabEntry {
             page: page.clone(),
             context_id,
-            listener_tasks: Vec::new(),
+            listener_tasks,
             last_used: Instant::now(),
             ttl: Duration::from_secs(DEFAULT_TTL_SECS),
             proxy_key: key,
