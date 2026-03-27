@@ -1,15 +1,17 @@
-//! Human-like keyboard input with variable delays via dispatchKeyEvent.
+//! Human-like keyboard input with variable delays.
+//!
+//! Uses dispatchKeyEvent for CDP events (Castle.io sees proper keyboard activity)
+//! plus InsertText for actual text insertion (React controlled inputs need this).
 
 use chromiumoxide::cdp::browser_protocol::input::{
-    DispatchKeyEventParams, DispatchKeyEventType,
+    DispatchKeyEventParams, DispatchKeyEventType, InsertTextParams,
 };
 use chromiumoxide::Page;
 use rand::Rng;
 use rand_distr::{Distribution, Normal};
 
 /// Type text with Gaussian-distributed delays (mean 80ms, sigma 25ms).
-/// Uses dispatchKeyEvent (keyDown + keyUp) instead of InsertText
-/// to match real browser keyboard event chains.
+/// Fires keyDown/keyUp events AND InsertText for React compatibility.
 pub async fn humanized_type(page: &Page, text: &str) -> Result<(), String> {
     let normal = Normal::new(80.0, 25.0).unwrap();
     let mut prev_char = '\0';
@@ -34,19 +36,27 @@ pub async fn humanized_type(page: &Page, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Dispatch a single character as keyDown(text) + keyUp.
+/// Dispatch a single character: keyDown → InsertText → keyUp.
+/// keyDown/keyUp generate proper CDP keyboard events for bot detection.
+/// InsertText ensures React controlled inputs get the value update.
 pub(crate) async fn dispatch_char(page: &Page, ch: char) -> Result<(), String> {
     let text = ch.to_string();
 
+    // 1. keyDown — Castle.io sees keyboard activity
     let mut down = DispatchKeyEventParams::new(DispatchKeyEventType::KeyDown);
-    down.text = Some(text.clone());
-    down.unmodified_text = Some(text.clone());
     down.key = Some(text.clone());
     page.execute(down)
         .await
         .map_err(|e| format!("keyDown '{ch}': {e}"))?;
 
-    let up = DispatchKeyEventParams::new(DispatchKeyEventType::KeyUp);
+    // 2. InsertText — React gets the value change
+    page.execute(InsertTextParams { text: text.clone() })
+        .await
+        .map_err(|e| format!("insertText '{ch}': {e}"))?;
+
+    // 3. keyUp — completes the keyboard event chain
+    let mut up = DispatchKeyEventParams::new(DispatchKeyEventType::KeyUp);
+    up.key = Some(text);
     page.execute(up)
         .await
         .map_err(|e| format!("keyUp '{ch}': {e}"))?;
