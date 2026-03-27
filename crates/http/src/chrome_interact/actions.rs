@@ -50,6 +50,11 @@ pub async fn execute_action(
         // No-op in actions — actual destroy happens in execute() after all actions complete.
         ChromeAction::DestroySession => Ok(ActionOutput::None),
         ChromeAction::Snapshot { label } => do_snapshot(page, label.as_deref()).await,
+        ChromeAction::HandleDialog { accept, prompt_text } => {
+            do_handle_dialog(page, *accept, prompt_text.as_deref()).await
+        }
+        ChromeAction::Hover { selector } => do_hover(page, selector).await,
+        ChromeAction::GoBack => do_go_back(page).await,
     }
 }
 
@@ -248,6 +253,72 @@ async fn do_snapshot(page: &Page, label: Option<&str>) -> Result<ActionOutput, S
 
     let label = label.unwrap_or("snapshot").to_owned();
     Ok(ActionOutput::Snapshot(SnapshotResult { label, tree: out }))
+}
+
+async fn do_handle_dialog(
+    page: &Page,
+    accept: bool,
+    prompt_text: Option<&str>,
+) -> Result<ActionOutput, String> {
+    use chromiumoxide::cdp::browser_protocol::page::HandleJavaScriptDialogParams;
+    let mut builder = HandleJavaScriptDialogParams::builder().accept(accept);
+    if let Some(text) = prompt_text {
+        builder = builder.prompt_text(text);
+    }
+    page.execute(builder.build().map_err(|e| format!("handle_dialog build: {e}"))?)
+        .await
+        .map_err(|e| format!("handle_dialog: {e}"))?;
+    Ok(ActionOutput::None)
+}
+
+async fn do_hover(page: &Page, selector: &str) -> Result<ActionOutput, String> {
+    let js = format!(
+        r#"(() => {{
+            const el = document.querySelector('{}');
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return JSON.stringify({{ x: r.x + r.width / 2, y: r.y + r.height / 2 }});
+        }})()"#,
+        selector.replace('\'', "\\'")
+    );
+    let coords_str: String = page
+        .evaluate(js)
+        .await
+        .map_err(|e| format!("hover coords: {e}"))?
+        .into_value()
+        .unwrap_or_default();
+
+    let coords: serde_json::Value = serde_json::from_str(&coords_str)
+        .map_err(|_| format!("hover: element '{selector}' not found or not visible"))?;
+
+    let x = coords["x"].as_f64().unwrap_or(0.0);
+    let y = coords["y"].as_f64().unwrap_or(0.0);
+
+    use chromiumoxide::cdp::browser_protocol::input::{
+        DispatchMouseEventParams, DispatchMouseEventType,
+    };
+
+    let params = DispatchMouseEventParams::builder()
+        .r#type(DispatchMouseEventType::MouseMoved)
+        .x(x)
+        .y(y)
+        .build()
+        .map_err(|e| format!("hover params: {e}"))?;
+
+    page.execute(params)
+        .await
+        .map_err(|e| format!("hover dispatch: {e}"))?;
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    Ok(ActionOutput::None)
+}
+
+async fn do_go_back(page: &Page) -> Result<ActionOutput, String> {
+    page.evaluate("window.history.back()")
+        .await
+        .map_err(|e| format!("go_back: {e}"))?;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    Ok(ActionOutput::None)
 }
 
 fn format_node(

@@ -70,6 +70,20 @@ pub enum ChromeActionInput {
         #[serde(default)]
         label: Option<String>,
     },
+    /// Accept or dismiss a JS dialog (alert/confirm/prompt).
+    HandleDialog {
+        /// Accept (true) or dismiss (false).
+        accept: bool,
+        /// Text for prompt() dialogs.
+        #[serde(default)]
+        prompt_text: Option<String>,
+    },
+    /// Hover over an element (triggers CSS :hover and JS mouseover).
+    Hover {
+        selector: String,
+    },
+    /// Navigate back in browser history.
+    GoBack,
 }
 
 fn default_cookie_path() -> String {
@@ -120,6 +134,11 @@ impl From<ChromeActionInput> for ChromeAction {
             },
             ChromeActionInput::DestroySession => Self::DestroySession,
             ChromeActionInput::Snapshot { label } => Self::Snapshot { label },
+            ChromeActionInput::HandleDialog { accept, prompt_text } => {
+                Self::HandleDialog { accept, prompt_text }
+            }
+            ChromeActionInput::Hover { selector } => Self::Hover { selector },
+            ChromeActionInput::GoBack => Self::GoBack,
         }
     }
 }

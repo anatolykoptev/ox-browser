@@ -74,6 +74,15 @@ pub enum ChromeAction {
         #[serde(default)]
         label: Option<String>,
     },
+    HandleDialog {
+        accept: bool,
+        #[serde(default)]
+        prompt_text: Option<String>,
+    },
+    Hover {
+        selector: String,
+    },
+    GoBack,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

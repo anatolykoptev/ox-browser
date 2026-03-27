@@ -21,6 +21,8 @@ pub struct ChromeLoginConfig {
     pub chrome_path: Option<String>,
     pub screenshot_dir: PathBuf,
     pub screenshot_on_error: bool,
+    /// Launch Chrome in incognito mode for ephemeral sessions (no cookie persistence).
+    pub incognito: bool,
 }
 
 impl Default for ChromeLoginConfig {
@@ -30,6 +32,7 @@ impl Default for ChromeLoginConfig {
             chrome_path: None,
             screenshot_dir: PathBuf::from("/tmp/ox-browser/twitter-login"),
             screenshot_on_error: true,
+            incognito: true,
         }
     }
 }
@@ -52,6 +55,10 @@ impl ChromeSession {
             .arg("--disable-blink-features=AutomationControlled")
             .arg("--window-size=1920,1080")
             .arg("--lang=en-US,en");
+
+        if config.incognito {
+            builder = builder.arg("--incognito");
+        }
 
         if let Some(ref path) = config.chrome_path {
             builder = builder.chrome_executable(path);
@@ -85,6 +92,25 @@ impl ChromeSession {
         page.set_user_agent(STEALTH_UA)
             .await
             .map_err(|e| format!("set_user_agent: {e}"))?;
+
+        // Auto-dismiss JS dialogs to prevent session freeze
+        if let Ok(mut events) = page
+            .event_listener::<chromiumoxide::cdp::browser_protocol::page::EventJavascriptDialogOpening>()
+            .await
+        {
+            let page_for_dialog = page.clone();
+            tokio::spawn(async move {
+                while let Some(_event) = futures::StreamExt::next(&mut events).await {
+                    let params =
+                        chromiumoxide::cdp::browser_protocol::page::HandleJavaScriptDialogParams::builder()
+                            .accept(true)
+                            .build();
+                    if let Ok(p) = params {
+                        let _ = page_for_dialog.execute(p).await;
+                    }
+                }
+            });
+        }
 
         let session = Self {
             browser,
