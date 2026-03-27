@@ -23,14 +23,24 @@ pub fn bezier_path(start: Point, end: Point, steps: usize) -> Vec<Point> {
     let dy = end.y - start.y;
     let spread = start.distance(&end) * 0.3;
 
-    let cp1 = Point::new(
-        start.x + dx * 0.25 + rng.gen_range(-spread..spread),
-        start.y + dy * 0.25 + rng.gen_range(-spread..spread),
-    );
-    let cp2 = Point::new(
-        start.x + dx * 0.75 + rng.gen_range(-spread..spread),
-        start.y + dy * 0.75 + rng.gen_range(-spread..spread),
-    );
+    // Avoid empty-range panic when start == end (zero spread).
+    let (cp1, cp2) = if spread < 1e-9 {
+        (
+            Point::new(start.x + dx * 0.25, start.y + dy * 0.25),
+            Point::new(start.x + dx * 0.75, start.y + dy * 0.75),
+        )
+    } else {
+        (
+            Point::new(
+                start.x + dx * 0.25 + rng.gen_range(-spread..spread),
+                start.y + dy * 0.25 + rng.gen_range(-spread..spread),
+            ),
+            Point::new(
+                start.x + dx * 0.75 + rng.gen_range(-spread..spread),
+                start.y + dy * 0.75 + rng.gen_range(-spread..spread),
+            ),
+        )
+    };
 
     (0..=steps)
         .map(|i| {
@@ -47,11 +57,19 @@ pub fn bezier_path(start: Point, end: Point, steps: usize) -> Vec<Point> {
 }
 
 /// Add overshoot past target then correct back (Fitts's Law correction).
+///
+/// The approach direction is derived from the second-to-last → last segment of
+/// the existing path, so this works correctly even when the path already ends
+/// exactly at `target` (which is the normal case from `bezier_path`).
 pub fn with_overshoot(path: &mut Vec<Point>, target: Point, overshoot_px: f64) {
-    if path.is_empty() { return; }
-    let last = *path.last().unwrap();
-    let dx = target.x - last.x;
-    let dy = target.y - last.y;
+    if path.len() < 2 { return; }
+
+    // Use the final movement direction (approach vector) for the overshoot.
+    let n = path.len();
+    let prev = path[n - 2];
+    let last = path[n - 1];
+    let dx = last.x - prev.x;
+    let dy = last.y - prev.y;
     let dist = (dx * dx + dy * dy).sqrt().max(1.0);
     let over = Point::new(
         target.x + (dx / dist) * overshoot_px,
