@@ -1,12 +1,16 @@
 //! Action execution for chrome_interact — one function per action type.
 
+use std::collections::HashMap;
+
 use base64::Engine;
+use chromiumoxide::cdp::browser_protocol::accessibility::GetFullAxTreeParams;
 use chromiumoxide::cdp::browser_protocol::input::InsertTextParams;
+use chromiumoxide::cdp::browser_protocol::network::SetCookieParams;
 use chromiumoxide::page::ScreenshotParams;
 use chromiumoxide::Page;
 use tokio::time::Instant;
 
-use super::{ActionOutput, ChromeAction, EvalResult, ScreenshotResult};
+use super::{ActionOutput, ChromeAction, EvalResult, ScreenshotResult, SnapshotResult};
 
 const POLL_INTERVAL_MS: u64 = 300;
 const CHAR_DELAY_MS: u64 = 30;
@@ -39,6 +43,13 @@ pub async fn execute_action(
             tokio::time::sleep(dur.min(remaining)).await;
             Ok(ActionOutput::None)
         }
+        ChromeAction::GetCookies => do_get_cookies(page).await,
+        ChromeAction::SetCookies { cookies } => {
+            do_set_cookies(page, cookies).await
+        }
+        // No-op in actions — actual destroy happens in execute() after all actions complete.
+        ChromeAction::DestroySession => Ok(ActionOutput::None),
+        ChromeAction::Snapshot { label } => do_snapshot(page, label.as_deref()).await,
     }
 }
 
@@ -145,6 +156,46 @@ async fn do_evaluate(
     }))
 }
 
+async fn do_set_cookies(
+    page: &Page,
+    cookies: &[super::CookieInput],
+) -> Result<ActionOutput, String> {
+    for c in cookies {
+        let params = SetCookieParams::builder()
+            .name(&c.name)
+            .value(&c.value)
+            .domain(&c.domain)
+            .path(&c.path)
+            .secure(c.secure)
+            .http_only(c.http_only)
+            .build()
+            .map_err(|e| format!("build cookie '{}': {e}", c.name))?;
+        page.execute(params)
+            .await
+            .map_err(|e| format!("set cookie '{}': {e}", c.name))?;
+    }
+    Ok(ActionOutput::None)
+}
+
+async fn do_get_cookies(page: &Page) -> Result<ActionOutput, String> {
+    let cookies = page
+        .get_cookies()
+        .await
+        .map_err(|e| format!("get_cookies: {e}"))?;
+    let entries: Vec<super::CookieEntry> = cookies
+        .into_iter()
+        .map(|c| super::CookieEntry {
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            secure: c.secure,
+            http_only: c.http_only,
+        })
+        .collect();
+    Ok(ActionOutput::Cookies(entries))
+}
+
 async fn do_press(page: &Page, key: &str) -> Result<ActionOutput, String> {
     // Use JS to dispatch a KeyboardEvent on document.body
     let js = format!(
@@ -163,4 +214,105 @@ async fn do_press(page: &Page, key: &str) -> Result<ActionOutput, String> {
         .await
         .map_err(|e| format!("press '{key}': {e}"))?;
     Ok(ActionOutput::None)
+}
+
+async fn do_snapshot(page: &Page, label: Option<&str>) -> Result<ActionOutput, String> {
+    let params = GetFullAxTreeParams::builder().build();
+    let result = page
+        .execute(params)
+        .await
+        .map_err(|e| format!("snapshot: {e}"))?;
+
+    let nodes = result.result.nodes;
+
+    // Build parent → children index (node_id string → vec of indices)
+    let mut children: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if let Some(pid) = &node.parent_id {
+            children
+                .entry(pid.as_ref().to_owned())
+                .or_default()
+                .push(i);
+        }
+    }
+
+    // Find root (no parent)
+    let root_idx = nodes
+        .iter()
+        .position(|n| n.parent_id.is_none())
+        .unwrap_or(0);
+
+    // Recursively format tree
+    let mut out = String::new();
+    format_node(&nodes, &children, root_idx, 0, &mut out);
+
+    let label = label.unwrap_or("snapshot").to_owned();
+    Ok(ActionOutput::Snapshot(SnapshotResult { label, tree: out }))
+}
+
+fn format_node(
+    nodes: &[chromiumoxide::cdp::browser_protocol::accessibility::AxNode],
+    children: &HashMap<String, Vec<usize>>,
+    idx: usize,
+    depth: usize,
+    out: &mut String,
+) {
+    let node = &nodes[idx];
+    if node.ignored {
+        // Still recurse into ignored nodes' children
+        if let Some(child_ids) = &node.child_ids {
+            for cid in child_ids {
+                if let Some(ci) = nodes.iter().position(|n| n.node_id.as_ref() == cid.as_ref()) {
+                    format_node(nodes, children, ci, depth, out);
+                }
+            }
+        }
+        return;
+    }
+
+    let role = node
+        .role
+        .as_ref()
+        .and_then(|v| v.value.as_ref())
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    // Skip structurally noisy nodes deep in the tree
+    if depth > 2 && matches!(role, "generic" | "none" | "unknown") {
+        if let Some(child_ids) = &node.child_ids {
+            for cid in child_ids {
+                if let Some(ci) =
+                    nodes.iter().position(|n| n.node_id.as_ref() == cid.as_ref())
+                {
+                    format_node(nodes, children, ci, depth, out);
+                }
+            }
+        }
+        return;
+    }
+
+    let name = node
+        .name
+        .as_ref()
+        .and_then(|v| v.value.as_ref())
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+
+    out.push_str(&"  ".repeat(depth));
+    out.push_str("- ");
+    out.push_str(role);
+    if let Some(n) = name {
+        out.push_str(" \"");
+        out.push_str(n);
+        out.push('"');
+    }
+    out.push('\n');
+
+    if let Some(child_ids) = &node.child_ids {
+        for cid in child_ids {
+            if let Some(ci) = nodes.iter().position(|n| n.node_id.as_ref() == cid.as_ref()) {
+                format_node(nodes, children, ci, depth + 1, out);
+            }
+        }
+    }
 }

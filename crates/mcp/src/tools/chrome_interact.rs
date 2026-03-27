@@ -1,6 +1,6 @@
 //! MCP tool: chrome_interact — headless Chrome page interaction.
 
-use ox_http::chrome_interact::{self, ChromeAction, InteractRequest};
+use ox_http::chrome_interact::{self, ChromeAction, CookieInput, InteractRequest};
 use rmcp::model::*;
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::ErrorData as McpError;
@@ -25,6 +25,10 @@ pub struct ChromeInteractInput {
     /// Override proxy URL.
     #[serde(default)]
     pub proxy: Option<String>,
+    /// Session ID for persistent Chrome sessions. Use "new" to create a new
+    /// session; use an existing ID to reuse it. Omit for an ephemeral session.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 fn default_wait() -> u64 {
@@ -54,6 +58,42 @@ pub enum ChromeActionInput {
     Press { key: String },
     /// Sleep for specified milliseconds.
     Sleep { ms: u64 },
+    /// Get all cookies from the current page (returned in evaluations).
+    GetCookies,
+    /// Set cookies on the page via CDP.
+    SetCookies { cookies: Vec<CookieInputMcp> },
+    /// Destroy the current session after all actions complete.
+    DestroySession,
+    /// Get accessibility tree snapshot (lightweight, machine-readable).
+    Snapshot {
+        /// Optional label for the snapshot.
+        #[serde(default)]
+        label: Option<String>,
+    },
+}
+
+fn default_cookie_path() -> String {
+    "/".to_string()
+}
+
+/// Cookie to set on the page.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CookieInputMcp {
+    /// Cookie name.
+    pub name: String,
+    /// Cookie value.
+    pub value: String,
+    /// Cookie domain (e.g. ".example.com").
+    pub domain: String,
+    /// Cookie path (default "/").
+    #[serde(default = "default_cookie_path")]
+    pub path: String,
+    /// Whether the cookie requires HTTPS.
+    #[serde(default)]
+    pub secure: bool,
+    /// Whether the cookie is HTTP-only.
+    #[serde(default)]
+    pub http_only: bool,
 }
 
 impl From<ChromeActionInput> for ChromeAction {
@@ -74,6 +114,25 @@ impl From<ChromeActionInput> for ChromeAction {
             ChromeActionInput::Evaluate { js } => Self::Evaluate { js },
             ChromeActionInput::Press { key } => Self::Press { key },
             ChromeActionInput::Sleep { ms } => Self::Sleep { ms },
+            ChromeActionInput::GetCookies => Self::GetCookies,
+            ChromeActionInput::SetCookies { cookies } => Self::SetCookies {
+                cookies: cookies.into_iter().map(Into::into).collect(),
+            },
+            ChromeActionInput::DestroySession => Self::DestroySession,
+            ChromeActionInput::Snapshot { label } => Self::Snapshot { label },
+        }
+    }
+}
+
+impl From<CookieInputMcp> for CookieInput {
+    fn from(c: CookieInputMcp) -> Self {
+        Self {
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            secure: c.secure,
+            http_only: c.http_only,
         }
     }
 }
@@ -85,6 +144,7 @@ impl From<ChromeInteractInput> for InteractRequest {
             actions: i.actions.into_iter().map(Into::into).collect(),
             timeout_secs: i.timeout_secs,
             proxy: i.proxy,
+            session_id: i.session_id,
         }
     }
 }
@@ -96,7 +156,7 @@ impl OxMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let req: InteractRequest = input.into();
         let resp =
-            chrome_interact::execute(req, &self.chrome_config, &self.chrome_semaphore).await;
+            chrome_interact::execute(req, &self.chrome_config, &self.chrome_semaphore, &self.session_pool).await;
 
         let json = serde_json::to_string(&resp).unwrap_or_default();
         if resp.error.is_some() {

@@ -33,6 +33,8 @@ pub struct InteractRequest {
     pub timeout_secs: u64,
     #[serde(default)]
     pub proxy: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -63,6 +65,42 @@ pub enum ChromeAction {
     Sleep {
         ms: u64,
     },
+    GetCookies,
+    SetCookies {
+        cookies: Vec<CookieInput>,
+    },
+    DestroySession,
+    Snapshot {
+        #[serde(default)]
+        label: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CookieInput {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    #[serde(default = "default_cookie_path")]
+    pub path: String,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub http_only: bool,
+}
+
+fn default_cookie_path() -> String {
+    "/".to_string()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CookieEntry {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +115,12 @@ pub struct EvalResult {
     pub result: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SnapshotResult {
+    pub label: String,
+    pub tree: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct InteractResponse {
     pub status: String,
@@ -84,20 +128,27 @@ pub struct InteractResponse {
     pub error: Option<String>,
     pub screenshots: Vec<ScreenshotResult>,
     pub evaluations: Vec<EvalResult>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub snapshots: Vec<SnapshotResult>,
     pub cookies: HashMap<String, String>,
     pub final_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// Execute a chrome interaction session.
 ///
 /// 1. Validates URL against SSRF
 /// 2. Acquires semaphore permit
-/// 3. Launches Chrome, navigates, runs actions
-/// 4. Returns partial results on failure
+/// 3. Dispatches to one of three paths based on `session_id`:
+///    - `Some("new")` — create a new persistent session in the pool
+///    - `Some(id)` — reuse an existing pool session
+///    - `None` — ephemeral (launch + shutdown per request)
 pub async fn execute(
     req: InteractRequest,
     config: &ChromeLoginConfig,
     semaphore: &Semaphore,
+    pool: &crate::SessionPool,
 ) -> InteractResponse {
     // SSRF validation
     if let Err(e) = crate::middleware_ssrf::validate_url(&req.url) {
@@ -110,24 +161,76 @@ pub async fn execute(
         Err(_) => return error_response("semaphore closed".into()),
     };
 
-    // Launch Chrome
-    let launch_config = if req.proxy.is_some() {
-        let mut c = config.clone();
-        c.proxy_url.clone_from(&req.proxy);
-        c
-    } else {
-        config.clone()
-    };
+    match req.session_id.as_deref() {
+        // Path B — create new persistent session
+        Some("new") => {
+            let proxy = req.proxy.as_deref();
+            let session_id = match pool.create(proxy).await {
+                Ok(id) => id,
+                Err(e) => return error_response(format!("session create: {e}")),
+            };
+            let page = match pool.get(&session_id).await {
+                Some(p) => p,
+                None => return error_response("session vanished after create".into()),
+            };
+            let has_destroy = req
+                .actions
+                .iter()
+                .any(|a| matches!(a, ChromeAction::DestroySession));
+            let mut result = run_actions(&page, &req).await;
+            // On error or explicit destroy — clean up session to avoid stale locks
+            if has_destroy || result.error.is_some() {
+                pool.destroy(&session_id).await;
+                result.session_id = None;
+            } else {
+                result.session_id = Some(session_id);
+            }
+            result
+        }
 
-    let (session, page) = match ChromeSession::launch(&launch_config).await {
-        Ok(sp) => sp,
-        Err(e) => return error_response(format!("chrome launch: {e}")),
-    };
+        // Path A — reuse existing session
+        Some(id) => {
+            let page = match pool.get(id).await {
+                Some(p) => p,
+                None => {
+                    return error_response(format!("session not found or expired: {id}"))
+                }
+            };
+            let has_destroy = req
+                .actions
+                .iter()
+                .any(|a| matches!(a, ChromeAction::DestroySession));
+            let mut result = run_actions(&page, &req).await;
+            // On error or explicit destroy — clean up session
+            if has_destroy || result.error.is_some() {
+                pool.destroy(id).await;
+                result.session_id = None;
+            } else {
+                result.session_id = Some(id.to_owned());
+            }
+            result
+        }
 
-    let result = run_actions(&page, &req).await;
+        // Path C — ephemeral (original behavior)
+        None => {
+            let launch_config = if req.proxy.is_some() {
+                let mut c = config.clone();
+                c.proxy_url.clone_from(&req.proxy);
+                c
+            } else {
+                config.clone()
+            };
 
-    session.shutdown().await;
-    result
+            let (session, page) = match ChromeSession::launch(&launch_config).await {
+                Ok(sp) => sp,
+                Err(e) => return error_response(format!("chrome launch: {e}")),
+            };
+
+            let result = run_actions(&page, &req).await;
+            session.shutdown().await;
+            result
+        }
+    }
 }
 
 async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
@@ -143,6 +246,7 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
 
     let mut screenshots = Vec::new();
     let mut evaluations = Vec::new();
+    let mut snapshots = Vec::new();
 
     for (i, action) in req.actions.iter().enumerate() {
         if Instant::now() > deadline {
@@ -150,6 +254,7 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
                 format!("timeout at action {i}"),
                 screenshots,
                 evaluations,
+                snapshots,
                 get_page_state(page).await,
             );
         }
@@ -158,11 +263,20 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
             Ok(ActionOutput::None) => {}
             Ok(ActionOutput::Screenshot(s)) => screenshots.push(s),
             Ok(ActionOutput::Eval(e)) => evaluations.push(e),
+            Ok(ActionOutput::Snapshot(s)) => snapshots.push(s),
+            Ok(ActionOutput::Cookies(entries)) => {
+                let json = serde_json::to_string(&entries).unwrap_or_default();
+                evaluations.push(EvalResult {
+                    js: "get_cookies".into(),
+                    result: json,
+                });
+            }
             Err(e) => {
                 return partial_response(
                     format!("action {i} failed: {e}"),
                     screenshots,
                     evaluations,
+                    snapshots,
                     get_page_state(page).await,
                 );
             }
@@ -176,8 +290,10 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
         error: None,
         screenshots,
         evaluations,
+        snapshots,
         cookies,
         final_url,
+        session_id: None,
     }
 }
 
@@ -186,6 +302,8 @@ pub enum ActionOutput {
     None,
     Screenshot(ScreenshotResult),
     Eval(EvalResult),
+    Snapshot(SnapshotResult),
+    Cookies(Vec<CookieEntry>),
 }
 
 async fn get_page_state(page: &Page) -> (HashMap<String, String>, String) {
@@ -211,8 +329,10 @@ fn error_response(msg: String) -> InteractResponse {
         error: Some(msg),
         screenshots: vec![],
         evaluations: vec![],
+        snapshots: vec![],
         cookies: HashMap::new(),
         final_url: String::new(),
+        session_id: None,
     }
 }
 
@@ -220,6 +340,7 @@ fn partial_response(
     msg: String,
     screenshots: Vec<ScreenshotResult>,
     evaluations: Vec<EvalResult>,
+    snapshots: Vec<SnapshotResult>,
     (cookies, final_url): (HashMap<String, String>, String),
 ) -> InteractResponse {
     InteractResponse {
@@ -227,7 +348,9 @@ fn partial_response(
         error: Some(msg),
         screenshots,
         evaluations,
+        snapshots,
         cookies,
         final_url,
+        session_id: None,
     }
 }
