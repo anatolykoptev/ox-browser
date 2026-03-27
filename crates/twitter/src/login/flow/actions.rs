@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::super::chrome::STEALTH_UA;
+use ox_http::stealth::STEALTH_UA;
 use super::super::error::{FlowStep, TwitterLoginError};
 use super::super::selectors;
 use super::{LoginFlow, LoginOutput};
