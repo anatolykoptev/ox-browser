@@ -59,24 +59,24 @@ impl BrowserPool {
     }
 
     /// Create a new session: get/launch browser for proxy, create context + page.
+    ///
+    /// Holds the browsers write lock through launch + tab creation to prevent
+    /// TOCTOU race with the reaper closing an empty browser before tab_count
+    /// is incremented.
     pub async fn create(&self, proxy: Option<&str>) -> Result<(String, Page), String> {
         let key = proxy.map_or(ProxyKey::None, |p| ProxyKey::Proxy(p.to_owned()));
 
-        {   // Ensure a browser exists for this proxy group.
+        let (context_id, page, listener_tasks) = {
             let mut bmap = self.browsers.write().await;
             if !bmap.contains_key(&key) {
                 let e = browser_pool_tab::launch_browser(&self.config, proxy).await?;
                 bmap.insert(key.clone(), e);
             }
-        }
-        let (context_id, page, listener_tasks) = {
-            let bmap = self.browsers.read().await;
-            let e = bmap.get(&key).ok_or("browser disappeared")?;
-            browser_pool_tab::create_tab(&e.browser).await?
+            let entry = bmap.get(&key).ok_or("browser disappeared")?;
+            let result = browser_pool_tab::create_tab(&entry.browser).await?;
+            bmap.get_mut(&key).unwrap().tab_count += 1;
+            result
         };
-        {   let mut bmap = self.browsers.write().await;
-            if let Some(e) = bmap.get_mut(&key) { e.tab_count += 1; }
-        }
 
         let id = new_session_id();
         let tab = TabEntry {
@@ -174,16 +174,23 @@ impl BrowserPool {
     }
 
     async fn close_empty_browsers(&self) {
-        let keys: Vec<ProxyKey> = {
-            let m = self.browsers.read().await;
-            m.iter().filter(|(_, e)| e.tab_count == 0).map(|(k, _)| k.clone()).collect()
+        // Single write lock to atomically find and remove empty browsers,
+        // preventing TOCTOU race with concurrent create().
+        let empty: Vec<(ProxyKey, BrowserEntry)> = {
+            let mut m = self.browsers.write().await;
+            let keys: Vec<ProxyKey> = m
+                .iter()
+                .filter(|(_, e)| e.tab_count == 0)
+                .map(|(k, _)| k.clone())
+                .collect();
+            keys.into_iter()
+                .filter_map(|k| m.remove(&k).map(|e| (k, e)))
+                .collect()
         };
-        for key in keys {
-            if let Some(mut e) = self.browsers.write().await.remove(&key) {
-                let _ = e.browser.close().await;
-                e.handler_task.abort();
-                tracing::info!(?key, "browser pool: empty browser closed");
-            }
+        for (key, mut e) in empty {
+            let _ = e.browser.close().await;
+            e.handler_task.abort();
+            tracing::info!(?key, "browser pool: empty browser closed");
         }
     }
 }

@@ -113,7 +113,8 @@ fn build_browser_config(
         .arg("--disable-blink-features=AutomationControlled")
         .arg("--window-size=1920,1080")
         .arg("--lang=en-US,en")
-        .arg("--remote-debugging-port=0");
+        .arg("--remote-debugging-port=0")
+        .arg("--js-flags=--max-old-space-size=512");
 
     if let Some(ref path) = config.chrome_path {
         builder = builder.chrome_executable(path);
