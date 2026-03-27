@@ -338,6 +338,17 @@ async fn do_hover(page: &Page, selector: &str) -> Result<ActionOutput, String> {
 }
 
 async fn do_go_back(page: &Page) -> Result<ActionOutput, String> {
+    let can_go_back: bool = page
+        .evaluate("window.history.length > 1")
+        .await
+        .map_err(|e| format!("go_back check: {e}"))?
+        .into_value()
+        .unwrap_or(false);
+
+    if !can_go_back {
+        return Ok(ActionOutput::None);
+    }
+
     page.evaluate("window.history.back()")
         .await
         .map_err(|e| format!("go_back: {e}"))?;
