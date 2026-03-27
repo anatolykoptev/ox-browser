@@ -195,6 +195,90 @@ impl ChromeSession {
         Ok(result.result.result)
     }
 
+    /// Attach network + console CDP listeners to a page, feeding into `SessionLogs`.
+    pub async fn attach_log_listeners(
+        page: &Page,
+        logs: &crate::chrome_interact::SessionLogs,
+    ) -> Result<(), String> {
+        use chromiumoxide::cdp::browser_protocol::network::{
+            EnableParams as NetEnableParams, EventLoadingFailed, EventResponseReceived,
+        };
+        use chromiumoxide::cdp::js_protocol::runtime::{
+            EnableParams as RtEnableParams, EventConsoleApiCalled,
+        };
+        use crate::chrome_interact::logs::{ConsoleEntry, NetworkEntry};
+
+        // Enable network domain
+        page.execute(NetEnableParams::default())
+            .await
+            .map_err(|e| format!("network.enable: {e}"))?;
+
+        // Enable runtime domain (needed for console events)
+        page.execute(RtEnableParams::default())
+            .await
+            .map_err(|e| format!("runtime.enable: {e}"))?;
+
+        // Response listener
+        let logs_r = logs.clone();
+        let page_r = page.clone();
+        tokio::spawn(async move {
+            if let Ok(mut events) = page_r.event_listener::<EventResponseReceived>().await {
+                while let Some(ev) = futures::StreamExt::next(&mut events).await {
+                    logs_r
+                        .push_network(NetworkEntry {
+                            method: String::new(),
+                            url: ev.response.url.clone(),
+                            status: Some(ev.response.status),
+                            error: None,
+                        })
+                        .await;
+                }
+            }
+        });
+
+        // Loading failure listener
+        let logs_f = logs.clone();
+        let page_f = page.clone();
+        tokio::spawn(async move {
+            if let Ok(mut events) = page_f.event_listener::<EventLoadingFailed>().await {
+                while let Some(ev) = futures::StreamExt::next(&mut events).await {
+                    logs_f
+                        .push_network(NetworkEntry {
+                            method: String::new(),
+                            url: ev.request_id.inner().to_string(),
+                            status: None,
+                            error: Some(ev.error_text.clone()),
+                        })
+                        .await;
+                }
+            }
+        });
+
+        // Console listener
+        let logs_c = logs.clone();
+        let page_c = page.clone();
+        tokio::spawn(async move {
+            if let Ok(mut events) = page_c.event_listener::<EventConsoleApiCalled>().await {
+                while let Some(ev) = futures::StreamExt::next(&mut events).await {
+                    let text = ev
+                        .args
+                        .iter()
+                        .filter_map(|a| a.value.as_ref().map(|v| v.to_string()))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    logs_c
+                        .push_console(ConsoleEntry {
+                            level: ev.r#type.as_ref().to_string(),
+                            text,
+                        })
+                        .await;
+                }
+            }
+        });
+
+        Ok(())
+    }
+
     /// Shut down browser and handler task.
     pub async fn shutdown(mut self) {
         let _ = self.browser.close().await;

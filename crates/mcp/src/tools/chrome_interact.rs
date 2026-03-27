@@ -84,6 +84,8 @@ pub enum ChromeActionInput {
     },
     /// Navigate back in browser history.
     GoBack,
+    /// Get captured network requests and console messages.
+    GetLogs,
 }
 
 fn default_cookie_path() -> String {
@@ -139,6 +141,7 @@ impl From<ChromeActionInput> for ChromeAction {
             }
             ChromeActionInput::Hover { selector } => Self::Hover { selector },
             ChromeActionInput::GoBack => Self::GoBack,
+            ChromeActionInput::GetLogs => Self::GetLogs,
         }
     }
 }

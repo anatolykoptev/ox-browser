@@ -17,6 +17,9 @@ use crate::ChromeSession;
 mod actions;
 pub use actions::execute_action;
 
+pub mod logs;
+pub use logs::{ConsoleEntry, NetworkEntry, SessionLogs};
+
 fn default_timeout() -> u64 {
     30
 }
@@ -83,6 +86,7 @@ pub enum ChromeAction {
         selector: String,
     },
     GoBack,
+    GetLogs,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -143,6 +147,10 @@ pub struct InteractResponse {
     pub final_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub network_log: Vec<NetworkEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub console_log: Vec<ConsoleEntry>,
 }
 
 /// Execute a chrome interaction session.
@@ -186,7 +194,7 @@ pub async fn execute(
                 .actions
                 .iter()
                 .any(|a| matches!(a, ChromeAction::DestroySession));
-            let mut result = run_actions(&page, &req).await;
+            let mut result = run_actions(&page, &req, None).await;
             // On error or explicit destroy — clean up session to avoid stale locks
             if has_destroy || result.error.is_some() {
                 pool.destroy(&session_id).await;
@@ -209,7 +217,7 @@ pub async fn execute(
                 .actions
                 .iter()
                 .any(|a| matches!(a, ChromeAction::DestroySession));
-            let mut result = run_actions(&page, &req).await;
+            let mut result = run_actions(&page, &req, None).await;
             // On error or explicit destroy — clean up session
             if has_destroy || result.error.is_some() {
                 pool.destroy(id).await;
@@ -235,14 +243,18 @@ pub async fn execute(
                 Err(e) => return error_response(format!("chrome launch: {e}")),
             };
 
-            let result = run_actions(&page, &req).await;
+            let result = run_actions(&page, &req, None).await;
             session.shutdown().await;
             result
         }
     }
 }
 
-async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
+async fn run_actions(
+    page: &Page,
+    req: &InteractRequest,
+    logs: Option<&SessionLogs>,
+) -> InteractResponse {
     // Navigate to URL
     if let Err(e) = page.goto(&req.url).await {
         return error_response(format!("navigate: {e}"));
@@ -256,6 +268,8 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
     let mut screenshots = Vec::new();
     let mut evaluations = Vec::new();
     let mut snapshots = Vec::new();
+    let mut network_log = Vec::new();
+    let mut console_log = Vec::new();
 
     for (i, action) in req.actions.iter().enumerate() {
         if Instant::now() > deadline {
@@ -264,11 +278,13 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
                 screenshots,
                 evaluations,
                 snapshots,
+                network_log,
+                console_log,
                 get_page_state(page).await,
             );
         }
 
-        match execute_action(page, action, deadline).await {
+        match execute_action(page, action, deadline, logs).await {
             Ok(ActionOutput::None) => {}
             Ok(ActionOutput::Screenshot(s)) => screenshots.push(s),
             Ok(ActionOutput::Eval(e)) => evaluations.push(e),
@@ -280,12 +296,18 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
                     result: json,
                 });
             }
+            Ok(ActionOutput::Logs { network, console }) => {
+                network_log.extend(network);
+                console_log.extend(console);
+            }
             Err(e) => {
                 return partial_response(
                     format!("action {i} failed: {e}"),
                     screenshots,
                     evaluations,
                     snapshots,
+                    network_log,
+                    console_log,
                     get_page_state(page).await,
                 );
             }
@@ -303,6 +325,8 @@ async fn run_actions(page: &Page, req: &InteractRequest) -> InteractResponse {
         cookies,
         final_url,
         session_id: None,
+        network_log,
+        console_log,
     }
 }
 
@@ -313,6 +337,10 @@ pub enum ActionOutput {
     Eval(EvalResult),
     Snapshot(SnapshotResult),
     Cookies(Vec<CookieEntry>),
+    Logs {
+        network: Vec<NetworkEntry>,
+        console: Vec<ConsoleEntry>,
+    },
 }
 
 async fn get_page_state(page: &Page) -> (HashMap<String, String>, String) {
@@ -342,6 +370,8 @@ fn error_response(msg: String) -> InteractResponse {
         cookies: HashMap::new(),
         final_url: String::new(),
         session_id: None,
+        network_log: vec![],
+        console_log: vec![],
     }
 }
 
@@ -350,6 +380,8 @@ fn partial_response(
     screenshots: Vec<ScreenshotResult>,
     evaluations: Vec<EvalResult>,
     snapshots: Vec<SnapshotResult>,
+    network_log: Vec<NetworkEntry>,
+    console_log: Vec<ConsoleEntry>,
     (cookies, final_url): (HashMap<String, String>, String),
 ) -> InteractResponse {
     InteractResponse {
@@ -361,5 +393,7 @@ fn partial_response(
         cookies,
         final_url,
         session_id: None,
+        network_log,
+        console_log,
     }
 }

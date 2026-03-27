@@ -10,7 +10,7 @@ use chromiumoxide::page::ScreenshotParams;
 use chromiumoxide::Page;
 use tokio::time::Instant;
 
-use super::{ActionOutput, ChromeAction, EvalResult, ScreenshotResult, SnapshotResult};
+use super::{ActionOutput, ChromeAction, EvalResult, ScreenshotResult, SessionLogs, SnapshotResult};
 
 const POLL_INTERVAL_MS: u64 = 300;
 const CHAR_DELAY_MS: u64 = 30;
@@ -20,6 +20,7 @@ pub async fn execute_action(
     page: &Page,
     action: &ChromeAction,
     deadline: Instant,
+    logs: Option<&SessionLogs>,
 ) -> Result<ActionOutput, String> {
     match action {
         ChromeAction::Click { selector } => {
@@ -55,6 +56,23 @@ pub async fn execute_action(
         }
         ChromeAction::Hover { selector } => do_hover(page, selector).await,
         ChromeAction::GoBack => do_go_back(page).await,
+        ChromeAction::GetLogs => do_get_logs(logs).await,
+    }
+}
+
+async fn do_get_logs(
+    logs: Option<&SessionLogs>,
+) -> Result<ActionOutput, String> {
+    match logs {
+        Some(l) => {
+            let network = l.take_network().await;
+            let console = l.take_console().await;
+            Ok(ActionOutput::Logs { network, console })
+        }
+        None => Ok(ActionOutput::Logs {
+            network: vec![],
+            console: vec![],
+        }),
     }
 }
 
