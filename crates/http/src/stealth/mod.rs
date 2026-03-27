@@ -17,6 +17,8 @@ pub const STEALTH_JS: &str = concat!(
     "\n",
     include_str!("js/media.js"),
     "\n",
+    include_str!("js/canvas.js"),
+    "\n",
     include_str!("js/worker.js"),
 );
 
