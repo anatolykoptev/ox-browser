@@ -248,16 +248,13 @@ async fn do_snapshot(page: &Page, label: Option<&str>) -> Result<ActionOutput, S
 
     let nodes = result.result.nodes;
 
-    // Build parent → children index (node_id string → vec of indices)
-    let mut children: HashMap<String, Vec<usize>> = HashMap::new();
-    for (i, node) in nodes.iter().enumerate() {
-        if let Some(pid) = &node.parent_id {
-            children
-                .entry(pid.as_ref().to_owned())
-                .or_default()
-                .push(i);
-        }
-    }
+    // Build node_id → index lookup for O(1) child resolution (avoids O(n^2)
+    // from nodes.iter().position() on pages with many nodes).
+    let id_to_idx: HashMap<String, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.node_id.as_ref().to_owned(), i))
+        .collect();
 
     // Find root (no parent)
     let root_idx = nodes
@@ -267,12 +264,19 @@ async fn do_snapshot(page: &Page, label: Option<&str>) -> Result<ActionOutput, S
 
     // Recursively format tree
     let mut out = String::new();
-    format_node(&nodes, &children, root_idx, 0, &mut out);
+    format_node(&nodes, &id_to_idx, root_idx, 0, &mut out);
 
     let label = label.unwrap_or("snapshot").to_owned();
     Ok(ActionOutput::Snapshot(SnapshotResult { label, tree: out }))
 }
 
+// NOTE: ChromeSession::launch() registers an auto-dismiss listener that always
+// accepts JS dialogs (accept=true). If a dialog fires before this explicit
+// HandleDialog action runs, the auto-dismiss will have already accepted it,
+// making accept=false ineffective. To reliably dismiss dialogs, the HandleDialog
+// action must be placed BEFORE the action that triggers the dialog (e.g., before
+// an Evaluate that calls confirm()). This is a known limitation — the auto-dismiss
+// exists to prevent session freezes from unexpected alerts.
 async fn do_handle_dialog(
     page: &Page,
     accept: bool,
@@ -289,6 +293,8 @@ async fn do_handle_dialog(
     Ok(ActionOutput::None)
 }
 
+// Verified: DispatchMouseEventParams x/y fields are f64, matching the f64
+// values from getBoundingClientRect(). No silent truncation occurs.
 async fn do_hover(page: &Page, selector: &str) -> Result<ActionOutput, String> {
     let js = format!(
         r#"(() => {{
@@ -341,7 +347,7 @@ async fn do_go_back(page: &Page) -> Result<ActionOutput, String> {
 
 fn format_node(
     nodes: &[chromiumoxide::cdp::browser_protocol::accessibility::AxNode],
-    children: &HashMap<String, Vec<usize>>,
+    id_to_idx: &HashMap<String, usize>,
     idx: usize,
     depth: usize,
     out: &mut String,
@@ -351,8 +357,8 @@ fn format_node(
         // Still recurse into ignored nodes' children
         if let Some(child_ids) = &node.child_ids {
             for cid in child_ids {
-                if let Some(ci) = nodes.iter().position(|n| n.node_id.as_ref() == cid.as_ref()) {
-                    format_node(nodes, children, ci, depth, out);
+                if let Some(&ci) = id_to_idx.get(cid.as_ref()) {
+                    format_node(nodes, id_to_idx, ci, depth, out);
                 }
             }
         }
@@ -370,10 +376,8 @@ fn format_node(
     if depth > 2 && matches!(role, "generic" | "none" | "unknown") {
         if let Some(child_ids) = &node.child_ids {
             for cid in child_ids {
-                if let Some(ci) =
-                    nodes.iter().position(|n| n.node_id.as_ref() == cid.as_ref())
-                {
-                    format_node(nodes, children, ci, depth, out);
+                if let Some(&ci) = id_to_idx.get(cid.as_ref()) {
+                    format_node(nodes, id_to_idx, ci, depth, out);
                 }
             }
         }
@@ -399,8 +403,8 @@ fn format_node(
 
     if let Some(child_ids) = &node.child_ids {
         for cid in child_ids {
-            if let Some(ci) = nodes.iter().position(|n| n.node_id.as_ref() == cid.as_ref()) {
-                format_node(nodes, children, ci, depth + 1, out);
+            if let Some(&ci) = id_to_idx.get(cid.as_ref()) {
+                format_node(nodes, id_to_idx, ci, depth + 1, out);
             }
         }
     }

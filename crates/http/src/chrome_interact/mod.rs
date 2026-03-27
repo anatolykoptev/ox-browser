@@ -253,8 +253,15 @@ pub async fn execute(
 async fn run_actions(
     page: &Page,
     req: &InteractRequest,
-    logs: Option<&SessionLogs>,
+    _logs: Option<&SessionLogs>,
 ) -> InteractResponse {
+    // Attach log listeners BEFORE navigation so we capture all network/console
+    // events fired during page load (fixes empty GetLogs bug).
+    let logs = SessionLogs::new();
+    if let Err(e) = ChromeSession::attach_log_listeners(page, &logs).await {
+        tracing::warn!(error = %e, "failed to attach log listeners — GetLogs will be empty");
+    }
+
     // Navigate to URL
     if let Err(e) = page.goto(&req.url).await {
         return error_response(format!("navigate: {e}"));
@@ -284,7 +291,7 @@ async fn run_actions(
             );
         }
 
-        match execute_action(page, action, deadline, logs).await {
+        match execute_action(page, action, deadline, Some(&logs)).await {
             Ok(ActionOutput::None) => {}
             Ok(ActionOutput::Screenshot(s)) => screenshots.push(s),
             Ok(ActionOutput::Eval(e)) => evaluations.push(e),
