@@ -1,7 +1,6 @@
 //! Action execution for chrome_interact -- one function per action type.
 
 use base64::Engine;
-use chromiumoxide::cdp::browser_protocol::input::InsertTextParams;
 use chromiumoxide::cdp::browser_protocol::network::SetCookieParams;
 use chromiumoxide::page::ScreenshotParams;
 use chromiumoxide::Page;
@@ -110,8 +109,7 @@ async fn do_type(
         return Ok(ActionOutput::None);
     }
     for ch in text.chars() {
-        let params = InsertTextParams { text: ch.to_string() };
-        page.execute(params).await.map_err(|e| format!("InsertText '{ch}': {e}"))?;
+        super::humanize::keyboard::dispatch_char(page, ch).await?;
         tokio::time::sleep(std::time::Duration::from_millis(CHAR_DELAY_MS)).await;
     }
     Ok(ActionOutput::None)
