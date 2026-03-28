@@ -131,8 +131,22 @@ impl CookieProvider for NoOpProvider {
 
 /// Build the cookie provider from config.
 ///
-/// Priority: chromium_enabled → byparr_url → NoOp.
+/// Priority: go_browser_url → chromium_enabled → byparr_url → NoOp.
 pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
+    // Highest priority: go-browser HTTP solver
+    let go_browser_url = config.solver.go_browser_url.clone()
+        .or_else(|| std::env::var("GO_BROWSER_URL").ok());
+    if let Some(ref url) = go_browser_url {
+        if !url.is_empty() {
+            let cfg = ox_http::solver_gobrowser::GoBrowserConfig {
+                base_url: url.clone(),
+                timeout: Duration::from_secs(config.solver.chromium_timeout_secs + 5),
+            };
+            tracing::info!(url, "using GoBrowserSolver");
+            return Arc::new(ox_http::solver_gobrowser::GoBrowserSolver::new(cfg));
+        }
+    }
+
     if config.solver.chromium_enabled {
         let chrome_path = config.solver.chromium_path.clone()
             .or_else(|| std::env::var("CHROME_PATH").ok());

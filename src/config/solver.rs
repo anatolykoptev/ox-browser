@@ -12,6 +12,10 @@ pub struct SolverSection {
     /// Memory budget for solver container in MB (used to calc max concurrent browsers).
     pub byparr_memory_mb: usize,
 
+    /// URL of go-browser service (e.g. "http://go-browser:8906").
+    /// When set, GoBrowserSolver is used (highest priority).
+    pub go_browser_url: Option<String>,
+
     /// Enable the native Chromium CDP solver (takes priority over byparr when true).
     pub chromium_enabled: bool,
     /// Full path to Chrome/Chromium binary. Auto-detected when not set.
@@ -28,6 +32,7 @@ impl Default for SolverSection {
             byparr_url: None,
             byparr_timeout_secs: 60,
             byparr_memory_mb: 768,
+            go_browser_url: None,
             chromium_enabled: false,
             chromium_path: None,
             chromium_max_concurrent: 3,
