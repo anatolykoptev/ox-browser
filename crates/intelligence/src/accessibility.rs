@@ -21,6 +21,9 @@ pub struct AccessibilityReport {
     pub landmarks: u32,
     pub inputs_total: u32,
     pub inputs_with_label: u32,
+    pub images_decorative: u32,
+    pub has_skip_link: bool,
+    pub has_reduced_motion: bool,
     pub score: u8,
 }
 
@@ -28,21 +31,27 @@ pub struct AccessibilityReport {
 pub fn analyze(html: &str) -> AccessibilityReport {
     let doc = Document::from(html);
     let lang = extract_lang(&doc);
-    let (images_with_alt, images_empty_alt, images_no_alt) = count_images(&doc);
+    let (images_with_alt, images_empty_alt, images_no_alt, images_decorative) =
+        count_images(&doc);
     let (headings, h1_count, heading_skip) = analyze_headings(&doc);
     let landmarks = count_landmarks(&doc);
     let (inputs_total, inputs_with_label) = count_labeled_inputs(&doc);
+    let has_skip_link = detect_skip_link(&doc);
+    let has_reduced_motion = detect_reduced_motion(&doc);
     let mut r = AccessibilityReport {
         lang,
         images_with_alt,
         images_empty_alt,
         images_no_alt,
+        images_decorative,
         headings,
         h1_count,
         heading_skip,
         landmarks,
         inputs_total,
         inputs_with_label,
+        has_skip_link,
+        has_reduced_motion,
         score: 0,
     };
     r.score = compute_score(&r);
@@ -58,16 +67,21 @@ fn extract_lang(doc: &Document) -> String {
         .unwrap_or_default()
 }
 
-fn count_images(doc: &Document) -> (u32, u32, u32) {
-    let (mut with_alt, mut empty_alt, mut no_alt) = (0u32, 0u32, 0u32);
+fn count_images(doc: &Document) -> (u32, u32, u32, u32) {
+    let (mut with_alt, mut empty_alt, mut no_alt, mut decorative) = (0u32, 0u32, 0u32, 0u32);
     for img in doc.select("img").iter() {
+        let role = img.attr("role").unwrap_or_default().trim().to_lowercase();
+        if role == "presentation" || role == "none" {
+            decorative += 1;
+            continue;
+        }
         match img.attr("alt") {
             None => no_alt += 1,
             Some(v) if v.trim().is_empty() => empty_alt += 1,
             Some(_) => with_alt += 1,
         }
     }
-    (with_alt, empty_alt, no_alt)
+    (with_alt, empty_alt, no_alt, decorative)
 }
 
 fn analyze_headings(doc: &Document) -> (Vec<HeadingInfo>, u32, bool) {
@@ -144,15 +158,40 @@ fn count_labeled_inputs(doc: &Document) -> (u32, u32) {
     (total, labeled)
 }
 
+fn detect_skip_link(doc: &Document) -> bool {
+    for link in doc.select("a[href^='#']").iter() {
+        let href = link.attr("href").unwrap_or_default().to_lowercase();
+        let text = link.text().to_lowercase();
+        if href.contains("main") || href.contains("content") || href.contains("skip")
+            || text.contains("skip") || text.contains("перейти к содержан")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn detect_reduced_motion(doc: &Document) -> bool {
+    for style in doc.select("style").iter() {
+        if style.text().contains("prefers-reduced-motion") {
+            return true;
+        }
+    }
+    false
+}
+
 fn compute_score(r: &AccessibilityReport) -> u8 {
     let mut score = 0u32;
-    if !r.lang.is_empty() { score += 25; }
+    if !r.lang.is_empty() { score += 20; }
     let total_img = r.images_with_alt + r.images_empty_alt + r.images_no_alt;
-    if total_img == 0 || r.images_no_alt == 0 { score += 25; }
+    if total_img == 0 || r.images_no_alt == 0 { score += 20; }
     if r.h1_count == 1 { score += 15; }
     if !r.heading_skip { score += 10; }
-    if r.landmarks > 0 { score += 15; }
+    if r.landmarks > 0 { score += 10; }
     if r.inputs_total == 0 || r.inputs_with_label == r.inputs_total { score += 10; }
+    if r.has_skip_link { score += 5; }
+    if r.has_reduced_motion { score += 5; }
+    if r.images_decorative > 0 { score += 5; }
     score.min(100) as u8
 }
 
@@ -244,18 +283,63 @@ mod tests {
 
     #[test]
     fn score_calculation() {
-        let perfect = analyze(r#"<html lang="en"><body>
+        let perfect = analyze(r##"<html lang="en"><body>
+            <a href="#main-content">Skip to content</a>
+            <style>@media (prefers-reduced-motion: reduce) { * { animation: none; } }</style>
             <header>H</header>
-            <main><h1>T</h1><h2>S</h2>
+            <main id="main-content"><h1>T</h1><h2>S</h2>
                 <img src="a.png" alt="d">
+                <img src="spacer.gif" role="presentation">
                 <label for="q">Q</label>
                 <input id="q" type="text">
             </main>
             <footer>F</footer>
-        </body></html>"#);
+        </body></html>"##);
         assert_eq!(perfect.score, 100, "expected 100, got {:?}", perfect);
 
         let bad = analyze(r#"<html><body><img src="x.png"></body></html>"#);
         assert!(bad.score < 40, "expected low score, got {}", bad.score);
+    }
+
+    #[test]
+    fn decorative_images_not_counted_as_missing_alt() {
+        let r = analyze(r#"<html lang="en"><body>
+            <img src="a.png" alt="photo">
+            <img src="decorative.png" role="presentation">
+            <img src="spacer.gif" role="none">
+            <img src="missing.png">
+        </body></html>"#);
+        assert_eq!(r.images_with_alt, 1);
+        assert_eq!(r.images_decorative, 2);
+        assert_eq!(r.images_no_alt, 1);
+    }
+
+    #[test]
+    fn detect_skip_navigation_link() {
+        let r = analyze(r##"<html lang="en"><body>
+            <a href="#main-content" class="sr-only">Перейти к содержанию</a>
+            <main id="main-content">Content</main>
+        </body></html>"##);
+        assert!(r.has_skip_link);
+    }
+
+    #[test]
+    fn detect_skip_link_absent() {
+        let r = analyze(r#"<html lang="en"><body><a href="/about">About</a></body></html>"#);
+        assert!(!r.has_skip_link);
+    }
+
+    #[test]
+    fn detect_reduced_motion_support() {
+        let r = analyze(r#"<html lang="en"><body>
+            <style>@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }</style>
+        </body></html>"#);
+        assert!(r.has_reduced_motion);
+    }
+
+    #[test]
+    fn detect_reduced_motion_absent() {
+        let r = analyze(r#"<html lang="en"><body><style>.foo { color: red; }</style></body></html>"#);
+        assert!(!r.has_reduced_motion);
     }
 }
