@@ -111,15 +111,35 @@ fn count_labeled_inputs(doc: &Document) -> (u32, u32) {
     for input in doc.select("input, textarea, select").iter() {
         let t = input.attr("type").unwrap_or_default().trim().to_lowercase();
         if matches!(t.as_str(), "hidden" | "submit" | "button" | "reset") { continue; }
+
+        // Skip inputs inside aria-hidden containers (e.g. honeypot fields)
+        let ancestors = input.ancestors(None);
+        let in_aria_hidden = ancestors.iter().any(|a| {
+            a.attr("aria-hidden")
+                .map(|v| v.to_string().trim().eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+        });
+        if in_aria_hidden { continue; }
+
         total += 1;
 
+        // 1. Explicit: <label for="id"> matches input id
         let id = input.attr("id").unwrap_or_default();
         let has_for = !id.is_empty() && doc.select(&format!("label[for=\"{id}\"]")).length() > 0;
+
+        // 2. ARIA: aria-label or aria-labelledby
         let has_aria = input.attr("aria-label").map(|v| !v.trim().is_empty()).unwrap_or(false)
             || input.attr("aria-labelledby").map(|v| !v.trim().is_empty()).unwrap_or(false);
+
+        // 3. Title attribute
         let has_title = input.attr("title").map(|v| !v.trim().is_empty()).unwrap_or(false);
 
-        if has_for || has_aria || has_title { labeled += 1; }
+        // 4. Implicit: input nested inside a <label> element
+        let has_implicit = input.ancestors(Some(10)).iter().any(|a| {
+            a.is("label")
+        });
+
+        if has_for || has_aria || has_title || has_implicit { labeled += 1; }
     }
     (total, labeled)
 }
@@ -176,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn form_labels() {
+    fn form_labels_explicit_and_aria() {
         let r = analyze(r#"<html><body><form>
             <label for="name">Name</label>
             <input id="name" type="text">
@@ -184,6 +204,30 @@ mod tests {
             <input type="text">
         </form></body></html>"#);
         assert_eq!((r.inputs_total, r.inputs_with_label), (3, 2));
+    }
+
+    #[test]
+    fn form_labels_implicit_wrapping() {
+        // Input inside <label> — valid implicit association
+        let r = analyze(r#"<html><body><form>
+            <label><input type="checkbox"> I agree</label>
+            <label>Name <input type="text"></label>
+            <input type="text">
+        </form></body></html>"#);
+        assert_eq!(r.inputs_total, 3);
+        assert_eq!(r.inputs_with_label, 2, "implicit label wrapping should count");
+    }
+
+    #[test]
+    fn form_labels_skip_aria_hidden() {
+        // Inputs inside aria-hidden containers (honeypots) should be skipped entirely
+        let r = analyze(r#"<html><body><form>
+            <label for="name">Name</label>
+            <input id="name" type="text">
+            <div aria-hidden="true"><input type="text" name="honeypot"></div>
+        </form></body></html>"#);
+        assert_eq!(r.inputs_total, 1, "aria-hidden input should not be counted");
+        assert_eq!(r.inputs_with_label, 1);
     }
 
     #[test]
