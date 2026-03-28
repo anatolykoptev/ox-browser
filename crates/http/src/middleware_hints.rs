@@ -39,6 +39,14 @@ impl Handler for ClientHintsHandler {
                 }
             }
         }
+
+        // Inject Accept-Language if not already present.
+        // Anti-bot systems compare this with navigator.languages fingerprint.
+        if !req.has_header("accept-language") {
+            req.headers
+                .push(("accept-language".into(), "en-US,en;q=0.9".into()));
+        }
+
         self.next.handle(req).await
     }
 }
@@ -69,7 +77,7 @@ mod tests {
 
     fn chrome_ua() -> String {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-         (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+         (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             .into()
     }
 
@@ -104,7 +112,7 @@ mod tests {
         });
         let handler = chain(vec![client_hints_middleware()], base);
 
-        let ua = "Mozilla/5.0 (Windows NT 10.0; rv:133.0) Gecko/20100101 Firefox/133.0";
+        let ua = "Mozilla/5.0 (Windows NT 10.0; rv:138.0) Gecko/20100101 Firefox/138.0";
         let req = Request {
             method: "GET".into(),
             url: "https://example.com".into(),
@@ -149,6 +157,59 @@ mod tests {
         // But sec-ch-ua-mobile and sec-ch-ua-platform should still be injected.
         assert!(hdrs.iter().any(|(k, _)| k == "sec-ch-ua-mobile"));
         assert!(hdrs.iter().any(|(k, _)| k == "sec-ch-ua-platform"));
+    }
+
+    #[tokio::test]
+    async fn injects_accept_language() {
+        let captured = Arc::new(tokio::sync::Mutex::new(vec![]));
+        let base: Arc<dyn Handler> = Arc::new(CaptureHandler {
+            captured: captured.clone(),
+        });
+        let handler = chain(vec![client_hints_middleware()], base);
+
+        let req = Request {
+            method: "GET".into(),
+            url: "https://example.com".into(),
+            headers: vec![("user-agent".into(), chrome_ua())],
+            body: None,
+            proxy: None,
+        };
+        handler.handle(req).await.unwrap();
+
+        let hdrs = captured.lock().await;
+        let al = hdrs
+            .iter()
+            .find(|(k, _)| k == "accept-language")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(al, Some("en-US,en;q=0.9"));
+    }
+
+    #[tokio::test]
+    async fn does_not_overwrite_accept_language() {
+        let captured = Arc::new(tokio::sync::Mutex::new(vec![]));
+        let base: Arc<dyn Handler> = Arc::new(CaptureHandler {
+            captured: captured.clone(),
+        });
+        let handler = chain(vec![client_hints_middleware()], base);
+
+        let req = Request {
+            method: "GET".into(),
+            url: "https://example.com".into(),
+            headers: vec![
+                ("user-agent".into(), chrome_ua()),
+                ("accept-language".into(), "ru-RU,ru;q=0.9".into()),
+            ],
+            body: None,
+            proxy: None,
+        };
+        handler.handle(req).await.unwrap();
+
+        let hdrs = captured.lock().await;
+        let al = hdrs
+            .iter()
+            .find(|(k, _)| k == "accept-language")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(al, Some("ru-RU,ru;q=0.9"));
     }
 
     #[tokio::test]

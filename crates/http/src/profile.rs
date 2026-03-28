@@ -7,41 +7,42 @@ pub struct BrowserProfile {
     pub browser: &'static str,
     pub os: &'static str,
     pub mobile: bool,
+    pub accept_language: &'static str,
 }
 
 /// 16 built-in profiles matching go-stealth: Chrome/Firefox/Safari/Edge x OS.
 pub static BUILTIN_PROFILES: &[BrowserProfile] = &[
     // Chrome -- Windows
-    bp("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", "chrome", "windows", false),
-    bp("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36", "chrome", "windows", false),
+    bp("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36", "chrome", "windows", false, "en-US,en;q=0.9"),
+    bp("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36", "chrome", "windows", false, "en-US,en;q=0.9"),
     // Chrome -- macOS
-    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", "chrome", "macos", false),
-    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36", "chrome", "macos", false),
+    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36", "chrome", "macos", false, "en-US,en;q=0.9"),
+    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36", "chrome", "macos", false, "en-US,en;q=0.9"),
     // Chrome -- Linux
-    bp("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", "chrome", "linux", false),
-    bp("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36", "chrome", "linux", false),
+    bp("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36", "chrome", "linux", false, "en-US,en;q=0.9"),
+    bp("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36", "chrome", "linux", false, "en-US,en;q=0.9"),
     // Chrome -- Android
-    bp("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36", "chrome", "android", true),
+    bp("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36", "chrome", "android", true, "en-US,en;q=0.9"),
     // Safari -- macOS
-    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15", "safari", "macos", false),
-    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15", "safari", "macos", false),
+    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15", "safari", "macos", false, "en-US,en;q=0.9"),
+    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15", "safari", "macos", false, "en-US,en;q=0.9"),
     // Safari -- iOS
-    bp("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", "safari", "ios", true),
-    bp("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", "safari", "ios", true),
+    bp("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", "safari", "ios", true, "en-US,en;q=0.9"),
+    bp("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", "safari", "ios", true, "en-US,en;q=0.9"),
     // Firefox -- Windows
-    bp("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0", "firefox", "windows", false),
+    bp("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0", "firefox", "windows", false, "en-US,en;q=0.9"),
     // Firefox -- macOS
-    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0", "firefox", "macos", false),
+    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:138.0) Gecko/20100101 Firefox/138.0", "firefox", "macos", false, "en-US,en;q=0.9"),
     // Firefox -- Linux
-    bp("Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0", "firefox", "linux", false),
+    bp("Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:138.0) Gecko/20100101 Firefox/138.0", "firefox", "linux", false, "en-US,en;q=0.9"),
     // Edge -- Windows
-    bp("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0", "edge", "windows", false),
+    bp("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0", "edge", "windows", false, "en-US,en;q=0.9"),
     // Edge -- macOS
-    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0", "edge", "macos", false),
+    bp("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0", "edge", "macos", false, "en-US,en;q=0.9"),
 ];
 
-const fn bp(ua: &'static str, browser: &'static str, os: &'static str, mobile: bool) -> BrowserProfile {
-    BrowserProfile { user_agent: ua, browser, os, mobile }
+const fn bp(ua: &'static str, browser: &'static str, os: &'static str, mobile: bool, accept_language: &'static str) -> BrowserProfile {
+    BrowserProfile { user_agent: ua, browser, os, mobile, accept_language }
 }
 
 /// Filter criteria for selecting profiles.
