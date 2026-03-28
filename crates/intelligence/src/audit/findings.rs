@@ -74,14 +74,14 @@ pub fn performance_findings(report: &PerformanceReport) -> Vec<AuditFinding> {
         out.push(AuditFinding {
             severity: "high", category: "performance",
             message: "No compression enabled".into(),
-            fix: "Enable gzip or Brotli compression on the server".into(),
+            fix: "Add to nginx: gzip on; gzip_types text/plain text/css text/xml application/javascript application/json image/svg+xml; gzip_vary on; gzip_comp_level 6;".into(),
         });
     }
     if report.cache_control.is_empty() {
         out.push(AuditFinding {
             severity: "high", category: "performance",
             message: "No Cache-Control header".into(),
-            fix: "Set Cache-Control header with appropriate max-age".into(),
+            fix: "Add to nginx location block: add_header Cache-Control \"public, max-age=3600\" always;".into(),
         });
     }
     if report.images_total > 0 && report.images_lazy == 0 {
@@ -121,6 +121,27 @@ pub fn performance_findings(report: &PerformanceReport) -> Vec<AuditFinding> {
                 fix: "Add loading=\"lazy\" to more below-the-fold images".into(),
             });
         }
+    }
+    if !report.has_speculation_rules {
+        out.push(AuditFinding {
+            severity: "low", category: "performance",
+            message: "No speculation rules for prerendering".into(),
+            fix: "Add <script type=\"speculationrules\">{\"prerender\":[{\"where\":{\"href_matches\":\"/*\"},\"eagerness\":\"moderate\"}]}</script>".into(),
+        });
+    }
+    if report.font_preloads == 0 && !report.preload.is_empty() {
+        out.push(AuditFinding {
+            severity: "medium", category: "performance",
+            message: "No font preloads detected (impacts LCP)".into(),
+            fix: "Add <link rel=\"preload\" href=\"/font.woff2\" as=\"font\" type=\"font/woff2\" crossorigin>".into(),
+        });
+    }
+    if report.images_legacy_format > 0 {
+        out.push(AuditFinding {
+            severity: "low", category: "performance",
+            message: format!("{} images in legacy format (JPEG/PNG)", report.images_legacy_format),
+            fix: "Convert images to WebP or AVIF for 25-50% smaller file sizes".into(),
+        });
     }
     out
 }
@@ -176,6 +197,20 @@ pub fn accessibility_findings(report: &AccessibilityReport) -> Vec<AuditFinding>
             severity: "medium", category: "accessibility",
             message: format!("{} form inputs without labels", unlabeled),
             fix: "Associate <label> elements with all form inputs".into(),
+        });
+    }
+    if !report.has_skip_link {
+        out.push(AuditFinding {
+            severity: "medium", category: "accessibility",
+            message: "No skip navigation link".into(),
+            fix: "Add as first child of <body>: <a href=\"#main-content\" class=\"sr-only focus:not-sr-only\">Skip to content</a>".into(),
+        });
+    }
+    if !report.has_reduced_motion {
+        out.push(AuditFinding {
+            severity: "low", category: "accessibility",
+            message: "No prefers-reduced-motion support detected".into(),
+            fix: "Add CSS: @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; } }".into(),
         });
     }
     out
