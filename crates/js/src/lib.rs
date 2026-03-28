@@ -15,6 +15,7 @@ mod site_audit;
 pub mod site_twitter;
 mod solve;
 mod chrome_interact;
+pub mod gobrowser_proxy;
 mod twitter_login;
 
 pub use solve::SolveResponse;
@@ -64,6 +65,7 @@ pub struct AppState {
     pub chrome_config: ox_http::chrome_session::ChromeLoginConfig,
     pub chrome_semaphore: Arc<Semaphore>,
     pub session_pool: ox_http::SessionPool,
+    pub gobrowser_proxy: Option<Arc<gobrowser_proxy::GoBrowserProxy>>,
 }
 
 impl AppState {
@@ -77,6 +79,7 @@ impl AppState {
         twitter_config: ox_twitter::login::TwitterLoginConfig,
         chrome_config: ox_http::chrome_session::ChromeLoginConfig,
         session_pool: ox_http::SessionPool,
+        gobrowser_proxy: Option<Arc<gobrowser_proxy::GoBrowserProxy>>,
     ) -> Self {
         let twitter_semaphore = Arc::new(Semaphore::new(twitter_config.max_concurrent));
         let chrome_semaphore = Arc::new(Semaphore::new(2));
@@ -93,6 +96,7 @@ impl AppState {
             chrome_config,
             chrome_semaphore,
             session_pool,
+            gobrowser_proxy,
         }
     }
 }
@@ -166,6 +170,7 @@ mod tests {
             ox_twitter::login::TwitterLoginConfig::default(),
             chrome_config,
             session_pool,
+            None,
         )
     }
 

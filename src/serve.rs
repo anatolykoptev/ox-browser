@@ -101,6 +101,14 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let session_pool = ox_http::SessionPool::new(chrome_config.clone());
     let _reaper_handle = session_pool.clone().start_reaper();
 
+    let gobrowser_proxy = config.solver.go_browser_url.clone()
+        .or_else(|| std::env::var("GO_BROWSER_URL").ok())
+        .filter(|u| !u.is_empty())
+        .map(|url| {
+            tracing::info!(url, "go-browser proxy enabled for /chrome/interact");
+            Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(url))
+        });
+
     let http_client = Arc::new(HttpClient::new(http_config)?);
     let state = ox_js::AppState::new(
         provider,
@@ -111,6 +119,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         twitter_config,
         chrome_config.clone(),
         session_pool.clone(),
+        gobrowser_proxy,
     );
     let rest_router = ox_js::router(state.clone());
     let mcp_router = ox_mcp::build_mcp_router(
