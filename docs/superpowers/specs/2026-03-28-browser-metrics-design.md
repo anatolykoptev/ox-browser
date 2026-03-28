@@ -45,11 +45,23 @@ ox-browser already has Chrome/CloakBrowser integration via `chromium_enabled` co
 **Pros:** Reuses existing Chrome pool, consistent with ox-browser architecture
 **Cons:** Adds Chrome dependency to audit (currently audit is HTTP-only)
 
-### Option B: go-browser Integration
-go-browser has rod/chromedp. Add a CWV collection function that site_audit calls.
+### Option B: go-browser Integration (Strong Alternative)
+go-browser (Go, rod backend) already has:
+- `Render(url)` → Page with HTML, Title, Status
+- `actions.go` / `interact.go` — JS execution via CDP (`page.Evaluate`)
+- Crash recovery (auto-restart on Chrome death)
+- Pool with concurrency limits
+- Proxy support via go-stealth
+- Resource blocking (skip images/fonts for speed)
 
-**Pros:** Go ecosystem, easier to integrate with go-code
-**Cons:** go-browser is newer, less battle-tested than ox-browser Chrome
+For CWV: add a `CollectCWV(url)` method that:
+1. Navigates via rod
+2. Injects PerformanceObserver JS
+3. Waits 3-5s for metrics collection
+4. Returns structured CWV data
+
+**Pros:** Go ecosystem, already used in go-search/go-wp production, same infra
+**Cons:** No Rust integration — needs HTTP bridge or direct go-code integration
 
 ### Option C: Separate Lighthouse Wrapper
 Shell out to `lighthouse --output=json` CLI.
