@@ -27,7 +27,6 @@ mod ratelimit;
 mod retry;
 mod server;
 mod solver;
-mod twitter;
 mod chrome;
 
 pub use cache::CacheSection;
@@ -43,7 +42,6 @@ pub use ratelimit::RatelimitSection;
 pub use retry::RetrySection;
 pub use server::ServerSection;
 pub use solver::SolverSection;
-pub use twitter::TwitterSection;
 pub use chrome::ChromeSection;
 
 use std::path::Path;
@@ -73,7 +71,6 @@ pub struct ServerConfig {
     pub crawler: CrawlerSection,
     pub media: MediaSection,
     pub ratelimit: RatelimitSection,
-    pub twitter: TwitterSection,
     pub chrome: ChromeSection,
 }
 

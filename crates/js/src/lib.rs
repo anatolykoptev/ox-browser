@@ -16,7 +16,6 @@ pub mod site_twitter;
 mod solve;
 mod chrome_interact;
 pub mod gobrowser_proxy;
-mod twitter_login;
 
 pub use solve::SolveResponse;
 
@@ -26,7 +25,6 @@ use axum::routing::{get, post};
 use axum::Router;
 use ox_http::read_pipeline::SiteHandler;
 use ox_http::{CookieCache, CookieProvider, HttpClient};
-use tokio::sync::Semaphore;
 
 /// Runtime defaults configurable via config.toml.
 #[derive(Clone, Debug)]
@@ -60,8 +58,6 @@ pub struct AppState {
     pub media_config: ox_media::MediaConfig,
     /// Injected site-specific handlers for the read pipeline.
     pub site_handlers: Arc<Vec<SiteHandler>>,
-    pub twitter_config: ox_twitter::login::TwitterLoginConfig,
-    pub twitter_semaphore: Arc<Semaphore>,
     pub gobrowser_proxy: Arc<gobrowser_proxy::GoBrowserProxy>,
 }
 
@@ -73,10 +69,8 @@ impl AppState {
         http_client: Arc<HttpClient>,
         defaults: EndpointDefaults,
         media_config: ox_media::MediaConfig,
-        twitter_config: ox_twitter::login::TwitterLoginConfig,
         gobrowser_proxy: Arc<gobrowser_proxy::GoBrowserProxy>,
     ) -> Self {
-        let twitter_semaphore = Arc::new(Semaphore::new(twitter_config.max_concurrent));
         let handlers: Vec<SiteHandler> = vec![site_twitter::make_twitter_handler()];
         Self {
             provider,
@@ -85,8 +79,6 @@ impl AppState {
             defaults,
             media_config,
             site_handlers: Arc::new(handlers),
-            twitter_config,
-            twitter_semaphore,
             gobrowser_proxy,
         }
     }
@@ -108,7 +100,6 @@ pub fn router(state: AppState) -> Router {
         .route("/crawl", post(crawl::crawl))
         .route("/site-audit", post(site_audit::site_audit))
         .route("/read", post(read::read))
-        .route("/twitter/login", post(twitter_login::twitter_login))
         .route("/chrome/interact", post(chrome_interact::chrome_interact_handler))
         .route("/chrome/session/{id}", axum::routing::delete(chrome_interact::destroy_session_handler))
         .with_state(state)
@@ -159,7 +150,6 @@ mod tests {
             Arc::new(HttpClient::new(HttpConfig::default()).unwrap()),
             EndpointDefaults::default(),
             ox_media::MediaConfig::default(),
-            ox_twitter::login::TwitterLoginConfig::default(),
             proxy,
         )
     }
