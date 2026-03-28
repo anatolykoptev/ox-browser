@@ -26,6 +26,10 @@ pub struct PerformanceReport {
     pub images_lazy: u32,
     pub inline_styles_count: u32,
     pub inline_styles_bytes: u32,
+    pub has_speculation_rules: bool,
+    pub font_preloads: u32,
+    pub images_modern_format: u32,
+    pub images_legacy_format: u32,
     pub score: u8,
 }
 
@@ -56,16 +60,22 @@ pub fn analyze(headers: &HashMap<String, String>, html: &str) -> PerformanceRepo
 fn compute_score(r: &PerformanceReport) -> u8 {
     let mut score: u32 = 0;
     if !r.compression.is_empty() { score += 15; }
-    if !r.cache_control.is_empty() { score += 15; }
-    if !r.etag.is_empty() || !r.expires.is_empty() { score += 15; }
-    if !r.preload.is_empty() { score += 10; }
-    if !r.preconnect.is_empty() { score += 10; }
+    if !r.cache_control.is_empty() { score += 12; }
+    if !r.etag.is_empty() || !r.expires.is_empty() { score += 10; }
+    if !r.preload.is_empty() { score += 8; }
+    if !r.preconnect.is_empty() { score += 5; }
     let lazy_ratio = if r.images_total > 0 { r.images_lazy * 100 / r.images_total } else { 100 };
-    if lazy_ratio >= 50 { score += 10; }
-    if r.inline_styles_bytes < 10_000 { score += 10; }
+    if lazy_ratio >= 50 { score += 8; }
+    if r.inline_styles_bytes < 10_000 { score += 5; }
     if r.http3_supported { score += 5; }
-    if !r.prefetch.is_empty() { score += 5; }
-    if r.inline_styles_count == 0 { score += 5; }
+    if !r.prefetch.is_empty() { score += 2; }
+    if r.inline_styles_count == 0 { score += 3; }
+    // New checks
+    if r.has_speculation_rules { score += 5; }
+    if r.font_preloads > 0 { score += 8; }
+    let total_imgs = r.images_modern_format + r.images_legacy_format;
+    if total_imgs > 0 && r.images_legacy_format == 0 { score += 7; }
+    if total_imgs == 0 { score += 7; } // No images = no format issue
     score.min(100) as u8
 }
 
@@ -137,6 +147,32 @@ fn parse_html(html: &str, report: &mut PerformanceReport) {
     for node in doc.select("style").iter() {
         report.inline_styles_count += 1;
         report.inline_styles_bytes += node.text().len() as u32;
+    }
+
+    // Speculation rules (prerender/prefetch via JSON).
+    report.has_speculation_rules = doc
+        .select("script[type='speculationrules']")
+        .length() > 0;
+
+    // Font preloads (critical for LCP).
+    report.font_preloads = report.preload.iter()
+        .filter(|h| h.as_type == "font")
+        .count() as u32;
+
+    // Image formats: modern (WebP/AVIF) vs legacy (JPEG/PNG/GIF).
+    for img in doc.select("img[src]").iter() {
+        let src = img.attr("src").unwrap_or_default().to_lowercase();
+        if src.ends_with(".webp") || src.ends_with(".avif") || src.contains("/webp") || src.contains("/avif") {
+            report.images_modern_format += 1;
+        } else if src.ends_with(".jpg") || src.ends_with(".jpeg") || src.ends_with(".png") || src.ends_with(".gif") {
+            report.images_legacy_format += 1;
+        }
+    }
+    for source in doc.select("picture source[type]").iter() {
+        let t = source.attr("type").unwrap_or_default().to_lowercase();
+        if t.contains("webp") || t.contains("avif") {
+            report.images_modern_format += 1;
+        }
     }
 }
 
@@ -244,13 +280,13 @@ mod tests {
             <img src="a.jpg" loading="lazy">
         "#;
         let r = analyze(&h, html);
-        assert_eq!(r.score, 100);
+        assert_eq!(r.score, 81);
     }
 
     #[test]
     fn performance_score_empty() {
         let r = analyze(&HashMap::new(), "");
-        assert_eq!(r.score, 25);
+        assert_eq!(r.score, 23);
     }
 
     #[test]
@@ -262,5 +298,43 @@ mod tests {
         let r = analyze(&HashMap::new(), html);
         assert_eq!(r.inline_styles_count, 2);
         assert!(r.inline_styles_bytes > 0);
+    }
+
+    #[test]
+    fn detect_speculation_rules() {
+        let html = r#"<script type="speculationrules">{"prerender":[{"where":{"href_matches":"/*"}}]}</script>"#;
+        let r = analyze(&HashMap::new(), html);
+        assert!(r.has_speculation_rules);
+    }
+
+    #[test]
+    fn detect_speculation_rules_absent() {
+        let r = analyze(&HashMap::new(), "<script>console.log('hi')</script>");
+        assert!(!r.has_speculation_rules);
+    }
+
+    #[test]
+    fn detect_font_preloads() {
+        let html = r#"
+            <link rel="preload" href="/font.woff2" as="font" type="font/woff2">
+            <link rel="preload" href="/other.woff2" as="font">
+            <link rel="preload" href="/script.js" as="script">
+        "#;
+        let r = analyze(&HashMap::new(), html);
+        assert_eq!(r.font_preloads, 2);
+    }
+
+    #[test]
+    fn detect_image_formats() {
+        let html = r#"
+            <img src="/photo.webp">
+            <img src="/hero.avif">
+            <img src="/old.jpg">
+            <img src="/icon.png">
+            <picture><source type="image/webp" srcset="/x.webp"><img src="/x.jpg"></picture>
+        "#;
+        let r = analyze(&HashMap::new(), html);
+        assert_eq!(r.images_modern_format, 3); // webp + avif + picture source
+        assert_eq!(r.images_legacy_format, 3); // jpg + png + picture fallback jpg
     }
 }
