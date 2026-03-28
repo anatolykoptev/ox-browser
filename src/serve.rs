@@ -131,6 +131,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         chrome_config,
         chrome_semaphore,
         session_pool,
+        state.gobrowser_proxy.clone(),
     );
     let app = rest_router.merge(mcp_router);
 

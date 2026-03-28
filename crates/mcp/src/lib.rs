@@ -46,6 +46,7 @@ pub fn build_mcp_router(
     chrome_config: ChromeLoginConfig,
     chrome_semaphore: Arc<Semaphore>,
     session_pool: ox_http::SessionPool,
+    gobrowser_proxy: Option<Arc<ox_js::gobrowser_proxy::GoBrowserProxy>>,
 ) -> Router {
     let server = OxMcpServer::new(
         provider,
@@ -56,6 +57,7 @@ pub fn build_mcp_router(
         chrome_config,
         chrome_semaphore,
         session_pool,
+        gobrowser_proxy,
     );
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),

@@ -4,7 +4,7 @@ use ox_http::chrome_interact::{self, ChromeAction, CookieInput, InteractRequest}
 use rmcp::model::*;
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::ErrorData as McpError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::OxMcpServer;
 
@@ -13,7 +13,7 @@ fn default_timeout() -> u64 {
 }
 
 /// Input for the chrome_interact MCP tool.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ChromeInteractInput {
     /// URL to navigate to.
     pub url: String,
@@ -36,7 +36,7 @@ fn default_wait() -> u64 {
 }
 
 /// A single Chrome action (MCP-compatible with JsonSchema).
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChromeActionInput {
     /// Click an element by CSS selector.
@@ -107,7 +107,7 @@ fn default_cookie_path() -> String {
 }
 
 /// Cookie to set on the page.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct CookieInputMcp {
     /// Cookie name.
     pub name: String,
@@ -194,6 +194,23 @@ impl OxMcpServer {
         &self,
         input: ChromeInteractInput,
     ) -> Result<CallToolResult, McpError> {
+        // Proxy to go-browser when configured
+        if let Some(ref proxy) = self.gobrowser_proxy {
+            let body = serde_json::to_value(&input).map_err(|e| {
+                McpError::internal_error(format!("serialize: {e}"), None)
+            })?;
+            let (_, resp) = proxy.forward("/chrome/interact", &body).await.map_err(|e| {
+                McpError::internal_error(e, None)
+            })?;
+            let json = serde_json::to_string(&resp).unwrap_or_default();
+            let has_error = resp.get("error").and_then(|v| v.as_str()).is_some();
+            if has_error {
+                return Ok(CallToolResult::error(vec![Content::text(json)]));
+            }
+            return Ok(CallToolResult::success(vec![Content::text(json)]));
+        }
+
+        // Fallback to local chromiumoxide (will be removed in Task 6)
         let req: InteractRequest = input.into();
         let resp =
             chrome_interact::execute(req, &self.chrome_semaphore, &self.session_pool).await;
