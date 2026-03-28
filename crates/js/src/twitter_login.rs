@@ -61,7 +61,7 @@ pub async fn twitter_login(
         chrome_path: None,
     };
 
-    match ox_twitter::login::login(&login_req, &state.twitter_config, &state.twitter_semaphore, &state.session_pool).await {
+    match ox_twitter::login::login(&login_req, &state.twitter_config, &state.twitter_semaphore).await {
         Ok(result) => (
             StatusCode::OK,
             Json(TwitterLoginResponse {

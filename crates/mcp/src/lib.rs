@@ -1,18 +1,14 @@
 //! MCP protocol server for ox-browser.
 //!
-//! Exposes 11 tools over Streamable HTTP transport.
-//! Primary: read, fetch, analyze, crawl, solve_cf, security_scan, image_search, reverse_image_search, media_download, site_audit.
-//! Deprecated: fetch_smart, readability (use read instead).
+//! Exposes 12 tools over Streamable HTTP transport.
 
 pub mod tools;
 
 use std::sync::Arc;
 
 use axum::Router;
-use ox_http::chrome_session::ChromeLoginConfig;
 use ox_http::{CookieCache, CookieProvider, HttpClient};
 use ox_js::EndpointDefaults;
-use tokio::sync::Semaphore;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::*;
 use rmcp::tool_handler;
@@ -43,10 +39,7 @@ pub fn build_mcp_router(
     http_client: Arc<HttpClient>,
     defaults: EndpointDefaults,
     media_config: ox_media::MediaConfig,
-    chrome_config: ChromeLoginConfig,
-    chrome_semaphore: Arc<Semaphore>,
-    session_pool: ox_http::SessionPool,
-    gobrowser_proxy: Option<Arc<ox_js::gobrowser_proxy::GoBrowserProxy>>,
+    gobrowser_proxy: Arc<ox_js::gobrowser_proxy::GoBrowserProxy>,
 ) -> Router {
     let server = OxMcpServer::new(
         provider,
@@ -54,9 +47,6 @@ pub fn build_mcp_router(
         http_client,
         defaults,
         media_config,
-        chrome_config,
-        chrome_semaphore,
-        session_pool,
         gobrowser_proxy,
     );
     let service = StreamableHttpService::new(

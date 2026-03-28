@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use ox_http::{DomainLimiter, HttpClient};
 use ox_js::EndpointDefaults;
-use tokio::sync::Semaphore;
 
 use crate::config::{self, ServerConfig};
 
@@ -78,36 +77,13 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
             .or_else(|| std::env::var("RESIDENTIAL_PROXY_URL").ok()),
     };
 
-    let chrome_config = ox_http::chrome_session::ChromeLoginConfig {
-        proxy_url: config.proxy.residential_url.clone()
-            .or_else(|| std::env::var("RESIDENTIAL_PROXY_URL").ok()),
-        chrome_path: config.solver.chromium_path.clone()
-            .or_else(|| std::env::var("CHROME_PATH").ok()),
-        screenshot_dir: config.chrome.screenshot_dir.clone().into(),
-        screenshot_on_error: true,
-        incognito: true,
-        remote_ws_url: std::env::var("CLOAKBROWSER_WS_URL").ok(),
-    };
-
-    if chrome_config.remote_ws_url.is_some() {
-        tracing::info!(
-            ws_url = ?chrome_config.remote_ws_url,
-            "CloakBrowser sidecar mode enabled"
-        );
-    }
-
-    let chrome_semaphore = Arc::new(Semaphore::new(config.chrome.max_concurrent));
-
-    let session_pool = ox_http::SessionPool::new(chrome_config.clone());
-    let _reaper_handle = session_pool.clone().start_reaper();
-
-    let gobrowser_proxy = config.solver.go_browser_url.clone()
+    let gobrowser_url = config.solver.go_browser_url.clone()
         .or_else(|| std::env::var("GO_BROWSER_URL").ok())
         .filter(|u| !u.is_empty())
-        .map(|url| {
-            tracing::info!(url, "go-browser proxy enabled for /chrome/interact");
-            Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(url))
-        });
+        .unwrap_or_else(|| "http://127.0.0.1:8906".to_string());
+
+    tracing::info!(url = %gobrowser_url, "go-browser proxy for /chrome/interact");
+    let gobrowser_proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(gobrowser_url));
 
     let http_client = Arc::new(HttpClient::new(http_config)?);
     let state = ox_js::AppState::new(
@@ -117,9 +93,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         defaults.clone(),
         media_config.clone(),
         twitter_config,
-        chrome_config.clone(),
-        session_pool.clone(),
-        gobrowser_proxy,
+        Arc::clone(&gobrowser_proxy),
     );
     let rest_router = ox_js::router(state.clone());
     let mcp_router = ox_mcp::build_mcp_router(
@@ -128,10 +102,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         state.http_client.clone(),
         defaults,
         media_config,
-        chrome_config,
-        chrome_semaphore,
-        session_pool,
-        state.gobrowser_proxy.clone(),
+        gobrowser_proxy,
     );
     let app = rest_router.merge(mcp_router);
 

@@ -1,6 +1,5 @@
-//! MCP tool: chrome_interact — headless Chrome page interaction.
+//! MCP tool: chrome_interact — headless Chrome page interaction via go-browser proxy.
 
-use ox_http::chrome_interact::{self, ChromeAction, CookieInput, InteractRequest};
 use rmcp::model::*;
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::ErrorData as McpError;
@@ -102,10 +101,6 @@ pub enum ChromeActionInput {
     GetLogs,
 }
 
-fn default_cookie_path() -> String {
-    "/".to_string()
-}
-
 /// Cookie to set on the page.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct CookieInputMcp {
@@ -126,67 +121,8 @@ pub struct CookieInputMcp {
     pub http_only: bool,
 }
 
-impl From<ChromeActionInput> for ChromeAction {
-    fn from(a: ChromeActionInput) -> Self {
-        match a {
-            ChromeActionInput::Click { selector, humanize } => {
-                Self::Click { selector, humanize }
-            }
-            ChromeActionInput::TypeText { selector, text, humanize } => {
-                Self::TypeText { selector, text, humanize }
-            }
-            ChromeActionInput::WaitFor {
-                selector,
-                timeout_ms,
-            } => Self::WaitFor {
-                selector,
-                timeout_ms,
-            },
-            ChromeActionInput::Screenshot { label } => Self::Screenshot { label },
-            ChromeActionInput::Evaluate { js } => Self::Evaluate { js },
-            ChromeActionInput::Press { key } => Self::Press { key },
-            ChromeActionInput::Sleep { ms } => Self::Sleep { ms },
-            ChromeActionInput::GetCookies => Self::GetCookies,
-            ChromeActionInput::SetCookies { cookies } => Self::SetCookies {
-                cookies: cookies.into_iter().map(Into::into).collect(),
-            },
-            ChromeActionInput::DestroySession => Self::DestroySession,
-            ChromeActionInput::Snapshot { label } => Self::Snapshot { label },
-            ChromeActionInput::HandleDialog { accept, prompt_text } => {
-                Self::HandleDialog { accept, prompt_text }
-            }
-            ChromeActionInput::Hover { selector, humanize } => {
-                Self::Hover { selector, humanize }
-            }
-            ChromeActionInput::GoBack => Self::GoBack,
-            ChromeActionInput::GetLogs => Self::GetLogs,
-        }
-    }
-}
-
-impl From<CookieInputMcp> for CookieInput {
-    fn from(c: CookieInputMcp) -> Self {
-        Self {
-            name: c.name,
-            value: c.value,
-            domain: c.domain,
-            path: c.path,
-            secure: c.secure,
-            http_only: c.http_only,
-        }
-    }
-}
-
-impl From<ChromeInteractInput> for InteractRequest {
-    fn from(i: ChromeInteractInput) -> Self {
-        Self {
-            url: i.url,
-            actions: i.actions.into_iter().map(Into::into).collect(),
-            timeout_secs: i.timeout_secs,
-            proxy: i.proxy,
-            session_id: i.session_id,
-        }
-    }
+fn default_cookie_path() -> String {
+    "/".to_string()
 }
 
 impl OxMcpServer {
@@ -194,32 +130,19 @@ impl OxMcpServer {
         &self,
         input: ChromeInteractInput,
     ) -> Result<CallToolResult, McpError> {
-        // Proxy to go-browser when configured
-        if let Some(ref proxy) = self.gobrowser_proxy {
-            let body = serde_json::to_value(&input).map_err(|e| {
-                McpError::internal_error(format!("serialize: {e}"), None)
-            })?;
-            let (_, resp) = proxy.forward("/chrome/interact", &body).await.map_err(|e| {
-                McpError::internal_error(e, None)
-            })?;
-            let json = serde_json::to_string(&resp).unwrap_or_default();
-            let has_error = resp.get("error").and_then(|v| v.as_str()).is_some();
-            if has_error {
-                return Ok(CallToolResult::error(vec![Content::text(json)]));
-            }
-            return Ok(CallToolResult::success(vec![Content::text(json)]));
-        }
-
-        // Fallback to local chromiumoxide (will be removed in Task 6)
-        let req: InteractRequest = input.into();
-        let resp =
-            chrome_interact::execute(req, &self.chrome_semaphore, &self.session_pool).await;
-
+        let body = serde_json::to_value(&input).map_err(|e| {
+            McpError::internal_error(format!("serialize: {e}"), None)
+        })?;
+        let (_, resp) = self
+            .gobrowser_proxy
+            .forward("/chrome/interact", &body)
+            .await
+            .map_err(|e| McpError::internal_error(e, None))?;
         let json = serde_json::to_string(&resp).unwrap_or_default();
-        if resp.error.is_some() {
-            Ok(CallToolResult::error(vec![Content::text(json)]))
-        } else {
-            Ok(CallToolResult::success(vec![Content::text(json)]))
+        let has_error = resp.get("error").and_then(|v| v.as_str()).is_some();
+        if has_error {
+            return Ok(CallToolResult::error(vec![Content::text(json)]));
         }
+        Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }

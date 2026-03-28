@@ -51,7 +51,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ox_http::{
-    ByparrConfig, ByparrSolver, ChallengeType, ChromiumConfig, ChromiumSolver,
+    ByparrConfig, ByparrSolver, ChallengeType,
     CookieCache, CookieProvider, HttpConfig, SolvedChallenge,
 };
 use serde::Deserialize;
@@ -131,7 +131,7 @@ impl CookieProvider for NoOpProvider {
 
 /// Build the cookie provider from config.
 ///
-/// Priority: go_browser_url → chromium_enabled → byparr_url → NoOp.
+/// Priority: go_browser_url → byparr_url → NoOp.
 pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
     // Highest priority: go-browser HTTP solver
     let go_browser_url = config.solver.go_browser_url.clone()
@@ -145,20 +145,6 @@ pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
             tracing::info!(url, "using GoBrowserSolver");
             return Arc::new(ox_http::solver_gobrowser::GoBrowserSolver::new(cfg));
         }
-    }
-
-    if config.solver.chromium_enabled {
-        let chrome_path = config.solver.chromium_path.clone()
-            .or_else(|| std::env::var("CHROME_PATH").ok());
-        let chromium_cfg = ChromiumConfig {
-            timeout: Duration::from_secs(config.solver.chromium_timeout_secs),
-            max_concurrent: config.solver.chromium_max_concurrent,
-            chrome_path,
-            proxy_url: config.proxy.residential_url.clone()
-                .or_else(|| std::env::var("RESIDENTIAL_PROXY_URL").ok()),
-        };
-        tracing::info!("using chromium solver");
-        return Arc::new(ChromiumSolver::new(chromium_cfg));
     }
 
     if let Some(ref url) = config.solver.byparr_url {

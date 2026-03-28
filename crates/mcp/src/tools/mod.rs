@@ -15,11 +15,9 @@ mod solve;
 
 use std::sync::Arc;
 
-use ox_http::chrome_session::ChromeLoginConfig;
 use ox_http::read_pipeline::SiteHandler;
 use ox_http::{CookieCache, CookieProvider, HttpClient};
 use ox_js::gobrowser_proxy::GoBrowserProxy;
-use tokio::sync::Semaphore;
 use ox_js::EndpointDefaults;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -49,10 +47,7 @@ pub struct OxMcpServer {
     pub(crate) defaults: EndpointDefaults,
     pub(crate) media_config: ox_media::MediaConfig,
     pub(crate) site_handlers: Arc<Vec<SiteHandler>>,
-    pub(crate) chrome_config: ChromeLoginConfig,
-    pub(crate) chrome_semaphore: Arc<Semaphore>,
-    pub(crate) session_pool: ox_http::SessionPool,
-    pub(crate) gobrowser_proxy: Option<Arc<GoBrowserProxy>>,
+    pub(crate) gobrowser_proxy: Arc<GoBrowserProxy>,
     pub(crate) tool_router: ToolRouter<Self>,
 }
 
@@ -63,10 +58,7 @@ impl OxMcpServer {
         http_client: Arc<HttpClient>,
         defaults: EndpointDefaults,
         media_config: ox_media::MediaConfig,
-        chrome_config: ChromeLoginConfig,
-        chrome_semaphore: Arc<Semaphore>,
-        session_pool: ox_http::SessionPool,
-        gobrowser_proxy: Option<Arc<GoBrowserProxy>>,
+        gobrowser_proxy: Arc<GoBrowserProxy>,
     ) -> Self {
         let handlers: Vec<SiteHandler> = vec![ox_js::site_twitter::make_twitter_handler()];
         Self {
@@ -76,9 +68,6 @@ impl OxMcpServer {
             defaults,
             media_config,
             site_handlers: Arc::new(handlers),
-            chrome_config,
-            chrome_semaphore,
-            session_pool,
             gobrowser_proxy,
             tool_router: Self::tool_router(),
         }

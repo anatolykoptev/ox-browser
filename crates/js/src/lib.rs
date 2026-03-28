@@ -62,10 +62,7 @@ pub struct AppState {
     pub site_handlers: Arc<Vec<SiteHandler>>,
     pub twitter_config: ox_twitter::login::TwitterLoginConfig,
     pub twitter_semaphore: Arc<Semaphore>,
-    pub chrome_config: ox_http::chrome_session::ChromeLoginConfig,
-    pub chrome_semaphore: Arc<Semaphore>,
-    pub session_pool: ox_http::SessionPool,
-    pub gobrowser_proxy: Option<Arc<gobrowser_proxy::GoBrowserProxy>>,
+    pub gobrowser_proxy: Arc<gobrowser_proxy::GoBrowserProxy>,
 }
 
 impl AppState {
@@ -77,12 +74,9 @@ impl AppState {
         defaults: EndpointDefaults,
         media_config: ox_media::MediaConfig,
         twitter_config: ox_twitter::login::TwitterLoginConfig,
-        chrome_config: ox_http::chrome_session::ChromeLoginConfig,
-        session_pool: ox_http::SessionPool,
-        gobrowser_proxy: Option<Arc<gobrowser_proxy::GoBrowserProxy>>,
+        gobrowser_proxy: Arc<gobrowser_proxy::GoBrowserProxy>,
     ) -> Self {
         let twitter_semaphore = Arc::new(Semaphore::new(twitter_config.max_concurrent));
-        let chrome_semaphore = Arc::new(Semaphore::new(2));
         let handlers: Vec<SiteHandler> = vec![site_twitter::make_twitter_handler()];
         Self {
             provider,
@@ -93,9 +87,6 @@ impl AppState {
             site_handlers: Arc::new(handlers),
             twitter_config,
             twitter_semaphore,
-            chrome_config,
-            chrome_semaphore,
-            session_pool,
             gobrowser_proxy,
         }
     }
@@ -159,8 +150,9 @@ mod tests {
     }
 
     fn test_state() -> AppState {
-        let chrome_config = ox_http::chrome_session::ChromeLoginConfig::default();
-        let session_pool = ox_http::SessionPool::new(chrome_config.clone());
+        let proxy = Arc::new(gobrowser_proxy::GoBrowserProxy::new(
+            "http://127.0.0.1:8906".to_string(),
+        ));
         AppState::new(
             Arc::new(MockProvider),
             Arc::new(CookieCache::new(Duration::from_secs(300))),
@@ -168,9 +160,7 @@ mod tests {
             EndpointDefaults::default(),
             ox_media::MediaConfig::default(),
             ox_twitter::login::TwitterLoginConfig::default(),
-            chrome_config,
-            session_pool,
-            None,
+            proxy,
         )
     }
 

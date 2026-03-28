@@ -5,21 +5,34 @@ mod api_preseed; // kept for future use
 mod castle;
 mod ui_metrics;
 mod api_subtasks;
-pub mod chrome;
 pub mod error;
-pub mod flow;
 pub mod human;
 pub mod selectors;
 
 pub use error::{FlowStep, TwitterLoginError};
 pub use human::HumanBehavior;
-pub use chrome::{ChromeLoginConfig, ChromeSession};
-pub use flow::{LoginInput, LoginOutput};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::Semaphore;
+
+/// Credentials and optional 2FA secret for login.
+pub struct LoginInput {
+    pub username: String,
+    pub password: String,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub totp_secret: Option<String>,
+}
+
+/// Successful login result with session cookies.
+pub struct LoginOutput {
+    pub auth_token: String,
+    pub ct0: String,
+    pub cookies: HashMap<String, String>,
+    pub user_agent: String,
+}
 
 /// Request to perform a Twitter login via headless Chrome.
 #[derive(Debug, Clone)]
@@ -67,87 +80,44 @@ impl Default for TwitterLoginConfig {
     }
 }
 
-/// Perform Twitter login with API→Chrome fallback.
+/// Perform Twitter login via API.
 ///
-/// First tries fast API login (no Chrome needed). If API login fails
-/// with a non-permanent error, falls back to headless Chrome login.
-/// Permanent errors (wrong credentials, locked, missing email) fail immediately.
+/// Chrome-based login has been removed — all Chrome operations are now
+/// delegated to go-browser. Only API login is available.
 pub async fn login(
     req: &LoginRequest,
-    config: &TwitterLoginConfig,
-    semaphore: &Semaphore,
-    pool: &ox_http::SessionPool,
+    _config: &TwitterLoginConfig,
+    _semaphore: &Semaphore,
 ) -> Result<LoginResult, TwitterLoginError> {
-    // Primary: API login (fast, no Chrome)
     match api_login::login(req).await {
         Ok(result) => {
             tracing::info!(username = %req.username, "API login successful");
-            return Ok(LoginResult {
+            Ok(LoginResult {
                 auth_token: result.auth_token,
                 ct0: result.ct0,
                 cookies: result.cookies,
                 user_agent: crate::TWITTER_USER_AGENT.to_string(),
                 method: "api".into(),
-            });
-        }
-        Err(e) if e.is_permanent() => {
-            tracing::warn!(username = %req.username, error = %e, "API login permanently failed");
-            return Err(e);
+            })
         }
         Err(e) => {
-            tracing::warn!(username = %req.username, error = %e, "API login failed, trying Chrome");
+            tracing::warn!(username = %req.username, error = %e, "API login failed");
+            Err(e)
         }
     }
-
-    // Fallback: Chrome login
-    let _permit = semaphore.acquire().await.map_err(|e| {
-        TwitterLoginError::ChromeLaunch(format!("semaphore closed: {e}"))
-    })?;
-    tracing::info!(username = %req.username, "starting Chrome login fallback");
-    chrome_login(req, config, pool).await
 }
 
-async fn chrome_login(
-    req: &LoginRequest,
-    config: &TwitterLoginConfig,
-    pool: &ox_http::SessionPool,
-) -> Result<LoginResult, TwitterLoginError> {
-    // Use the pool to get cookie persistence and Castle.io JS execution.
-    let proxy = req.proxy.as_deref().or(config.default_proxy.as_deref());
-    let session_id = pool.create(proxy).await
-        .map_err(TwitterLoginError::ChromeLaunch)?;
+/// Generate a TOTP code from a base32-encoded secret.
+pub fn generate_totp(secret_b32: &str) -> Result<String, TwitterLoginError> {
+    use totp_rs::{Algorithm, Secret, TOTP};
 
-    let page = pool.get(&session_id).await
-        .ok_or_else(|| TwitterLoginError::ChromeLaunch("session lost after create".into()))?;
+    let secret_bytes = Secret::Encoded(secret_b32.to_string())
+        .to_bytes()
+        .map_err(|e| TwitterLoginError::TotpFailed(format!("bad base32 secret: {e}")))?;
 
-    let input = flow::LoginInput {
-        username: req.username.clone(),
-        password: req.password.clone(),
-        email: req.email.clone(),
-        phone: req.phone.clone(),
-        totp_secret: req.totp_secret.clone(),
-    };
+    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes)
+        .map_err(|e| TwitterLoginError::TotpFailed(format!("TOTP init: {e}")))?;
 
-    let mut login_flow = flow::LoginFlow::new(
-        &page, &input,
-        config.screenshot_dir.clone(),
-        config.screenshot_on_error,
-        config.timeout,
-    );
-
-    let result = login_flow.run().await;
-
-    // Always destroy pool session after login (success or fail).
-    pool.destroy(&session_id).await;
-
-    let output = result?;
-
-    tracing::info!(username = %req.username, "Chrome login successful");
-    Ok(LoginResult {
-        auth_token: output.auth_token,
-        ct0: output.ct0,
-        cookies: output.cookies,
-        user_agent: output.user_agent,
-        method: "chrome".into(),
-    })
+    totp.generate_current()
+        .map_err(|e| TwitterLoginError::TotpFailed(format!("TOTP generate: {e}")))
 }

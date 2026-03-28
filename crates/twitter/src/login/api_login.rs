@@ -114,7 +114,7 @@ pub async fn login(req: &LoginRequest) -> Result<ApiLoginResult, TwitterLoginErr
         let secret = req.totp_secret.as_deref().ok_or_else(|| {
             TwitterLoginError::TotpFailed("no TOTP secret".into())
         })?;
-        let code = super::flow::actions::generate_totp(secret)?;
+        let code = super::generate_totp(secret)?;
         state.enter_text(&client, "LoginTwoFactorAuthChallenge", &code).await?;
         tracing::info!(task = %state.current_task(), "API login: 2FA done");
     }
