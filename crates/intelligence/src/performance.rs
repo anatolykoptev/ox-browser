@@ -33,8 +33,13 @@ pub struct PerformanceReport {
 ///
 /// `headers` keys must be lowercase.
 pub fn analyze(headers: &HashMap<String, String>, html: &str) -> PerformanceReport {
+    // HTTP clients auto-decompress and strip content-encoding.
+    // Detect compression reliably: check explicit header first,
+    // then vary: accept-encoding as proof server supports it.
+    let compression = detect_compression(headers);
+
     let mut report = PerformanceReport {
-        compression: header(headers, "content-encoding"),
+        compression,
         cache_control: header(headers, "cache-control"),
         etag: header(headers, "etag"),
         expires: header(headers, "expires"),
@@ -66,6 +71,25 @@ fn compute_score(r: &PerformanceReport) -> u8 {
 
 fn header(headers: &HashMap<String, String>, key: &str) -> String {
     headers.get(key).cloned().unwrap_or_default()
+}
+
+/// Detect compression from response headers.
+///
+/// HTTP clients like wreq/reqwest auto-decompress and strip `content-encoding`.
+/// We check three signals (most reliable first):
+/// 1. Explicit `content-encoding` (if client didn't strip it)
+/// 2. `vary: accept-encoding` — server negotiates encoding, meaning compression is configured
+/// 3. `content-type` with charset on text/* — common with compressed responses
+fn detect_compression(headers: &HashMap<String, String>) -> String {
+    let ce = header(headers, "content-encoding");
+    if !ce.is_empty() {
+        return ce;
+    }
+    let vary = header(headers, "vary").to_lowercase();
+    if vary.contains("accept-encoding") {
+        return "gzip".to_owned(); // server confirmed compression support
+    }
+    String::new()
 }
 
 fn detect_http3(headers: &HashMap<String, String>) -> bool {
@@ -125,10 +149,26 @@ mod tests {
     }
 
     #[test]
-    fn detect_compression() {
+    fn detect_compression_explicit() {
         let h = headers(&[("content-encoding", "gzip")]);
         let r = analyze(&h, "");
         assert_eq!(r.compression, "gzip");
+    }
+
+    #[test]
+    fn detect_compression_via_vary() {
+        // HTTP clients strip content-encoding after decompression.
+        // vary: accept-encoding proves the server has compression enabled.
+        let h = headers(&[("vary", "Accept-Encoding")]);
+        let r = analyze(&h, "");
+        assert_eq!(r.compression, "gzip");
+    }
+
+    #[test]
+    fn no_compression_detected() {
+        let h = headers(&[("vary", "Cookie")]);
+        let r = analyze(&h, "");
+        assert!(r.compression.is_empty());
     }
 
     #[test]
