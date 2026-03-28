@@ -72,7 +72,6 @@ pub fn score_to_grade(score: i32) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-
     use super::*;
 
     fn h(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -113,10 +112,10 @@ mod tests {
 
     #[test]
     fn test_no_security() {
-        // 100 - 25(CSP) - 20(HSTS) - 5(XCTO) - 20(XFO) - 5(referrer) = 25 → D-
+        // Headers: 50 - 15 - 3 - 10 - 3 - 15 = 4, Quality: 50 - 30 = 20 → 24 (F)
         let r = analyze_security("https://example.com", &HashMap::new(), &[], "");
-        assert_eq!(r.grade, "D-", "score={}", r.score);
-        assert_eq!(r.score, 25);
+        assert_eq!(r.grade, "F", "score={}", r.score);
+        assert_eq!(r.score, 24);
     }
 
     #[test]
@@ -143,17 +142,11 @@ mod tests {
         "#;
         let cookies = vec!["session=abc".to_string()];
         let r = analyze_security("https://example.com", &hdrs, &cookies, html);
-
-        // Info disclosure: server version + x-powered-by
         assert!(!r.info_disclosure.findings.is_empty(), "info_disclosure should have findings");
-        // Vuln JS: jQuery 1.12.4
         assert!(!r.vuln_js.findings.is_empty(), "vuln_js should have findings");
         assert_eq!(r.vuln_js.libraries[0].name, "jQuery");
-        // Body scan: insecure form + suspicious comment
         assert!(!r.body_scan.findings.is_empty(), "body_scan should have findings");
-        // CORS: reflected origin with credentials
         assert!(!r.cors.findings.is_empty(), "cors should have findings");
-        // All modules populated
         assert!(r.findings_summary.total > 5);
         assert!(r.score < 50, "score={} should be low with many issues", r.score);
     }
@@ -171,6 +164,23 @@ mod tests {
     }
 
     #[test]
+    fn test_all_headers_present_with_weak_csp() {
+        let hdrs = h(&[
+            ("strict-transport-security", "max-age=31536000; includeSubDomains"),
+            ("content-security-policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"),
+            ("x-content-type-options", "nosniff"),
+            ("x-frame-options", "SAMEORIGIN"),
+            ("referrer-policy", "strict-origin-when-cross-origin"),
+            ("permissions-policy", "camera=(), microphone=()"),
+            ("cross-origin-opener-policy", "same-origin"),
+            ("cross-origin-embedder-policy", "require-corp"),
+            ("cross-origin-resource-policy", "same-origin"),
+        ]);
+        let r = analyze_security("https://example.com", &hdrs, &[], "");
+        assert!(r.score >= 60, "All headers + weak CSP should score >= 60, got {}", r.score);
+    }
+
+    #[test]
     fn test_referrer_policy_bonus_scoring() {
         let base = [
             ("strict-transport-security", "max-age=63072000; includeSubDomains; preload"),
@@ -185,7 +195,6 @@ mod tests {
         let mut no_bonus_h = h(&base);
         no_bonus_h.insert("referrer-policy".into(), "strict-origin-when-cross-origin".into());
         let r_no = analyze_security("https://example.com", &no_bonus_h, &[], "");
-
         assert!(r_bonus.score > r_no.score, "bonus={} no_bonus={}", r_bonus.score, r_no.score);
     }
 }

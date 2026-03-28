@@ -2,18 +2,13 @@
 
 use std::collections::HashMap;
 
-use super::super::body_scan;
-use super::super::cookies::{self, CookieReport};
-use super::super::cors::{self, CorsReport};
-use super::super::csp::{self, CspReport};
-use super::super::headers::{self, HeaderStatus, HeadersReport};
-use super::super::info_disclosure;
-use super::super::mixed_content;
-use super::super::redirect;
-use super::super::dangerous_js;
-use super::super::vuln_js;
-use super::super::sri::{self, SriReport};
-use super::super::supply_chain;
+use super::super::{body_scan, cookies, cors, csp, dangerous_js, headers, info_disclosure};
+use super::super::{mixed_content, redirect, sri, supply_chain, vuln_js};
+use super::super::cookies::CookieReport;
+use super::super::cors::CorsReport;
+use super::super::csp::CspReport;
+use super::super::headers::{HeaderStatus, HeadersReport};
+use super::super::sri::SriReport;
 use super::super::types::Severity;
 use super::{score_to_grade, FindingsSummary, SecurityReport};
 
@@ -121,73 +116,76 @@ fn compute_score(
     dangerous: &dangerous_js::DangerousJsReport,
     redirect: &redirect::RedirectReport,
 ) -> i32 {
-    let mut score: i32 = 100;
+    // Split: 50 points for headers presence, 50 for policy quality.
+    // Ensures sites with all headers score >=50 even with weak policies.
+    let mut headers_score: i32 = 50;
+    let mut quality_score: i32 = 50;
 
-    match csp_report {
-        Some(csp) => score += csp.score,
-        None => score -= 25,
-    }
-
-    score += cookies_report.score_modifier;
-    score += cors_report.score_modifier;
-    score += sri_report.score_modifier;
-    score += info_disc.score_modifier;
-    score += body.score_modifier;
-    score += vuln.score_modifier;
-    score += dangerous.score_modifier;
-    score += redirect.score_modifier;
-
+    // === Headers presence (0-50) ===
     for f in &headers_report.findings {
+        let missing = f.status == HeaderStatus::Missing;
         match f.header.as_str() {
-            "strict-transport-security" if f.status == HeaderStatus::Missing => score -= 20,
+            "strict-transport-security" if missing => headers_score -= 15,
             "strict-transport-security"
                 if f.status == HeaderStatus::Present && f.severity == Severity::Medium =>
-            {
-                score -= 10;
-            }
-            "x-content-type-options" if f.status == HeaderStatus::Missing => score -= 5,
-            "x-frame-options" if f.status == HeaderStatus::Missing => score -= 20,
-            "referrer-policy" if f.status == HeaderStatus::Missing => score -= 5,
+            { headers_score -= 5; }
+            "x-content-type-options" if missing => headers_score -= 3,
+            "x-frame-options" if missing => headers_score -= 10,
+            "referrer-policy" if missing => headers_score -= 3,
+            "content-security-policy" if missing => headers_score -= 15,
             _ => {}
         }
     }
 
-    let score = super::bonuses::apply_bonuses(score, resp_headers);
+    // === Policy quality (0-50) ===
+    // CSP quality: raw score ranges from -25 (absent) to +10 (perfect).
+    // Map to 0-30 contribution.
+    match csp_report {
+        Some(csp) => {
+            let csp_contribution = ((csp.score + 25) * 30 / 35).clamp(0, 30);
+            quality_score = quality_score - 30 + csp_contribution;
+        }
+        None => quality_score -= 30,
+    }
 
+    // Other quality modifiers (capped impact)
+    quality_score += cookies_report.score_modifier.clamp(-10, 0);
+    quality_score += cors_report.score_modifier.clamp(-10, 0);
+    quality_score += sri_report.score_modifier.clamp(-5, 0);
+    quality_score += info_disc.score_modifier.clamp(-5, 0);
+    quality_score += body.score_modifier.clamp(-5, 0);
+    quality_score += vuln.score_modifier.clamp(-10, 0);
+    quality_score += dangerous.score_modifier.clamp(-10, 0);
+    quality_score += redirect.score_modifier.clamp(-5, 0);
+
+    let score = headers_score.max(0) + quality_score.max(0);
+    let score = super::bonuses::apply_bonuses(score, resp_headers);
     score.max(0)
 }
 
 fn count_findings(
-    headers_report: &HeadersReport,
-    csp_report: &Option<CspReport>,
-    cookies_report: &CookieReport,
-    cors_report: &CorsReport,
-    sri_report: &SriReport,
-    supply_chain_report: &supply_chain::SupplyChainReport,
-    mixed_content_report: &mixed_content::MixedContentReport,
-    info_disc: &info_disclosure::InfoDisclosureReport,
-    body: &body_scan::BodyScanReport,
-    vuln: &vuln_js::VulnJsReport,
+    headers: &HeadersReport, csp: &Option<CspReport>,
+    cookies: &CookieReport, cors: &CorsReport, sri: &SriReport,
+    supply: &supply_chain::SupplyChainReport,
+    mixed: &mixed_content::MixedContentReport,
+    info: &info_disclosure::InfoDisclosureReport,
+    body: &body_scan::BodyScanReport, vuln: &vuln_js::VulnJsReport,
     dangerous: &dangerous_js::DangerousJsReport,
     redirect: &redirect::RedirectReport,
 ) -> FindingsSummary {
     let mut sevs: Vec<Severity> = Vec::new();
-
-    sevs.extend(headers_report.findings.iter().map(|f| f.severity));
-    if let Some(csp) = csp_report {
-        sevs.extend(csp.findings.iter().map(|f| f.severity));
-    }
-    sevs.extend(cookies_report.findings.iter().map(|f| f.severity));
-    sevs.extend(cors_report.findings.iter().map(|f| f.severity));
-    sevs.extend(sri_report.findings.iter().map(|f| f.severity));
-    sevs.extend(supply_chain_report.findings.iter().map(|f| f.severity));
-    sevs.extend(mixed_content_report.findings.iter().map(|f| f.severity));
-    sevs.extend(info_disc.findings.iter().map(|f| f.severity));
+    sevs.extend(headers.findings.iter().map(|f| f.severity));
+    if let Some(c) = csp { sevs.extend(c.findings.iter().map(|f| f.severity)); }
+    sevs.extend(cookies.findings.iter().map(|f| f.severity));
+    sevs.extend(cors.findings.iter().map(|f| f.severity));
+    sevs.extend(sri.findings.iter().map(|f| f.severity));
+    sevs.extend(supply.findings.iter().map(|f| f.severity));
+    sevs.extend(mixed.findings.iter().map(|f| f.severity));
+    sevs.extend(info.findings.iter().map(|f| f.severity));
     sevs.extend(body.findings.iter().map(|f| f.severity));
     sevs.extend(vuln.findings.iter().map(|f| f.severity));
     sevs.extend(dangerous.findings.iter().map(|f| f.severity));
     sevs.extend(redirect.findings.iter().map(|f| f.severity));
-
     let total = sevs.len();
     FindingsSummary {
         critical: sevs.iter().filter(|&&s| s == Severity::Critical).count(),
