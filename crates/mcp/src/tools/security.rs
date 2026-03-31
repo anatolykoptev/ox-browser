@@ -17,6 +17,9 @@ use super::OxMcpServer;
 pub struct SecurityScanInput {
     /// The URL to scan for security issues.
     pub url: String,
+    /// Scan mode: "public" (default), "login", or "authenticated".
+    #[serde(default)]
+    pub mode: ox_security::ScanMode,
 }
 
 impl OxMcpServer {
@@ -61,7 +64,7 @@ impl OxMcpServer {
             &headers,
             &set_cookie_headers,
             &resp.body,
-            ox_security::ScanMode::Public,
+            input.mode,
         );
 
         let json = serde_json::to_string(&report).unwrap_or_default();

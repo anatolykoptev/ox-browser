@@ -2300,6 +2300,7 @@ dependencies = [
  "oxc_span",
  "psl",
  "regex",
+ "schemars",
  "semver",
  "serde",
  "serde_json",

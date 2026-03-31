@@ -1,5 +1,6 @@
 //! Shared types for security analysis modules.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Severity level for security findings.
@@ -14,7 +15,7 @@ pub enum Severity {
 }
 
 /// Scan mode — adjusts which checks run and finding severity.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanMode {
     /// Public pages: reconnaissance — what protects this site?

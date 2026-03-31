@@ -12,6 +12,8 @@ use crate::AppState;
 #[derive(Deserialize)]
 pub struct SecurityRequest {
     pub url: String,
+    #[serde(default)]
+    pub mode: ox_security::ScanMode,
 }
 
 pub async fn security_scan(
@@ -46,7 +48,7 @@ pub async fn security_scan(
         .collect();
 
     let report = ox_security::analyze_security(
-        &req.url, &headers, &set_cookie_headers, &resp.body, ox_security::ScanMode::Public,
+        &req.url, &headers, &set_cookie_headers, &resp.body, req.mode,
     );
 
     let json = serde_json::to_value(&report).unwrap_or_default();
