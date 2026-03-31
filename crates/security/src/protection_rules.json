@@ -438,6 +438,63 @@
       }
     },
     {
+      "name": "ALTCHA PoW Challenge",
+      "category": "bot_detection",
+      "signals": {
+        "html_patterns": ["name=\"challenge\".*name=\"salt\".*name=\"sig\"", "SHA-256\\(", "ALTCHA", "altcha"],
+        "scripts": ["/antibot/"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 60,
+        "html_patterns": 80
+      }
+    },
+    {
+      "name": "NJS Antibot Gate",
+      "category": "bot_detection",
+      "signals": {
+        "cookies": ["pn_antibot"],
+        "cookies_prefix": ["pn_antibot"],
+        "html_patterns": ["Проверка браузера", "Проверяем ваш браузер", "navigator\\.webdriver", "email_address.*hp"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Qrator",
+      "category": "waf",
+      "signals": {
+        "cookies": ["qrator_jsid", "qrator_ssid"],
+        "cookies_prefix": ["qrator_"],
+        "headers": {
+          "x-qrator-request-id": ""
+        },
+        "html_patterns": ["qrator\\.net", "Qrator Labs"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 80,
+        "html_patterns": 50
+      }
+    },
+    {
       "name": "ThreatMetrix",
       "category": "fingerprinting",
       "signals": {

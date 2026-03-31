@@ -230,3 +230,59 @@ fn f5_bigip_detected_from_cookie_regex() {
     let det = report.detections.iter().find(|d| d.name == "F5 BIG-IP");
     assert!(det.is_some(), "should detect F5 BIG-IP");
 }
+
+// 21. ALTCHA PoW Challenge detected from HTML
+#[test]
+fn detect_altcha_pow_from_html() {
+    let html = r#"<input type="hidden" name="challenge" value="abc"><input type="hidden" name="salt" value="def"><input type="hidden" name="sig" value="ghi">var CHALLENGE = SHA-256(salt + nonce)"#;
+    let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
+
+    let det = report.detections.iter().find(|d| d.name == "ALTCHA PoW Challenge");
+    assert!(det.is_some(), "should detect ALTCHA PoW, got: {:?}", report.detections);
+    assert!(report.summary.has_bot_detection);
+}
+
+// 22. NJS Antibot Gate detected from cookie
+#[test]
+fn detect_njs_antibot_from_cookie() {
+    let cks = cookies(&["pn_antibot"]);
+    let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
+
+    let det = report.detections.iter().find(|d| d.name == "NJS Antibot Gate");
+    assert!(det.is_some(), "should detect NJS Antibot Gate");
+    assert!(report.summary.has_bot_detection);
+}
+
+// 23. NJS Antibot Gate detected from challenge page HTML
+#[test]
+fn detect_njs_antibot_from_challenge_html() {
+    let html = r#"<title>Проверка браузера</title><div>Проверяем ваш браузер...</div>"#;
+    let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
+
+    let det = report.detections.iter().find(|d| d.name == "NJS Antibot Gate");
+    assert!(det.is_some(), "should detect NJS Antibot from challenge page");
+}
+
+// 24. Qrator detected from cookies
+#[test]
+fn detect_qrator_from_cookies() {
+    let cks = cookies(&["qrator_jsid"]);
+    let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
+
+    let det = report.detections.iter().find(|d| d.name == "Qrator");
+    assert!(det.is_some(), "should detect Qrator");
+    assert!(report.summary.has_waf);
+}
+
+// 25. Login mode: PoW suppresses no_captcha finding
+#[test]
+fn login_mode_pow_suppresses_no_captcha() {
+    let html = r#"<input name="challenge" value="x"><input name="salt" value="y"><input name="sig" value="z">SHA-256("#;
+    let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Login);
+
+    assert!(report.summary.has_bot_detection, "PoW should count as bot_detection");
+    let no_captcha = report.findings.iter().find(|f| f.check == "no_captcha");
+    assert!(no_captcha.is_none(), "PoW should suppress no_captcha finding");
+    let no_bot = report.findings.iter().find(|f| f.check == "no_bot_detection");
+    assert!(no_bot.is_none(), "PoW should suppress no_bot_detection finding");
+}

@@ -259,7 +259,8 @@ fn build_findings(
         return findings;
     };
 
-    if !summary.has_captcha {
+    // PoW challenge (bot_detection) is functionally equivalent to CAPTCHA.
+    if !summary.has_captcha && !summary.has_bot_detection {
         if let Some(f) = login_findings.get("no_captcha") {
             findings.push(ProtectionFinding {
                 check: "no_captcha".to_owned(),
