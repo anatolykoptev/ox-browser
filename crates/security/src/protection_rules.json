@@ -1,4 +1,11 @@
 {
+  "categories": {
+    "waf": "Web Application Firewall",
+    "bot_detection": "Bot Detection",
+    "captcha": "CAPTCHA",
+    "fingerprinting": "Device Fingerprinting",
+    "auth_security": "Authentication Security"
+  },
   "rules": [
     {
       "name": "Cloudflare Bot Management",
