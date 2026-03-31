@@ -1,0 +1,485 @@
+{
+  "rules": [
+    {
+      "name": "Cloudflare Bot Management",
+      "category": "bot_detection",
+      "signals": {
+        "cookies": ["cf_clearance", "__cf_bm"],
+        "headers": {
+          "cf-mitigated": "challenge"
+        },
+        "scripts": ["challenges\\.cloudflare\\.com"],
+        "html_patterns": ["window\\._cf_chl_opt", "__cf_chl_f_tk", "Just a moment\\.\\.\\.</title>"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 70,
+        "headers": 80,
+        "scripts": 70,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Cloudflare CDN",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "cf-ray": "",
+          "server": "cloudflare"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "Cloudflare Turnstile",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["challenges\\.cloudflare\\.com/turnstile"],
+        "html_patterns": ["cf-turnstile", "turnstile/v0/api\\.js"],
+        "dom_classes": ["cf-turnstile"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Akamai Bot Manager",
+      "category": "bot_detection",
+      "signals": {
+        "cookies": ["_abck", "bm_sz", "ak_bmsc", "sbsd"],
+        "html_patterns": ["bazadebezolkohpepadr"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "PerimeterX / HUMAN",
+      "category": "bot_detection",
+      "signals": {
+        "cookies": ["_px2", "_px3", "_pxhd", "_pxvid"],
+        "scripts": ["client\\.px-cloud\\.net", "cdn\\.px-cdn\\.net"],
+        "html_patterns": ["window\\._pxAppId", "px-captcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "scripts": 70,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "DataDome",
+      "category": "bot_detection",
+      "signals": {
+        "cookies": ["datadome"],
+        "headers": {
+          "x-datadome-cid": ""
+        },
+        "scripts": ["js\\.datadome\\.co"],
+        "html_patterns": ["window\\.ddjskey", "window\\.ddoptions"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 70,
+        "scripts": 80,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Kasada",
+      "category": "bot_detection",
+      "signals": {
+        "scripts": ["ips\\.js"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 60
+      }
+    },
+    {
+      "name": "Shape Security / F5",
+      "category": "bot_detection",
+      "signals": {
+        "headers_regex": ["^x-[a-z0-9]{8}-[a-fz]$"],
+        "url_patterns": ["[?&]seed=[A-Za-z0-9_-]+"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 60,
+        "scripts": 60
+      }
+    },
+    {
+      "name": "Imperva / Incapsula",
+      "category": "waf",
+      "signals": {
+        "cookies": ["reese84"],
+        "cookies_prefix": ["incap_ses_", "visid_incap_", "nlbi_"],
+        "headers": {
+          "x-iinfo": "",
+          "x-cdn": "Incapsula"
+        },
+        "html_patterns": ["_Incapsula_Resource", "Powered By Incapsula", "Incapsula incident ID"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 70,
+        "headers": 60,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "AWS WAF",
+      "category": "waf",
+      "signals": {
+        "cookies": ["aws-waf-token"],
+        "cookies_prefix": ["awswaf"],
+        "html_patterns": ["AWSWAFIntegration", "AwsWafCaptcha\\.renderCaptcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Sucuri WAF",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "Sucuri/Cloudproxy",
+          "x-sucuri-id": ""
+        },
+        "html_patterns": ["sucuri\\.net"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "html_patterns": 40
+      }
+    },
+    {
+      "name": "F5 BIG-IP",
+      "category": "waf",
+      "signals": {
+        "cookies_regex": ["^TS[a-zA-Z0-9]+$"],
+        "cookies_prefix": ["BIGipServer", "TSPD"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 60
+      }
+    },
+    {
+      "name": "Reblaze",
+      "category": "waf",
+      "signals": {
+        "cookies": ["rbzid", "rbzsessionid"],
+        "cookies_prefix": ["rbz"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 70
+      }
+    },
+    {
+      "name": "reCAPTCHA v2",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["google\\.com/recaptcha/api\\.js", "gstatic\\.com/recaptcha", "recaptcha\\.net"],
+        "html_patterns": ["g-recaptcha", "grecaptcha\\.render"],
+        "dom_classes": ["g-recaptcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "reCAPTCHA v3",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["google\\.com/recaptcha/api\\.js\\?render="],
+        "html_patterns": ["grecaptcha\\.execute"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "hCaptcha",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["js\\.hcaptcha\\.com"],
+        "html_patterns": ["h-captcha", "hcaptcha\\.render"],
+        "dom_classes": ["h-captcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Arkose Labs / FunCAPTCHA",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["client-api\\.arkoselabs\\.com", "api\\.funcaptcha\\.com"],
+        "html_patterns": ["ArkoseEnforce", "FunCaptcha", "data-pkey"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "GeeTest",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["static\\.geetest\\.com", "api\\.geetest\\.com"],
+        "html_patterns": ["initGeetest"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "FingerprintJS",
+      "category": "fingerprinting",
+      "signals": {
+        "scripts": ["openfpcdn\\.io/fingerprintjs", "cdn\\.jsdelivr\\.net/npm/@fingerprintjs"],
+        "html_patterns": ["FingerprintJS\\.load", "fingerprintjs"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "low",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Fingerprint Pro",
+      "category": "fingerprinting",
+      "signals": {
+        "scripts": ["fpjscdn\\.net", "fpcdn\\.io"],
+        "html_patterns": ["fpjs-pro-agent", "api\\.fpjs\\.io"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "low",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "ThumbmarkJS",
+      "category": "fingerprinting",
+      "signals": {
+        "scripts": ["thumbmarkjs"],
+        "html_patterns": ["ThumbmarkJS"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "low",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 70,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Castle.io",
+      "category": "auth_security",
+      "signals": {
+        "html_patterns": ["Castle\\.configure", "castleio", "createRequestToken"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Auth0",
+      "category": "auth_security",
+      "signals": {
+        "scripts": ["cdn\\.auth0\\.com"],
+        "html_patterns": ["createAuth0Client", "auth0\\.com"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 70,
+        "html_patterns": 40
+      }
+    },
+    {
+      "name": "Okta",
+      "category": "auth_security",
+      "signals": {
+        "scripts": ["global\\.oktacdn\\.com"],
+        "html_patterns": ["OktaSignIn", "okta\\.com"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 70,
+        "html_patterns": 40
+      }
+    },
+    {
+      "name": "ThreatMetrix",
+      "category": "fingerprinting",
+      "signals": {
+        "scripts": ["online-metrix\\.net"],
+        "html_patterns": ["ThreatMetrix", "fp/check\\.js"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "low",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 70,
+        "html_patterns": 50
+      }
+    }
+  ],
+  "mode_findings": {
+    "login": {
+      "no_captcha": {
+        "severity": "medium",
+        "message": "Login page has no CAPTCHA protection — vulnerable to credential stuffing"
+      },
+      "no_bot_detection": {
+        "severity": "low",
+        "message": "Login page has no bot detection (WAF/anti-bot) — automated attacks not mitigated"
+      },
+      "no_fingerprinting": {
+        "severity": "info",
+        "message": "Login page has no device fingerprinting — no device-based fraud detection"
+      },
+      "no_rate_limiting_hint": {
+        "severity": "low",
+        "message": "No rate-limiting headers detected (X-RateLimit-*) — brute force not visibly mitigated"
+      }
+    },
+    "authenticated": {
+      "session_no_secure": {
+        "severity": "high",
+        "message": "Session cookie missing Secure flag on authenticated page"
+      },
+      "session_no_httponly": {
+        "severity": "high",
+        "message": "Session cookie missing HttpOnly flag — XSS can steal session"
+      },
+      "no_csrf_protection": {
+        "severity": "high",
+        "message": "Authenticated page with forms but no CSRF protection"
+      }
+    }
+  }
+}
