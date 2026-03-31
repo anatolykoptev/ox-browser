@@ -9,6 +9,7 @@ pub mod fingerprint;
 pub mod headers;
 pub mod info_disclosure;
 pub mod mixed_content;
+pub mod protection;
 pub mod redirect;
 pub mod scoring;
 pub mod sri;
@@ -18,3 +19,4 @@ pub mod vuln_js;
 
 // Re-export main entry point.
 pub use scoring::{analyze_security, SecurityReport};
+pub use types::ScanMode;

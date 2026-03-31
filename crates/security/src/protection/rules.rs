@@ -1,0 +1,56 @@
+//! Embedded protection detection rules.
+
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+use serde::Deserialize;
+
+const RULES_JSON: &str = include_str!("../protection_rules.json");
+
+#[derive(Debug, Deserialize)]
+pub struct RulesDB {
+    pub categories: HashMap<String, String>,
+    pub rules: Vec<Rule>,
+    pub mode_findings: HashMap<String, HashMap<String, ModeFinding>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Rule {
+    pub name: String,
+    pub category: String,
+    pub signals: Signals,
+    pub severity: HashMap<String, String>,
+    pub confidence_boost: HashMap<String, u8>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Signals {
+    #[serde(default)]
+    pub cookies: Vec<String>,
+    #[serde(default)]
+    pub cookies_prefix: Vec<String>,
+    #[serde(default)]
+    pub cookies_regex: Vec<String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub headers_regex: Vec<String>,
+    #[serde(default)]
+    pub scripts: Vec<String>,
+    #[serde(default)]
+    pub html_patterns: Vec<String>,
+    #[serde(default)]
+    pub dom_classes: Vec<String>,
+    #[serde(default)]
+    pub url_patterns: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModeFinding {
+    pub severity: String,
+    pub message: String,
+}
+
+pub static DB: LazyLock<RulesDB> = LazyLock::new(|| {
+    serde_json::from_str(RULES_JSON).expect("embedded protection_rules.json is valid")
+});
