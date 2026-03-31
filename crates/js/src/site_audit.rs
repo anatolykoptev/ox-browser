@@ -55,8 +55,9 @@ pub async fn site_audit(
     let seo_report = seo::analyze(&resp.body);
     let perf_report = performance::analyze(&headers, &resp.body);
     let a11y_report = accessibility::analyze(&resp.body);
-    let sec_report =
-        ox_security::analyze_security(&req.url, &headers, &set_cookie_headers, &resp.body);
+    let sec_report = ox_security::analyze_security(
+        &req.url, &headers, &set_cookie_headers, &resp.body, ox_security::ScanMode::Public,
+    );
 
     let sec_score = sec_report.score.clamp(0, 100) as u8;
     let include = |cat: &str| focus == "all" || focus == cat;

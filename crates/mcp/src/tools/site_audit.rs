@@ -69,6 +69,7 @@ impl OxMcpServer {
             &headers,
             &set_cookie_headers,
             &resp.body,
+            ox_security::ScanMode::Public,
         );
 
         // Security score: cap Observatory score to 0-100 range

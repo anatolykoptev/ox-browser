@@ -61,6 +61,7 @@ fn security_findings_from_report() {
         &HashMap::new(),
         &[],
         "",
+        ox_security::ScanMode::Public,
     );
     let findings = security_findings(&report);
     assert!(findings.iter().any(|f| f.category == "security"));

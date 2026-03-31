@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use super::super::{body_scan, cookies, cors, csp, dangerous_js, headers, info_disclosure};
-use super::super::{mixed_content, redirect, sri, supply_chain, vuln_js};
+use super::super::{mixed_content, protection, redirect, sri, supply_chain, vuln_js};
+use super::super::types::ScanMode;
 use super::super::cookies::CookieReport;
 use super::super::cors::CorsReport;
 use super::super::csp::CspReport;
@@ -18,6 +19,7 @@ pub fn analyze_security(
     resp_headers: &HashMap<String, String>,
     set_cookie_headers: &[String],
     html: &str,
+    mode: ScanMode,
 ) -> SecurityReport {
     let headers_report = headers::analyze_headers(resp_headers, url);
     let csp_header = resp_headers
@@ -41,6 +43,14 @@ pub fn analyze_security(
     let vuln = vuln_js::detect_vulnerable_js(html);
     let dangerous = dangerous_js::analyze_dangerous_js(html);
     let redirect_report = redirect::analyze_redirect(url, resp_headers);
+
+    let cookie_names: Vec<String> = set_cookie_headers
+        .iter()
+        .filter_map(|h| h.split('=').next().map(|n| n.trim().to_string()))
+        .collect();
+    let protection_report = protection::detect_protection(
+        resp_headers, &cookie_names, html, url, mode,
+    );
 
     let score = compute_score(
         resp_headers,
@@ -69,6 +79,7 @@ pub fn analyze_security(
         &vuln,
         &dangerous,
         &redirect_report,
+        &protection_report,
     );
 
     SecurityReport {
@@ -87,6 +98,7 @@ pub fn analyze_security(
         vuln_js: vuln,
         dangerous_js: dangerous,
         redirect: redirect_report,
+        protection: protection_report,
         findings_summary,
     }
 }
@@ -172,6 +184,7 @@ fn count_findings(
     body: &body_scan::BodyScanReport, vuln: &vuln_js::VulnJsReport,
     dangerous: &dangerous_js::DangerousJsReport,
     redirect: &redirect::RedirectReport,
+    protection: &protection::ProtectionReport,
 ) -> FindingsSummary {
     let mut sevs: Vec<Severity> = Vec::new();
     sevs.extend(headers.findings.iter().map(|f| f.severity));
@@ -186,6 +199,7 @@ fn count_findings(
     sevs.extend(vuln.findings.iter().map(|f| f.severity));
     sevs.extend(dangerous.findings.iter().map(|f| f.severity));
     sevs.extend(redirect.findings.iter().map(|f| f.severity));
+    sevs.extend(protection.findings.iter().map(|f| f.severity));
     let total = sevs.len();
     FindingsSummary {
         critical: sevs.iter().filter(|&&s| s == Severity::Critical).count(),

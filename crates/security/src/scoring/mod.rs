@@ -13,6 +13,7 @@ use super::dangerous_js::DangerousJsReport;
 use super::headers::HeadersReport;
 use super::info_disclosure::InfoDisclosureReport;
 use super::mixed_content::MixedContentReport;
+use super::protection::ProtectionReport;
 use super::redirect::RedirectReport;
 use super::sri::SriReport;
 use super::supply_chain::SupplyChainReport;
@@ -37,6 +38,7 @@ pub struct SecurityReport {
     pub vuln_js: VulnJsReport,
     pub dangerous_js: DangerousJsReport,
     pub redirect: RedirectReport,
+    pub protection: ProtectionReport,
     pub findings_summary: FindingsSummary,
 }
 
@@ -73,6 +75,7 @@ pub fn score_to_grade(score: i32) -> String {
 mod tests {
     use std::collections::HashMap;
     use super::*;
+    use super::super::types::ScanMode;
 
     fn h(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
@@ -106,14 +109,14 @@ mod tests {
             ("referrer-policy", "no-referrer"),
         ]);
         let cookies = vec!["session=abc; Secure; HttpOnly; SameSite=Strict".to_string()];
-        let r = analyze_security("https://example.com", &hdrs, &cookies, "");
+        let r = analyze_security("https://example.com", &hdrs, &cookies, "", ScanMode::Public);
         assert!(r.grade.starts_with('A'), "grade={} score={}", r.grade, r.score);
     }
 
     #[test]
     fn test_no_security() {
         // Headers: 50 - 15 - 3 - 10 - 3 - 15 = 4, Quality: 50 - 30 = 20 → 24 (F)
-        let r = analyze_security("https://example.com", &HashMap::new(), &[], "");
+        let r = analyze_security("https://example.com", &HashMap::new(), &[], "", ScanMode::Public);
         assert_eq!(r.grade, "F", "score={}", r.score);
         assert_eq!(r.score, 24);
     }
@@ -121,7 +124,7 @@ mod tests {
     #[test]
     fn test_findings_summary_counts() {
         let html = r#"<script src="https://cdn.polyfill.io/v3/polyfill.min.js"></script>"#;
-        let r = analyze_security("https://example.com", &HashMap::new(), &[], html);
+        let r = analyze_security("https://example.com", &HashMap::new(), &[], html, ScanMode::Public);
         assert!(r.findings_summary.critical > 0);
         assert!(r.findings_summary.total > 0);
     }
@@ -141,7 +144,7 @@ mod tests {
             <!-- TODO: remove debug endpoint -->
         "#;
         let cookies = vec!["session=abc".to_string()];
-        let r = analyze_security("https://example.com", &hdrs, &cookies, html);
+        let r = analyze_security("https://example.com", &hdrs, &cookies, html, ScanMode::Public);
         assert!(!r.info_disclosure.findings.is_empty(), "info_disclosure should have findings");
         assert!(!r.vuln_js.findings.is_empty(), "vuln_js should have findings");
         assert_eq!(r.vuln_js.libraries[0].name, "jQuery");
@@ -158,7 +161,7 @@ mod tests {
             ("x-content-type-options", "nosniff"),
             ("x-frame-options", "SAMEORIGIN"),
         ]);
-        let r = analyze_security("https://example.com", &hdrs, &[], "");
+        let r = analyze_security("https://example.com", &hdrs, &[], "", ScanMode::Public);
         assert!(r.score >= 30 && r.score <= 85, "score={}", r.score);
         assert!(r.grade != "F" && r.grade != "A+", "grade={}", r.grade);
     }
@@ -176,7 +179,7 @@ mod tests {
             ("cross-origin-embedder-policy", "require-corp"),
             ("cross-origin-resource-policy", "same-origin"),
         ]);
-        let r = analyze_security("https://example.com", &hdrs, &[], "");
+        let r = analyze_security("https://example.com", &hdrs, &[], "", ScanMode::Public);
         assert!(r.score >= 60, "All headers + weak CSP should score >= 60, got {}", r.score);
     }
 
@@ -190,11 +193,11 @@ mod tests {
         ];
         let mut bonus_h = h(&base);
         bonus_h.insert("referrer-policy".into(), "no-referrer".into());
-        let r_bonus = analyze_security("https://example.com", &bonus_h, &[], "");
+        let r_bonus = analyze_security("https://example.com", &bonus_h, &[], "", ScanMode::Public);
 
         let mut no_bonus_h = h(&base);
         no_bonus_h.insert("referrer-policy".into(), "strict-origin-when-cross-origin".into());
-        let r_no = analyze_security("https://example.com", &no_bonus_h, &[], "");
+        let r_no = analyze_security("https://example.com", &no_bonus_h, &[], "", ScanMode::Public);
         assert!(r_bonus.score > r_no.score, "bonus={} no_bonus={}", r_bonus.score, r_no.score);
     }
 }

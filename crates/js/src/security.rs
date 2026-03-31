@@ -45,8 +45,9 @@ pub async fn security_scan(
         .filter_map(|v| v.to_str().ok().map(|s| s.to_owned()))
         .collect();
 
-    let report =
-        ox_security::analyze_security(&req.url, &headers, &set_cookie_headers, &resp.body);
+    let report = ox_security::analyze_security(
+        &req.url, &headers, &set_cookie_headers, &resp.body, ox_security::ScanMode::Public,
+    );
 
     let json = serde_json::to_value(&report).unwrap_or_default();
     (StatusCode::OK, Json(json))

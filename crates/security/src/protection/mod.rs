@@ -18,14 +18,14 @@ mod tests;
 
 // ── Public types ──────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProtectionReport {
     pub detections: Vec<ProtectionDetection>,
     pub findings: Vec<ProtectionFinding>,
     pub summary: ProtectionSummary,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProtectionDetection {
     pub name: String,
     pub category: String,
@@ -34,14 +34,14 @@ pub struct ProtectionDetection {
     pub matched_signals: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProtectionFinding {
     pub check: String,
     pub detail: String,
     pub severity: Severity,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ProtectionSummary {
     pub has_waf: bool,
     pub has_bot_detection: bool,
