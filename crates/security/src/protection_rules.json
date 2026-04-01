@@ -510,6 +510,413 @@
         "scripts": 70,
         "html_patterns": 50
       }
+    },
+    {
+      "name": "Akamai Kona Site Defender",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "AkamaiGHost"
+        },
+        "cookies_prefix": ["akavpau_", "akamai_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "Google Cloud Armor",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "Google Frontend"
+        },
+        "headers_regex": ["^x-goog-"],
+        "html_patterns": ["Google Cloud Armor"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 70,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Azure Front Door",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-azure-ref": ""
+        },
+        "cookies_prefix": ["AFDAFFINITY"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "Azure Application Gateway",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "Microsoft-Azure-Application-Gateway"
+        },
+        "cookies_prefix": ["ApplicationGatewayAffinity"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 90
+      }
+    },
+    {
+      "name": "AWS CloudFront",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-amz-cf-id": "",
+          "x-amz-cf-pop": ""
+        },
+        "headers_regex": ["^x-amz-cf-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "AWS ELB / ALB",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "awselb"
+        },
+        "cookies_prefix": ["AWSALB", "AWSALBCORS"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 80
+      }
+    },
+    {
+      "name": "Fastly",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-fastly-request-id": "",
+          "x-served-by": "cache-"
+        },
+        "headers_regex": ["^x-fastly-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "StackPath",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-sp-waf": "",
+          "x-sp-url": ""
+        },
+        "headers_regex": ["^x-sp-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "DDoS-Guard",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "DDoS-Guard"
+        },
+        "cookies_prefix": ["__ddg"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "DOSarrest",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "DOSarrest"
+        },
+        "headers_regex": ["^x-dosarrest"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
+    },
+    {
+      "name": "Wallarm",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-wallarm-waf-check": ""
+        },
+        "headers_regex": ["^x-wallarm"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
+    },
+    {
+      "name": "Varnish",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-varnish": "",
+          "via": "varnish"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 70
+      }
+    },
+    {
+      "name": "Edgecast / Verizon",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "ECD"
+        },
+        "headers_regex": ["^x-ec-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "ArvanCloud",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "ArvanCloud"
+        },
+        "cookies_prefix": ["ar_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "cookies": 60
+      }
+    },
+    {
+      "name": "Azion",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "Azion"
+        },
+        "headers_regex": ["^x-azion"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
+    },
+    {
+      "name": "Bunny CDN",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "BunnyCDN",
+          "cdn-pullzone": ""
+        },
+        "headers_regex": ["^cdn-requestid"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "KeyCDN",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "keycdn"
+        },
+        "headers_regex": ["^x-edge-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "Vercel",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-vercel-id": "",
+          "server": "Vercel"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "Netlify",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-nf-request-id": "",
+          "server": "Netlify"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "NexusGuard",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-nexusguard"],
+        "cookies_prefix": ["ng_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "cookies": 60
+      }
+    },
+    {
+      "name": "Link11",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "Link11"
+        },
+        "headers_regex": ["^x-link11"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
+    },
+    {
+      "name": "Variti",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-variti": ""
+        },
+        "headers_regex": ["^x-variti"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
     }
   ],
   "mode_findings": {
