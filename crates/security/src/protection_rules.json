@@ -1238,6 +1238,264 @@
       "confidence_boost": {
         "headers": 80
       }
+    },
+    {
+      "name": "Distil Networks",
+      "category": "bot_detection",
+      "signals": {
+        "cookies_prefix": ["D_"],
+        "headers_regex": ["^x-distil"],
+        "html_patterns": ["distil_identify_cookie"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 60,
+        "headers": 90,
+        "html_patterns": 70
+      }
+    },
+    {
+      "name": "Cheq",
+      "category": "bot_detection",
+      "signals": {
+        "scripts": ["cheqzone\\.com", "clicktrue_invocation\\.js"],
+        "html_patterns": ["CheqSdk", "cheq_invalidUsers"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 70
+      }
+    },
+    {
+      "name": "Meetrics",
+      "category": "bot_detection",
+      "signals": {
+        "scripts": ["mxcdn\\.net/bb-mx/serve/mtrcs", "meetrics\\.com"],
+        "html_patterns": ["meetricsGlobal", "suspicious_mouse_movement"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 70
+      }
+    },
+    {
+      "name": "Ocule",
+      "category": "bot_detection",
+      "signals": {
+        "scripts": ["proxy\\.ocule\\.co\\.uk/script\\.js", "ocule\\.co\\.uk"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80
+      }
+    },
+    {
+      "name": "Bekchy",
+      "category": "bot_detection",
+      "signals": {
+        "headers_regex": ["^x-bekchy"],
+        "html_patterns": ["bekchy"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Anubis PoW",
+      "category": "bot_detection",
+      "signals": {
+        "html_patterns": ["anubis-challenge", "x-anubis-"],
+        "scripts": ["/.within\\.website/x/cmd/anubis/"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "html_patterns": 70,
+        "scripts": 80
+      }
+    },
+    {
+      "name": "Google BotGuard",
+      "category": "bot_detection",
+      "signals": {
+        "scripts": ["www\\.gstatic\\.com/recaptcha/releases/.*/recaptcha_"],
+        "html_patterns": ["botguard", "bg\\.init"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 60,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Friendly Captcha",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["friendlycaptcha\\.com"],
+        "html_patterns": ["frc-captcha", "friendlyChallenge"],
+        "dom_classes": ["frc-captcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Tencent QCloud CAPTCHA",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["turing\\.captcha\\.qcloud\\.com", "turing\\.captcha\\.gtimg\\.com"],
+        "html_patterns": ["TencentCaptcha", "tencent_captcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Captcha.eu",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["captcha\\.eu"],
+        "html_patterns": ["captchaeu-widget", "CaptchaEU"],
+        "dom_classes": ["captchaeu-widget"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "mCaptcha",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["mcaptcha"],
+        "html_patterns": ["mCaptcha", "mcaptcha-widget"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Yandex SmartCaptcha",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["smartcaptcha\\.yandexcloud\\.net"],
+        "html_patterns": ["smart-captcha", "yandex.*captcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 90,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "MTCaptcha",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["mtcaptcha\\.com"],
+        "html_patterns": ["mtcaptcha", "mtcap-container"],
+        "dom_classes": ["mtcap-container"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "KeyCAPTCHA",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["keycaptcha\\.com"],
+        "html_patterns": ["KeyCAPTCHA", "keycaptcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Lemin CAPTCHA",
+      "category": "captcha",
+      "signals": {
+        "scripts": ["lemin\\.ai", "captcha\\.lemin"],
+        "html_patterns": ["lemincrm", "lemin-captcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "scripts": 80,
+        "html_patterns": 60
+      }
     }
   ],
   "mode_findings": {
