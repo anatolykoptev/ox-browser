@@ -1496,6 +1496,362 @@
         "scripts": 80,
         "html_patterns": 60
       }
+    },
+    {
+      "name": "AliYunDun (Alibaba Cloud WAF)",
+      "category": "waf",
+      "signals": {
+        "cookies": ["aliyungf_tc"],
+        "cookies_prefix": ["ali_"],
+        "headers": {
+          "server": "Tengine"
+        },
+        "headers_regex": ["^x-server-id"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 60
+      }
+    },
+    {
+      "name": "Baidu Yunjiasu",
+      "category": "waf",
+      "signals": {
+        "cookies_prefix": ["__jsluid_", "__jsl_clearance_"],
+        "headers": {
+          "server": "Yunjiasu"
+        },
+        "html_patterns": ["yunjiasu"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 90,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Yundun",
+      "category": "waf",
+      "signals": {
+        "cookies_prefix": ["yundun"],
+        "headers_regex": ["^x-yd-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 80
+      }
+    },
+    {
+      "name": "Yunsuo",
+      "category": "waf",
+      "signals": {
+        "cookies": ["yunsuo_session"],
+        "cookies_prefix": ["yunsuo_"],
+        "headers_regex": ["^x-yunsuo-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 90,
+        "headers": 80
+      }
+    },
+    {
+      "name": "Tencent Cloud WAF",
+      "category": "waf",
+      "signals": {
+        "cookies_prefix": ["TC_"],
+        "headers_regex": ["^x-tc-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 60,
+        "headers": 80
+      }
+    },
+    {
+      "name": "Jiasule",
+      "category": "waf",
+      "signals": {
+        "cookies": ["jsl_clearance"],
+        "cookies_prefix": ["__jsluid"],
+        "headers_regex": ["^x-jiasule-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 80
+      }
+    },
+    {
+      "name": "Anquanbao",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-powered-by-anquanbao"],
+        "html_patterns": ["anquanbao"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Safe3 WAF",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "Safe3"
+        },
+        "cookies_prefix": ["safe3_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "Safeline (Chaitin)",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-safeline"],
+        "cookies_prefix": ["sl-session"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "KnownSec",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-ks-"],
+        "html_patterns": ["KnownSec"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Bluedon IST",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "BDWAF"
+        },
+        "cookies_prefix": ["BDWAF_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "ChinaCache",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-chinacache"],
+        "headers": {
+          "powered-by-chinacache": ""
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "Wordfence",
+      "category": "waf",
+      "signals": {
+        "cookies_prefix": ["wfvt_", "wordfence_"],
+        "html_patterns": ["wordfence-ls", "wordfence\\.com"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "Cerber Security",
+      "category": "waf",
+      "signals": {
+        "cookies_prefix": ["cerber_"],
+        "html_patterns": ["wp-cerber", "cerber-recaptcha"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 70,
+        "html_patterns": 60
+      }
+    },
+    {
+      "name": "Shield Security",
+      "category": "waf",
+      "signals": {
+        "cookies_prefix": ["icwp-"],
+        "html_patterns": ["shield-security", "icwp\\.io"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 70,
+        "html_patterns": 50
+      }
+    },
+    {
+      "name": "NinjaFirewall",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-ninja"],
+        "cookies_prefix": ["nfw_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "Imunify360",
+      "category": "waf",
+      "signals": {
+        "html_patterns": ["imunify360", "ImunifyAV"],
+        "headers_regex": ["^x-imunify"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "html_patterns": 60,
+        "headers": 80
+      }
+    },
+    {
+      "name": "SiteGuard",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-siteguard"],
+        "cookies_prefix": ["siteguard_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "Squarespace",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-powered-by": "Squarespace",
+          "server": "Squarespace"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
+    },
+    {
+      "name": "GoDaddy WAF",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-godaddy"],
+        "cookies_prefix": ["gd_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "cookies": 60
+      }
     }
   ],
   "mode_findings": {
