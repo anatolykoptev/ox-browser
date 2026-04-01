@@ -156,3 +156,73 @@ fn test_report_to_detection() {
         "should not report reporting when absent"
     );
 }
+
+#[test]
+fn wildcard_subdomain_detected() {
+    let report = evaluate_csp("script-src 'self' *.example.com");
+    let has_wildcard = report
+        .findings
+        .iter()
+        .any(|f| f.description.contains("Wildcard subdomain"));
+    assert!(has_wildcard, "should detect wildcard subdomain");
+}
+
+#[test]
+fn no_wildcard_for_exact_domain() {
+    let report = evaluate_csp("script-src 'self' cdn.example.com");
+    let has_wildcard = report
+        .findings
+        .iter()
+        .any(|f| f.description.contains("Wildcard subdomain"));
+    assert!(!has_wildcard, "exact domain should not trigger wildcard check");
+}
+
+#[test]
+fn jsonp_bypass_googleapis_detected() {
+    let report = evaluate_csp("script-src 'self' ajax.googleapis.com");
+    let has_jsonp = report
+        .findings
+        .iter()
+        .any(|f| f.description.contains("JSONP bypass"));
+    assert!(has_jsonp, "should detect JSONP bypass via googleapis");
+}
+
+#[test]
+fn jsonp_bypass_cdnjs_detected() {
+    let report = evaluate_csp("script-src 'self' cdnjs.cloudflare.com");
+    let has_jsonp = report
+        .findings
+        .iter()
+        .any(|f| f.description.contains("JSONP bypass"));
+    assert!(has_jsonp, "should detect JSONP bypass via cdnjs");
+}
+
+#[test]
+fn no_jsonp_for_safe_domain() {
+    let report = evaluate_csp("script-src 'self' cdn.myapp.com");
+    let has_jsonp = report
+        .findings
+        .iter()
+        .any(|f| f.description.contains("JSONP bypass"));
+    assert!(!has_jsonp, "safe domain should not trigger JSONP check");
+}
+
+#[test]
+fn deprecated_report_uri_detected() {
+    let report = evaluate_csp("default-src 'self'; report-uri /csp-report");
+    let has_deprecated = report
+        .findings
+        .iter()
+        .any(|f| f.description.contains("Deprecated report-uri"));
+    assert!(has_deprecated, "should detect deprecated report-uri");
+}
+
+#[test]
+fn no_warning_when_report_to_present() {
+    let report = evaluate_csp("default-src 'self'; report-uri /csp-report; report-to csp-endpoint");
+    let has_deprecated = report
+        .findings
+        .iter()
+        .any(|f| f.description.contains("Deprecated report-uri"));
+    assert!(!has_deprecated, "should not warn when report-to is present");
+}

@@ -16,6 +16,9 @@ pub fn run_checks(directives: &[CspDirective]) -> (Vec<CspFinding>, Vec<String>)
     check_strict_dynamic(directives, &mut findings);
     check_insecure_scheme(directives, &mut findings);
     check_missing_directives(directives, &mut findings, &mut missing);
+    check_wildcard_domains(directives, &mut findings);
+    check_jsonp_bypass(directives, &mut findings);
+    check_deprecated_reporting(directives, &mut findings);
 
     (findings, missing)
 }
@@ -138,6 +141,85 @@ fn check_missing_directives(
         findings.push(CspFinding {
             directive: "frame-ancestors".into(),
             description: "Missing frame-ancestors, relies on X-Frame-Options".into(),
+            severity: Severity::Low,
+        });
+    }
+}
+
+/// Detect wildcard subdomain sources (*.example.com) in script-src or default-src.
+fn check_wildcard_domains(directives: &[CspDirective], findings: &mut Vec<CspFinding>) {
+    for d in directives {
+        if d.name != "script-src" && d.name != "default-src" {
+            continue;
+        }
+        for v in &d.values {
+            if v.starts_with("*.") {
+                findings.push(CspFinding {
+                    directive: d.name.clone(),
+                    description: format!(
+                        "Wildcard subdomain {} allows any subdomain to inject scripts",
+                        v
+                    ),
+                    severity: Severity::Medium,
+                });
+                break;
+            }
+        }
+    }
+}
+
+/// Detect known JSONP-capable endpoints in script-src allowlist.
+fn check_jsonp_bypass(directives: &[CspDirective], findings: &mut Vec<CspFinding>) {
+    const JSONP_DOMAINS: &[&str] = &[
+        "ajax.googleapis.com",
+        "cdn.google.com",
+        "apis.google.com",
+        "cdnjs.cloudflare.com",
+        "cdn.jsdelivr.net",
+        "unpkg.com",
+        "rawgit.com",
+        "raw.githubusercontent.com",
+        "accounts.google.com",
+        "docs.google.com",
+        "translate.googleapis.com",
+        "maps.googleapis.com",
+        "www.googleadservices.com",
+    ];
+
+    let script_vals = get_script_src_values(directives);
+    let vals = match script_vals {
+        Some(v) => v,
+        None => return,
+    };
+
+    for val in vals {
+        let lower = val.to_ascii_lowercase();
+        for &domain in JSONP_DOMAINS {
+            if lower.contains(domain) {
+                findings.push(CspFinding {
+                    directive: "script-src".into(),
+                    description: format!(
+                        "JSONP bypass: {} serves JSONP callbacks that bypass CSP",
+                        val
+                    ),
+                    severity: Severity::High,
+                });
+                break;
+            }
+        }
+    }
+}
+
+/// Detect deprecated report-uri without report-to.
+fn check_deprecated_reporting(directives: &[CspDirective], findings: &mut Vec<CspFinding>) {
+    let has_report_uri = directives.iter().any(|d| d.name == "report-uri");
+    let has_report_to = directives.iter().any(|d| d.name == "report-to");
+
+    if has_report_uri && !has_report_to {
+        findings.push(CspFinding {
+            directive: "report-uri".into(),
+            description: "Deprecated report-uri without report-to — browsers dropping support"
+                .into(),
             severity: Severity::Low,
         });
     }
