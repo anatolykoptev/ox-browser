@@ -286,3 +286,187 @@ fn login_mode_pow_suppresses_no_captcha() {
     let no_bot = report.findings.iter().find(|f| f.check == "no_bot_detection");
     assert!(no_bot.is_none(), "PoW should suppress no_bot_detection finding");
 }
+
+// 26. Akamai Kona from Server header
+#[test]
+fn detect_akamai_kona_from_header() {
+    let hdrs = headers(&[("server", "AkamaiGHost")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Akamai Kona Site Defender");
+    assert!(det.is_some(), "should detect Akamai Kona Site Defender");
+    assert!(report.summary.has_waf);
+}
+
+// 27. Azure Front Door from header
+#[test]
+fn detect_azure_front_door_from_header() {
+    let hdrs = headers(&[("x-azure-ref", "abc123")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Azure Front Door");
+    assert!(det.is_some(), "should detect Azure Front Door");
+}
+
+// 28. AWS CloudFront from header
+#[test]
+fn detect_aws_cloudfront_from_header() {
+    let hdrs = headers(&[("x-amz-cf-id", "abc123"), ("x-amz-cf-pop", "IAD55-C1")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "AWS CloudFront");
+    assert!(det.is_some(), "should detect AWS CloudFront");
+}
+
+// 29. DDoS-Guard from Server header
+#[test]
+fn detect_ddos_guard_from_header() {
+    let hdrs = headers(&[("server", "DDoS-Guard")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "DDoS-Guard");
+    assert!(det.is_some(), "should detect DDoS-Guard");
+}
+
+// 30. Fastly from header
+#[test]
+fn detect_fastly_from_header() {
+    let hdrs = headers(&[("x-fastly-request-id", "abc123")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Fastly");
+    assert!(det.is_some(), "should detect Fastly");
+}
+
+// 31. Vercel from header
+#[test]
+fn detect_vercel_from_header() {
+    let hdrs = headers(&[("x-vercel-id", "iad1::abc123"), ("server", "Vercel")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Vercel");
+    assert!(det.is_some(), "should detect Vercel");
+}
+
+// 32. Netlify from header
+#[test]
+fn detect_netlify_from_header() {
+    let hdrs = headers(&[("x-nf-request-id", "abc123"), ("server", "Netlify")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Netlify");
+    assert!(det.is_some(), "should detect Netlify");
+}
+
+// 33. ModSecurity from Server header
+#[test]
+fn detect_modsecurity_from_header() {
+    let hdrs = headers(&[("server", "Apache/2.4.41 (Ubuntu) mod_security/2.9.3")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "ModSecurity");
+    assert!(det.is_some(), "should detect ModSecurity");
+}
+
+// 34. Barracuda from cookie
+#[test]
+fn detect_barracuda_from_cookie() {
+    let cks = cookies(&["barra_counter_session", "BNI__BARRACUDA_LB_COOKIE_abc"]);
+    let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Barracuda WAF");
+    assert!(det.is_some(), "should detect Barracuda WAF");
+}
+
+// 35. FortiWeb from cookie
+#[test]
+fn detect_fortiweb_from_cookie() {
+    let cks = cookies(&["FORTIWAFSID"]);
+    let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "FortiWeb");
+    assert!(det.is_some(), "should detect FortiWeb");
+}
+
+// 36. Citrix NetScaler from cookie prefix
+#[test]
+fn detect_citrix_netscaler_from_cookie() {
+    let cks = cookies(&["NSC_aaaa_bbb_1.2.3.4"]);
+    let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Citrix NetScaler");
+    assert!(det.is_some(), "should detect Citrix NetScaler");
+}
+
+// 37. LiteSpeed from Server header
+#[test]
+fn detect_litespeed_from_header() {
+    let hdrs = headers(&[("server", "LiteSpeed")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "LiteSpeed");
+    assert!(det.is_some(), "should detect LiteSpeed");
+}
+
+// 38. Distil Networks from header regex
+#[test]
+fn detect_distil_from_header() {
+    let hdrs = headers(&[("x-distil-cs", "abc123")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Distil Networks");
+    assert!(det.is_some(), "should detect Distil Networks");
+}
+
+// 39. Friendly Captcha from script
+#[test]
+fn detect_friendly_captcha_from_script() {
+    let html = r#"<script src="https://friendlycaptcha.com/widget.js"></script>"#;
+    let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Friendly Captcha");
+    assert!(det.is_some(), "should detect Friendly Captcha");
+    assert!(report.summary.has_captcha);
+}
+
+// 40. Yandex SmartCaptcha from script
+#[test]
+fn detect_yandex_smartcaptcha_from_script() {
+    let html = r#"<script src="https://smartcaptcha.yandexcloud.net/captcha.js"></script>"#;
+    let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Yandex SmartCaptcha");
+    assert!(det.is_some(), "should detect Yandex SmartCaptcha");
+}
+
+// 41. AliYunDun from cookie
+#[test]
+fn detect_aliyundun_from_cookie() {
+    let cks = cookies(&["aliyungf_tc"]);
+    let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "AliYunDun (Alibaba Cloud WAF)");
+    assert!(det.is_some(), "should detect AliYunDun");
+}
+
+// 42. Baidu Yunjiasu from cookie prefix
+#[test]
+fn detect_baidu_yunjiasu_from_cookie() {
+    let cks = cookies(&["__jsluid_h"]);
+    let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Baidu Yunjiasu");
+    assert!(det.is_some(), "should detect Baidu Yunjiasu");
+}
+
+// 43. Wordfence from cookie prefix
+#[test]
+fn detect_wordfence_from_cookie() {
+    let cks = cookies(&["wfvt_1234567890"]);
+    let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Wordfence");
+    assert!(det.is_some(), "should detect Wordfence");
+}
+
+// 44. Squarespace from Server header
+#[test]
+fn detect_squarespace_from_header() {
+    let hdrs = headers(&[("server", "Squarespace")]);
+    let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
+    let det = report.detections.iter().find(|d| d.name == "Squarespace");
+    assert!(det.is_some(), "should detect Squarespace");
+}
+
+// 45. Total rule count sanity check
+#[test]
+fn rule_count_above_100() {
+    let db = &*super::rules::DB;
+    assert!(
+        db.rules.len() >= 100,
+        "should have 100+ rules, got {}",
+        db.rules.len()
+    );
+}
