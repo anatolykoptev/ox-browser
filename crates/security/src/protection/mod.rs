@@ -7,11 +7,10 @@ mod rules;
 
 use std::collections::HashMap;
 
-use regex::Regex;
 use serde::Serialize;
 
 use crate::types::{ScanMode, Severity};
-use rules::DB;
+use rules::{DB, COMPILED};
 
 #[cfg(test)]
 mod tests;
@@ -72,9 +71,11 @@ pub fn detect_protection(
 
     let mut detections: Vec<ProtectionDetection> = Vec::new();
 
-    for rule in &db.rules {
+    let compiled = &*COMPILED;
+
+    for (idx, rule) in db.rules.iter().enumerate() {
         let (confidence, matched) =
-            evaluate_rule(rule, &lower_headers, &lower_cookies, cookie_names, html, page_url);
+            evaluate_rule(rule, &compiled[idx], &lower_headers, &lower_cookies, cookie_names, html, page_url);
 
         if confidence == 0 {
             continue;
@@ -111,6 +112,7 @@ pub fn detect_protection(
 
 fn evaluate_rule(
     rule: &rules::Rule,
+    compiled: &rules::CompiledRule,
     headers: &HashMap<String, String>,
     lower_cookies: &[String],
     original_cookies: &[String],
@@ -148,13 +150,12 @@ fn evaluate_rule(
 
     // 3. Cookie regex match (original case — regex controls sensitivity)
     if let Some(&pts) = boost.get("cookies") {
-        for pat in &sig.cookies_regex {
-            if let Ok(re) = Regex::new(pat) {
-                if original_cookies.iter().any(|c| re.is_match(c)) {
-                    confidence += u16::from(pts);
-                    matched.push(format!("cookie_regex:{pat}"));
-                    break;
-                }
+        for (i, re) in compiled.cookies_regex.iter().enumerate() {
+            if original_cookies.iter().any(|c| re.is_match(c)) {
+                confidence += u16::from(pts);
+                let pat = &sig.cookies_regex[i];
+                matched.push(format!("cookie_regex:{pat}"));
+                break;
             }
         }
     }
@@ -175,52 +176,48 @@ fn evaluate_rule(
 
     // 5. Header regex match (matches header NAME)
     if let Some(&pts) = boost.get("headers") {
-        for pat in &sig.headers_regex {
-            if let Ok(re) = Regex::new(pat) {
-                if headers.keys().any(|k| re.is_match(k)) {
-                    confidence += u16::from(pts);
-                    matched.push(format!("header_regex:{pat}"));
-                    break;
-                }
+        for (i, re) in compiled.headers_regex.iter().enumerate() {
+            if headers.keys().any(|k| re.is_match(k)) {
+                confidence += u16::from(pts);
+                let pat = &sig.headers_regex[i];
+                matched.push(format!("header_regex:{pat}"));
+                break;
             }
         }
     }
 
     // 6. Script patterns
     if let Some(&pts) = boost.get("scripts") {
-        for pat in &sig.scripts {
-            if let Ok(re) = Regex::new(pat) {
-                if re.is_match(html) {
-                    confidence += u16::from(pts);
-                    matched.push(format!("script:{pat}"));
-                    break;
-                }
+        for (i, re) in compiled.scripts.iter().enumerate() {
+            if re.is_match(html) {
+                confidence += u16::from(pts);
+                let pat = &sig.scripts[i];
+                matched.push(format!("script:{pat}"));
+                break;
             }
         }
     }
 
     // 7. HTML patterns
     if let Some(&pts) = boost.get("html_patterns") {
-        for pat in &sig.html_patterns {
-            if let Ok(re) = Regex::new(pat) {
-                if re.is_match(html) {
-                    confidence += u16::from(pts);
-                    matched.push(format!("html:{pat}"));
-                    break;
-                }
+        for (i, re) in compiled.html_patterns.iter().enumerate() {
+            if re.is_match(html) {
+                confidence += u16::from(pts);
+                let pat = &sig.html_patterns[i];
+                matched.push(format!("html:{pat}"));
+                break;
             }
         }
     }
 
     // 8. URL patterns
     if let Some(&pts) = boost.get("url_patterns") {
-        for pat in &sig.url_patterns {
-            if let Ok(re) = Regex::new(pat) {
-                if re.is_match(page_url) {
-                    confidence += u16::from(pts);
-                    matched.push(format!("url:{pat}"));
-                    break;
-                }
+        for (i, re) in compiled.url_patterns.iter().enumerate() {
+            if re.is_match(page_url) {
+                confidence += u16::from(pts);
+                let pat = &sig.url_patterns[i];
+                matched.push(format!("url:{pat}"));
+                break;
             }
         }
     }

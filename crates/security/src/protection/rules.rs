@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use regex::Regex;
 use serde::Deserialize;
 
 const RULES_JSON: &str = include_str!("../protection_rules.json");
@@ -53,4 +54,31 @@ pub struct ModeFinding {
 
 pub static DB: LazyLock<RulesDB> = LazyLock::new(|| {
     serde_json::from_str(RULES_JSON).expect("embedded protection_rules.json is valid")
+});
+
+/// Pre-compiled regexes for a single rule.
+pub struct CompiledRule {
+    pub cookies_regex: Vec<Regex>,
+    pub headers_regex: Vec<Regex>,
+    pub scripts: Vec<Regex>,
+    pub html_patterns: Vec<Regex>,
+    pub url_patterns: Vec<Regex>,
+}
+
+pub static COMPILED: LazyLock<Vec<CompiledRule>> = LazyLock::new(|| {
+    DB.rules
+        .iter()
+        .map(|rule| {
+            let compile = |patterns: &[String]| -> Vec<Regex> {
+                patterns.iter().filter_map(|p| Regex::new(p).ok()).collect()
+            };
+            CompiledRule {
+                cookies_regex: compile(&rule.signals.cookies_regex),
+                headers_regex: compile(&rule.signals.headers_regex),
+                scripts: compile(&rule.signals.scripts),
+                html_patterns: compile(&rule.signals.html_patterns),
+                url_patterns: compile(&rule.signals.url_patterns),
+            }
+        })
+        .collect()
 });
