@@ -917,6 +917,327 @@
       "confidence_boost": {
         "headers": 90
       }
+    },
+    {
+      "name": "ModSecurity",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "mod_security"
+        },
+        "headers_regex": ["mod.security"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
+    },
+    {
+      "name": "Barracuda WAF",
+      "category": "waf",
+      "signals": {
+        "cookies": ["barra_counter_session"],
+        "cookies_prefix": ["BNI__BARRACUDA_", "BNI_persistence", "BNIS_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80
+      }
+    },
+    {
+      "name": "FortiWeb",
+      "category": "waf",
+      "signals": {
+        "cookies": ["FORTIWAFSID"],
+        "headers_regex": ["^x-fw-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 90,
+        "headers": 80
+      }
+    },
+    {
+      "name": "FortiGate",
+      "category": "waf",
+      "signals": {
+        "cookies_prefix": ["fortinet_"],
+        "headers": {
+          "server": "FortiGate"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 70,
+        "headers": 90
+      }
+    },
+    {
+      "name": "SonicWall",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "SonicWALL"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
+    },
+    {
+      "name": "Citrix NetScaler",
+      "category": "waf",
+      "signals": {
+        "cookies": ["citrix_ns_id"],
+        "cookies_prefix": ["NSC_"],
+        "headers": {
+          "via": "NS-CACHE"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 70
+      }
+    },
+    {
+      "name": "WebKnight",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "aqtronix webknight"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
+    },
+    {
+      "name": "LiteSpeed",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "LiteSpeed",
+          "x-lsadc-cache": ""
+        },
+        "cookies_prefix": ["litespeed_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "NAXSI",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "x-naxsi-sig": ""
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90
+      }
+    },
+    {
+      "name": "DenyAll",
+      "category": "waf",
+      "signals": {
+        "cookies": ["sessioncookie"],
+        "headers_regex": ["^x-denyall"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 50,
+        "headers": 90
+      }
+    },
+    {
+      "name": "Safedog",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "Safedog"
+        },
+        "cookies": ["safedog-flow-item"],
+        "cookies_prefix": ["WAF_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "cookies": 80
+      }
+    },
+    {
+      "name": "Palo Alto",
+      "category": "waf",
+      "signals": {
+        "cookies_prefix": ["paloaltoproxy_"],
+        "headers": {
+          "server": "PaloAlto"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "cookies": 80,
+        "headers": 90
+      }
+    },
+    {
+      "name": "Open-Resty",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "openresty"
+        }
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "Envoy Proxy",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "envoy"
+        },
+        "headers_regex": ["^x-envoy-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
+    },
+    {
+      "name": "Radware",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-rdwr-"],
+        "cookies_prefix": ["RDWR_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "ThreatX",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-threatx"],
+        "cookies_prefix": ["tx_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "cookies": 60
+      }
+    },
+    {
+      "name": "Comodo cWatch",
+      "category": "waf",
+      "signals": {
+        "headers_regex": ["^x-cwaf"],
+        "cookies_prefix": ["cwaf_"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 90,
+        "cookies": 70
+      }
+    },
+    {
+      "name": "Oracle Cloud WAF",
+      "category": "waf",
+      "signals": {
+        "headers": {
+          "server": "ZENEDGE"
+        },
+        "headers_regex": ["^x-oracle-dms-"]
+      },
+      "severity": {
+        "public": "info",
+        "login": "info",
+        "authenticated": "info"
+      },
+      "confidence_boost": {
+        "headers": 80
+      }
     }
   ],
   "mode_findings": {
