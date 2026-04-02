@@ -99,6 +99,12 @@ pub fn build_output(
         elapsed_ms: ms,
         json_ld: ext.json_ld,
         og_image: ext.og_image,
+        published_at: ext.meta.published_at,
+        modified_at: ext.meta.modified_at,
+        section: ext.meta.section,
+        site_name: ext.meta.site_name,
+        tags: ext.meta.tags,
+        language: ext.meta.language,
         error: None,
     }
 }
@@ -116,6 +122,12 @@ pub fn build_error_output(params: &ReadParams, method: &str, ms: u64, msg: &str)
         elapsed_ms: ms,
         json_ld: Vec::new(),
         og_image: String::new(),
+        published_at: String::new(),
+        modified_at: String::new(),
+        section: String::new(),
+        site_name: String::new(),
+        tags: Vec::new(),
+        language: String::new(),
         error: Some(msg.into()),
     }
 }

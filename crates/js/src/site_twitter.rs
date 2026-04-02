@@ -35,6 +35,7 @@ pub fn make_twitter_handler() -> SiteHandler {
                         length: 0,
                         json_ld: vec![],
                         og_image: String::new(),
+                        meta: ox_http::content::ArticleMeta::default(),
                     };
                     Some(build_output(ext, &params, "twitter", elapsed(start)))
                 }
@@ -51,6 +52,7 @@ pub fn make_twitter_handler() -> SiteHandler {
                         length: 0,
                         json_ld: vec![],
                         og_image: String::new(),
+                        meta: ox_http::content::ArticleMeta::default(),
                     };
                     Some(build_output(ext, &params, "twitter", elapsed(start)))
                 }
