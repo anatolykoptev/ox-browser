@@ -155,6 +155,11 @@ impl HttpClient {
         }
     }
 
+    /// Expose config for pipeline consumers (e.g. Chrome fallback).
+    pub fn config(&self) -> &HttpConfig {
+        &self.config
+    }
+
     /// Build the underlying wreq client from config.
     fn build_wreq_client(config: &HttpConfig) -> Result<Client> {
         let mut builder = Client::builder()

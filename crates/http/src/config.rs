@@ -48,6 +48,10 @@ pub struct HttpConfig {
     /// Enable quality-check middleware (converts 401/403/429/503 to CF challenge errors).
     /// Default: true. Disable for APIs where 403 is a real auth error (e.g., Twitter).
     pub quality_check: bool,
+    /// Chrome render endpoint for JS-heavy fallback (e.g. "http://go-wowa:8906/api/v1/chrome/interact").
+    pub chrome_render_url: Option<String>,
+    /// Per-domain render mode cache (shared, thread-safe).
+    pub render_cache: Option<Arc<crate::render_cache::RenderModeCache>>,
 }
 
 impl Default for HttpConfig {
@@ -68,6 +72,8 @@ impl Default for HttpConfig {
             cookie_cache: None,
             residential_proxy: None,
             quality_check: true,
+            chrome_render_url: None,
+            render_cache: None,
         }
     }
 }

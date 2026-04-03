@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::content::{self, ContentFormat, ReadOutput, ReadParams};
+use crate::render_cache::RenderMode;
 use crate::HttpClient;
 
 /// Overall timeout for the entire read pipeline (fetch + extract).
@@ -56,11 +57,39 @@ async fn read_page_inner(
         return output;
     }
 
+    let config = http.config();
+    let chrome_url = config.chrome_render_url.clone();
+    let render_cache = config.render_cache.clone();
+
+    // Check render cache: if domain is known to need Chrome, skip HTTP fetch.
+    let domain = extract_domain(&params.url);
+    if let (Some(cache), Some(url)) = (&render_cache, &chrome_url) {
+        if cache.get(&domain) == Some(RenderMode::Chrome) {
+            tracing::debug!(domain = %domain, "render cache hit: Chrome");
+            if let Some(output) = chrome_fallback(url, params, format, start).await {
+                return output;
+            }
+            // Chrome fallback failed — fall through to HTTP as last resort
+        }
+    }
+
     // All requests go through middleware chain:
     // CF detect → quality check → residential retry → solver (with body passthrough)
     let resp = match http.get(&params.url).await {
         Ok(r) => r,
-        Err(e) => return build_error_output(params, "direct", elapsed(start), &e.to_string()),
+        Err(e) => {
+            // On Cloudflare error → mark domain as Chrome, attempt fallback
+            if matches!(e, crate::HttpError::Cloudflare(_, _, _)) {
+                if let (Some(cache), Some(url)) = (&render_cache, &chrome_url) {
+                    tracing::info!(domain = %domain, "CF error on HTTP fetch → marking Chrome, retrying via Chrome fallback");
+                    cache.set(&domain, RenderMode::Chrome);
+                    if let Some(output) = chrome_fallback(url, params, format, start).await {
+                        return output;
+                    }
+                }
+            }
+            return build_error_output(params, "direct", elapsed(start), &e.to_string());
+        }
     };
 
     if resp.status != 200 {
@@ -72,8 +101,72 @@ async fn read_page_inner(
         );
     }
 
+    // Detect JS-only shells after a successful HTTP fetch.
+    if crate::content_detect::needs_js_rendering(&resp.body) {
+        if let (Some(cache), Some(url)) = (&render_cache, &chrome_url) {
+            tracing::info!(domain = %domain, "JS shell detected → marking Chrome, retrying via Chrome fallback");
+            cache.set(&domain, RenderMode::Chrome);
+            if let Some(output) = chrome_fallback(url, params, format, start).await {
+                return output;
+            }
+        }
+    }
+
     let extracted = content::extract_content(&resp.body, &params.url, format);
     build_output(extracted, params, "direct", elapsed(start))
+}
+
+/// Call go-wowa chrome/interact to fetch a JS-rendered page.
+async fn chrome_fallback(
+    chrome_url: &str,
+    params: &ReadParams,
+    format: ContentFormat,
+    start: Instant,
+) -> Option<ReadOutput> {
+    let body = serde_json::json!({
+        "url": params.url,
+        "actions": [
+            {"type": "wait_for", "wait_ms": 4000},
+            {"type": "evaluate", "script": "document.documentElement.outerHTML"}
+        ],
+        "timeout_secs": 15
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .ok()?;
+
+    let resp = client.post(chrome_url).json(&body).send().await.ok()?;
+
+    if !resp.status().is_success() {
+        tracing::warn!(url = %params.url, status = %resp.status(), "Chrome fallback failed");
+        return None;
+    }
+
+    let data: serde_json::Value = resp.json().await.ok()?;
+
+    // Extract HTML from the evaluate action result
+    let html = data["actions"]
+        .as_array()?
+        .iter()
+        .find(|a| a["action"].as_str() == Some("evaluate"))
+        .and_then(|a| a["data"].as_str())?;
+
+    if html.is_empty() {
+        return None;
+    }
+
+    let extracted = content::extract_content(html, &params.url, format);
+    Some(build_output(extracted, params, "chrome", elapsed(start)))
+}
+
+/// Extract the hostname from a URL.
+fn extract_domain(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
+        .unwrap_or_default()
 }
 
 pub fn build_output(

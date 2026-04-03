@@ -27,6 +27,8 @@ pub mod proxy_webshare;
 pub mod ratelimit;
 pub mod ratelimit_domain;
 mod response;
+pub mod content_detect;
+pub mod render_cache;
 pub mod retry;
 pub mod retry_parse;
 pub mod solver_byparr;

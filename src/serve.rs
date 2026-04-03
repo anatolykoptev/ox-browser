@@ -23,6 +23,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     http_config.cookie_provider = Some(Arc::clone(&provider));
     http_config.cookie_cache = Some(Arc::clone(&cache));
 
+    // Chrome fallback for JS-rendered pages
+    if let Some(url) = std::env::var("GO_BROWSER_URL").ok() {
+        http_config.chrome_render_url = Some(format!("{url}/api/v1/chrome/interact"));
+    }
+    http_config.render_cache = Some(Arc::new(ox_http::render_cache::RenderModeCache::default()));
+
     // Per-domain rate limits.
     let domain_configs = config.ratelimit.to_domain_configs();
     if !domain_configs.is_empty() {
