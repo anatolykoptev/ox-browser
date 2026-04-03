@@ -71,6 +71,7 @@ pub struct ReadOutput {
 }
 
 /// Article metadata extracted from HTML meta tags and JSON-LD.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArticleMeta {
     pub published_at: String,
     pub modified_at: String,
@@ -161,7 +162,8 @@ fn extract_og_image(html: &str) -> String {
     let Some(pos) = pos else { return String::new() };
 
     // Search for content="..." nearby (within 200 chars)
-    let slice = &html[pos..html.len().min(pos + 200)];
+    let end = html.floor_char_boundary(html.len().min(pos + 200));
+    let slice = &html[pos..end];
     if let Some(c_start) = slice.find("content=\"") {
         let val_start = c_start + 9;
         if let Some(c_end) = slice[val_start..].find('"') {
@@ -352,7 +354,8 @@ fn extract_meta_content(html: &str, attr_value: &str) -> Option<String> {
     for attr in &["property", "name"] {
         let needle = format!("{attr}=\"{attr_value}\"");
         if let Some(pos) = html.find(&needle) {
-            let slice = &html[pos..html.len().min(pos + 300)];
+            let end = html.floor_char_boundary(html.len().min(pos + 300));
+            let slice = &html[pos..end];
             if let Some(val) = extract_content_attr(slice) {
                 if !val.is_empty() {
                     return Some(val);
@@ -362,7 +365,8 @@ fn extract_meta_content(html: &str, attr_value: &str) -> Option<String> {
         // Also try single quotes
         let needle_sq = format!("{attr}='{attr_value}'");
         if let Some(pos) = html.find(&needle_sq) {
-            let slice = &html[pos..html.len().min(pos + 300)];
+            let end = html.floor_char_boundary(html.len().min(pos + 300));
+            let slice = &html[pos..end];
             if let Some(val) = extract_content_attr(slice) {
                 if !val.is_empty() {
                     return Some(val);
@@ -380,7 +384,8 @@ fn extract_all_meta_content(html: &str, attr_value: &str) -> Vec<String> {
     let mut search_from = 0;
     while let Some(pos) = html[search_from..].find(&needle) {
         let abs_pos = search_from + pos;
-        let slice = &html[abs_pos..html.len().min(abs_pos + 300)];
+        let end = html.floor_char_boundary(html.len().min(abs_pos + 300));
+        let slice = &html[abs_pos..end];
         if let Some(val) = extract_content_attr(slice) {
             if !val.is_empty() {
                 results.push(val);
@@ -426,7 +431,8 @@ fn extract_time_datetime(html: &str) -> Option<String> {
 fn extract_html_lang(html: &str) -> Option<String> {
     let needle = "<html";
     let pos = html.find(needle)?;
-    let slice = &html[pos..html.len().min(pos + 200)];
+    let end = html.floor_char_boundary(html.len().min(pos + 200));
+    let slice = &html[pos..end];
     if let Some(l_start) = slice.find("lang=\"") {
         let val_start = l_start + 6;
         if let Some(l_end) = slice[val_start..].find('"') {

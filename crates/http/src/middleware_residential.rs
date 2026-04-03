@@ -41,6 +41,11 @@ impl Handler for ResidentialHandler {
             Err(HttpError::Cloudflare(ChallengeType::Block, s, r)) => {
                 Err(HttpError::Cloudflare(ChallengeType::Block, s, r))
             }
+            // ManagedChallenge (200 body) requires JS execution, not a new IP.
+            // Pass through to solver middleware which uses CloakBrowser CDP.
+            Err(HttpError::Cloudflare(ChallengeType::ManagedChallenge, s, r)) => {
+                Err(HttpError::Cloudflare(ChallengeType::ManagedChallenge, s, r))
+            }
             // Any other CF challenge — retry once with residential proxy.
             Err(HttpError::Cloudflare(ct, _s, _r)) => {
                 tracing::info!(
@@ -126,6 +131,7 @@ mod tests {
         assert_eq!(call_count.load(Ordering::SeqCst), 1, "should call handler exactly once");
     }
 
+    /// JsChallenge (503) persists even after residential retry — should propagate after 2 attempts.
     #[tokio::test]
     async fn propagates_cf_if_residential_fails() {
         struct AlwaysCfHandler { call_count: Arc<AtomicUsize> }
@@ -133,15 +139,15 @@ mod tests {
         impl Handler for AlwaysCfHandler {
             async fn handle(&self, _req: Request) -> Result<HttpResponse> {
                 self.call_count.fetch_add(1, Ordering::SeqCst);
-                Err(HttpError::Cloudflare(ChallengeType::ManagedChallenge, 403, "ray-x".into()))
+                Err(HttpError::Cloudflare(ChallengeType::JsChallenge, 503, "ray-x".into()))
             }
         }
         let call_count = Arc::new(AtomicUsize::new(0));
         let base: Arc<dyn Handler> = Arc::new(AlwaysCfHandler { call_count: call_count.clone() });
         let handler = chain(vec![residential_proxy_middleware("http://proxy:8080".into())], base);
         let err = handler.handle(make_req("https://hard.com")).await.unwrap_err();
-        assert!(matches!(err, HttpError::Cloudflare(ChallengeType::ManagedChallenge, ..)), "should propagate CF error");
-        assert_eq!(call_count.load(Ordering::SeqCst), 2, "should have tried twice");
+        assert!(matches!(err, HttpError::Cloudflare(ChallengeType::JsChallenge, ..)), "should propagate CF error");
+        assert_eq!(call_count.load(Ordering::SeqCst), 2, "should have tried twice (initial + residential retry)");
     }
 
     #[tokio::test]
@@ -160,6 +166,36 @@ mod tests {
         let err = handler.handle(make_req("https://blocked.com")).await.unwrap_err();
         assert!(matches!(err, HttpError::Cloudflare(ChallengeType::Block, ..)), "block errors should pass through");
         assert_eq!(call_count.load(Ordering::SeqCst), 1, "should NOT retry block errors");
+    }
+
+    /// ManagedChallenge (200 body JS challenge) must NOT be retried with a
+    /// residential proxy — it requires JS execution by the solver, not a
+    /// different IP. The error must bubble through immediately (call_count == 1).
+    #[tokio::test]
+    async fn does_not_retry_managed_challenge() {
+        struct ManagedChallengeHandler {
+            call_count: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl Handler for ManagedChallengeHandler {
+            async fn handle(&self, _req: Request) -> Result<HttpResponse> {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                Err(HttpError::Cloudflare(ChallengeType::ManagedChallenge, 200, "ray-mc".into()))
+            }
+        }
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let base: Arc<dyn Handler> = Arc::new(ManagedChallengeHandler { call_count: call_count.clone() });
+        let handler = chain(vec![residential_proxy_middleware("http://proxy:8080".into())], base);
+        let err = handler.handle(make_req("https://cf-challenge.com")).await.unwrap_err();
+        assert!(
+            matches!(err, HttpError::Cloudflare(ChallengeType::ManagedChallenge, ..)),
+            "ManagedChallenge should pass through unchanged"
+        );
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "ManagedChallenge must NOT be retried — residential IP doesn't help JS challenges"
+        );
     }
 
     #[tokio::test]
