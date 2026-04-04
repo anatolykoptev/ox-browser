@@ -70,7 +70,12 @@ impl WebsharePool {
     }
 }
 
+const RESIDENTIAL_GATEWAY: &str = "p.webshare.io";
+
 /// Parses a Webshare API JSON response into proxy URL strings.
+///
+/// Residential proxies have `proxy_address: null` and use the shared gateway
+/// `p.webshare.io` instead of a static IP. Datacenter proxies have an explicit IP.
 fn parse_webshare_response(body: &str) -> crate::Result<Vec<String>> {
     let response: WebshareResponse =
         serde_json::from_str(body).map_err(|e| HttpError::ProxyPool(e.to_string()))?;
@@ -79,7 +84,9 @@ fn parse_webshare_response(body: &str) -> crate::Result<Vec<String>> {
         .results
         .into_iter()
         .filter_map(|p| {
-            let addr = p.proxy_address?;
+            let addr = p
+                .proxy_address
+                .unwrap_or_else(|| RESIDENTIAL_GATEWAY.to_string());
             let port = p.port?;
             let user = p.username?;
             let pass = p.password?;
@@ -152,7 +159,32 @@ mod tests {
             {"proxy_address": null, "port": 9090, "username": "user2", "password": "pass2"}
         ]}"#;
         let proxies = parse_webshare_response(body).unwrap();
-        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies.len(), 2);
         assert_eq!(proxies[0], "http://user1:pass1@1.2.3.4:8080");
+        assert_eq!(proxies[1], "http://user2:pass2@p.webshare.io:9090");
+    }
+
+    #[test]
+    fn parse_residential_proxies_with_null_address() {
+        let body = r#"{"count": 2, "results": [
+            {"proxy_address": null, "port": 10001, "username": "dowpklpe-1", "password": "secret1"},
+            {"proxy_address": null, "port": 10002, "username": "dowpklpe-2", "password": "secret2"}
+        ]}"#;
+        let proxies = parse_webshare_response(body).unwrap();
+        assert_eq!(proxies.len(), 2);
+        assert_eq!(proxies[0], "http://dowpklpe-1:secret1@p.webshare.io:10001");
+        assert_eq!(proxies[1], "http://dowpklpe-2:secret2@p.webshare.io:10002");
+    }
+
+    #[test]
+    fn parse_mixed_datacenter_and_residential() {
+        let body = r#"{"count": 2, "results": [
+            {"proxy_address": "1.2.3.4", "port": 8080, "username": "dcuser", "password": "dcpass"},
+            {"proxy_address": null, "port": 10010, "username": "resuser", "password": "respass"}
+        ]}"#;
+        let proxies = parse_webshare_response(body).unwrap();
+        assert_eq!(proxies.len(), 2);
+        assert_eq!(proxies[0], "http://dcuser:dcpass@1.2.3.4:8080");
+        assert_eq!(proxies[1], "http://resuser:respass@p.webshare.io:10010");
     }
 }
