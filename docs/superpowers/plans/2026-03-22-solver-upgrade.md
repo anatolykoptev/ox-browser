@@ -397,7 +397,7 @@ Expected: All tests PASS (no regressions)
 
 In `~/deploy/krolik-server/docker-compose.yml` or the ox-browser service env, add:
 ```yaml
-RESIDENTIAL_PROXY_URL: "http://dowpklpe-US-1:gnyvfkkj1et7@p.webshare.io:80"
+RESIDENTIAL_PROXY_URL: "http://<webshare-user>-US-1:<webshare-pass>@p.webshare.io:80"
 ```
 
 - [ ] **Step 11: Commit**
