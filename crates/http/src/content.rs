@@ -121,7 +121,10 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
         Some(a) => {
             let raw = a.content.unwrap_or_default();
             let content = match format {
-                ContentFormat::Text => a.text_content.unwrap_or_else(|| html_to_plain(&raw)),
+                ContentFormat::Text => {
+                    let tc = collapse_whitespace(&a.text_content.unwrap_or_default());
+                    if tc.is_empty() { html_to_plain(&raw) } else { tc }
+                }
                 _ => convert_format(&raw, format),
             };
             let length = content.len();
