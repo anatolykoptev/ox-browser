@@ -3,6 +3,12 @@
 /// Minimum visible text (after tag stripping) for a page to be "real".
 const MIN_TEXT_LEN: usize = 200;
 
+/// If HTML is larger than this and the text-to-HTML ratio is below TEXT_RATIO_THRESHOLD,
+/// the page is likely SSR-shell with minimal pre-rendered content.
+const LARGE_HTML_THRESHOLD: usize = 10_000;
+/// Text must be at least 3% of HTML size to be considered "real content".
+const TEXT_RATIO_THRESHOLD: f64 = 0.03;
+
 /// Markers indicating the page is a JS shell or CF challenge.
 const JS_SHELL_MARKERS: &[&str] = &[
     "challenge-platform",
@@ -16,6 +22,15 @@ const JS_SHELL_MARKERS: &[&str] = &[
     "id=\"app\"></div>",
 ];
 
+/// Markers for SPA frameworks that rely heavily on client-side rendering.
+const SPA_FRAMEWORK_MARKERS: &[&str] = &[
+    "ng-version=",                     // Angular
+    "__NUXT__",                        // Nuxt
+    "__remixContext",                   // Remix
+    "window.__INITIAL_STATE__",        // Vue SSR shells
+    "data-reactroot",                  // React SSR (old)
+];
+
 /// Returns true if HTML looks like a JS shell without real content.
 pub fn needs_js_rendering(html: &str) -> bool {
     for marker in JS_SHELL_MARKERS {
@@ -24,22 +39,64 @@ pub fn needs_js_rendering(html: &str) -> bool {
         }
     }
     let text_len = strip_tags_len(html);
-    text_len < MIN_TEXT_LEN
+    if text_len < MIN_TEXT_LEN {
+        return true;
+    }
+
+    // Large HTML but very little visible text relative to HTML size → partial SSR shell.
+    if html.len() >= LARGE_HTML_THRESHOLD {
+        let ratio = text_len as f64 / html.len() as f64;
+        if ratio < TEXT_RATIO_THRESHOLD {
+            // Only trigger if we also see SPA framework markers.
+            for marker in SPA_FRAMEWORK_MARKERS {
+                if html.contains(marker) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 /// Count visible non-whitespace text length without allocating.
+/// Skips content inside `<script>` and `<style>` tags.
 fn strip_tags_len(html: &str) -> usize {
     let mut len = 0;
     let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag && !ch.is_whitespace() => len += 1,
-            _ => {}
+    let mut in_invisible = 0u8; // depth: >0 means inside script/style
+    let lower = html.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            in_tag = true;
+            // Check for <script or <style
+            if starts_with_at(bytes, i, b"<script") {
+                in_invisible = in_invisible.saturating_add(1);
+            } else if starts_with_at(bytes, i, b"</script") {
+                in_invisible = in_invisible.saturating_sub(1);
+            } else if starts_with_at(bytes, i, b"<style") {
+                in_invisible = in_invisible.saturating_add(1);
+            } else if starts_with_at(bytes, i, b"</style") {
+                in_invisible = in_invisible.saturating_sub(1);
+            }
+            i += 1;
+        } else if bytes[i] == b'>' {
+            in_tag = false;
+            i += 1;
+        } else if !in_tag && in_invisible == 0 && !bytes[i].is_ascii_whitespace() {
+            len += 1;
+            i += 1;
+        } else {
+            i += 1;
         }
     }
     len
+}
+
+fn starts_with_at(bytes: &[u8], pos: usize, prefix: &[u8]) -> bool {
+    bytes.len() >= pos + prefix.len() && &bytes[pos..pos + prefix.len()] == prefix
 }
 
 #[cfg(test)]
@@ -75,5 +132,29 @@ mod tests {
     fn detects_nextjs_shell() {
         let html = r#"<html><body><div id="__next"></div><script src="/_next/static/chunks/main.js"></script></body></html>"#;
         assert!(needs_js_rendering(html));
+    }
+
+    #[test]
+    fn detects_angular_ssr_shell() {
+        // Large HTML with Angular marker but very little visible text.
+        let filler_tags = "<script>".repeat(1500); // bulk up HTML without adding text
+        let html = format!(
+            r#"<html ng-version="19.0"><body><app-root>{filler_tags}<p>Short text</p></app-root></body></html>"#
+        );
+        assert!(html.len() >= 10_000);
+        assert!(needs_js_rendering(&html));
+    }
+
+    #[test]
+    fn accepts_large_page_with_content() {
+        // Large HTML with enough visible text ratio — should NOT trigger.
+        // We need text > 3% of HTML. Make HTML ~12KB and text ~500 chars (4%).
+        let padding = "<div class=\"x\">".repeat(800); // bulk HTML
+        let content = "word ".repeat(100); // 500 chars of text
+        let html = format!(
+            r#"<html ng-version="19.0"><body>{padding}<article>{content}</article></body></html>"#
+        );
+        assert!(html.len() >= 10_000);
+        assert!(!needs_js_rendering(&html));
     }
 }
