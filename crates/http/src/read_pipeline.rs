@@ -7,9 +7,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::HttpClient;
 use crate::content::{self, ContentFormat, ReadOutput, ReadParams};
 use crate::render_cache::RenderMode;
-use crate::HttpClient;
 
 /// Overall timeout for the entire read pipeline (fetch + extract).
 const PIPELINE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -17,7 +17,11 @@ const PIPELINE_TIMEOUT: Duration = Duration::from_secs(30);
 /// A site-specific handler: takes (params, format, start) → Option<ReadOutput>.
 /// Injected from outside ox-http to avoid circular dependencies.
 pub type SiteHandler = Arc<
-    dyn Fn(ReadParams, ContentFormat, Instant) -> Pin<Box<dyn Future<Output = Option<ReadOutput>> + Send>>
+    dyn Fn(
+            ReadParams,
+            ContentFormat,
+            Instant,
+        ) -> Pin<Box<dyn Future<Output = Option<ReadOutput>> + Send>>
         + Send
         + Sync,
 >;
@@ -31,9 +35,16 @@ pub async fn read_page(
     match tokio::time::timeout(
         PIPELINE_TIMEOUT,
         read_page_inner(http, params, site_handlers),
-    ).await {
+    )
+    .await
+    {
         Ok(output) => output,
-        Err(_) => build_error_output(params, "direct", PIPELINE_TIMEOUT.as_millis() as u64, "read pipeline timeout"),
+        Err(_) => build_error_output(
+            params,
+            "direct",
+            PIPELINE_TIMEOUT.as_millis() as u64,
+            "read pipeline timeout",
+        ),
     }
 }
 

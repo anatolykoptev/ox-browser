@@ -3,13 +3,13 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
-use ox_imagesearch::fusion::ImageSearchEngine;
 use ox_imagesearch::bing::BingImages;
 use ox_imagesearch::brave::BraveImages;
 use ox_imagesearch::ddg::DdgImages;
+use ox_imagesearch::fusion::ImageSearchEngine;
 use ox_imagesearch::openverse::OpenverseImages;
 use ox_imagesearch::pexels::PexelsImages;
 use ox_imagesearch::{ImageEngine, ImageResult};

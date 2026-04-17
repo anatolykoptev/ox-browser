@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use ox_core::{Browser, BrowserConfig};
-use ox_http::{random_profile, ProfileFilter, StaticPool};
+use ox_http::{ProfileFilter, StaticPool, random_profile};
 
 #[derive(Parser)]
 #[command(name = "ox-browser", version, about = "Lightweight headless browser")]

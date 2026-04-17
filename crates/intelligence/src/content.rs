@@ -135,7 +135,11 @@ mod tests {
         assert_eq!(report.internal_links, 3, "internal: {:?}", report);
         assert_eq!(report.external_links, 2, "external: {:?}", report);
         assert!(report.external_domains.contains(&"other.com".to_string()));
-        assert!(report.external_domains.contains(&"cdn.other.com".to_string()));
+        assert!(
+            report
+                .external_domains
+                .contains(&"cdn.other.com".to_string())
+        );
     }
 
     #[test]

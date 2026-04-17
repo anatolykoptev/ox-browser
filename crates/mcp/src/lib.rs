@@ -12,23 +12,17 @@ use ox_js::EndpointDefaults;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::*;
 use rmcp::tool_handler;
-use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::StreamableHttpService;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 
 use tools::OxMcpServer;
 
 #[tool_handler]
 impl ServerHandler for OxMcpServer {
     fn get_info(&self) -> ServerInfo {
-        InitializeResult::new(
-            ServerCapabilities::builder().enable_tools().build(),
-        )
-        .with_server_info(
-            Implementation::new("ox-browser", env!("CARGO_PKG_VERSION")),
-        )
-        .with_instructions(
-            "Stealth HTTP client with CF bypass and tech fingerprinting",
-        )
+        InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("ox-browser", env!("CARGO_PKG_VERSION")))
+            .with_instructions("Stealth HTTP client with CF bypass and tech fingerprinting")
     }
 }
 

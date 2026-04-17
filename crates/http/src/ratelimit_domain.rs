@@ -58,8 +58,7 @@ impl DomainLimiter {
                 let jitter = if rule.random_delay.is_zero() {
                     Duration::ZERO
                 } else {
-                    let ms = rand::thread_rng()
-                        .gen_range(0..rule.random_delay.as_millis() as u64);
+                    let ms = rand::thread_rng().gen_range(0..rule.random_delay.as_millis() as u64);
                     Duration::from_millis(ms)
                 };
                 let required = rule.min_delay + jitter;
@@ -71,8 +70,9 @@ impl DomainLimiter {
 
         let allowed = {
             let mut lims = self.limiters.lock().unwrap();
-            let lim = lims.entry(domain.clone())
-                .or_insert_with(|| Limiter::with_window(rule.requests_per_window, rule.window_duration));
+            let lim = lims.entry(domain.clone()).or_insert_with(|| {
+                Limiter::with_window(rule.requests_per_window, rule.window_duration)
+            });
             lim.allow(&domain)
         };
         if allowed {
@@ -102,19 +102,24 @@ impl DomainLimiter {
             None => return,
         };
         let mut lims = self.limiters.lock().unwrap();
-        let lim = lims.entry(domain.clone())
-            .or_insert_with(|| Limiter::with_window(rule.requests_per_window, rule.window_duration));
+        let lim = lims.entry(domain.clone()).or_insert_with(|| {
+            Limiter::with_window(rule.requests_per_window, rule.window_duration)
+        });
         lim.mark_rate_limited(&domain, until);
     }
 
     fn match_rule(&self, domain: &str) -> Option<&DomainConfig> {
-        self.rules.iter().find(|r| domain_matches(&r.domain, domain))
+        self.rules
+            .iter()
+            .find(|r| domain_matches(&r.domain, domain))
     }
 }
 
 /// Extract the host (without port) from a URL string.
 fn extract_domain(raw_url: &str) -> Option<String> {
-    Url::parse(raw_url).ok().and_then(|u| u.host_str().map(String::from))
+    Url::parse(raw_url)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
 }
 
 /// Match: `""` = catch-all, `"*.x.com"` = wildcard, `"x.com"` = exact.
@@ -189,7 +194,10 @@ mod tests {
 
     #[test]
     fn extract_domain_works() {
-        assert_eq!(extract_domain("https://api.example.com/p"), Some("api.example.com".into()));
+        assert_eq!(
+            extract_domain("https://api.example.com/p"),
+            Some("api.example.com".into())
+        );
         assert_eq!(extract_domain("bad"), None);
     }
 }

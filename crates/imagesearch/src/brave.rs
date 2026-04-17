@@ -30,16 +30,10 @@ impl ImageEngine for BraveImages {
             urlencoding::encode(query),
         );
         let resp = client
-            .get_with_headers(
-                &url,
-                &[("Cookie", BRAVE_COOKIES)],
-            )
+            .get_with_headers(&url, &[("Cookie", BRAVE_COOKIES)])
             .await?;
         if resp.status != 200 {
-            return Err(Error::Parse(format!(
-                "brave status {}",
-                resp.status
-            )));
+            return Err(Error::Parse(format!("brave status {}", resp.status)));
         }
         let mut results = parse_brave_results(&resp.body);
         results.truncate(max);
@@ -84,23 +78,18 @@ struct BraveThumbnail {
 fn parse_brave_results(html: &str) -> Vec<ImageResult> {
     let mut results = Vec::new();
     for m in RESULT_RE.find_iter(html) {
-        let Ok(br) = serde_json::from_str::<BraveResult>(m.as_str())
-        else {
+        let Ok(br) = serde_json::from_str::<BraveResult>(m.as_str()) else {
             continue;
         };
         let Some(props) = br.properties else {
             continue;
         };
-        let Some(image_url) = props.url.filter(|u| !u.is_empty())
-        else {
+        let Some(image_url) = props.url.filter(|u| !u.is_empty()) else {
             continue;
         };
         results.push(ImageResult {
             url: image_url,
-            thumbnail: br
-                .thumbnail
-                .and_then(|t| t.src)
-                .unwrap_or_default(),
+            thumbnail: br.thumbnail.and_then(|t| t.src).unwrap_or_default(),
             source: br.url.unwrap_or_default(),
             title: br.title.unwrap_or_default(),
             width: props.width.unwrap_or_default(),

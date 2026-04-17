@@ -107,13 +107,13 @@ pub fn is_stock_domain(domain: &str) -> bool {
     STOCK_DOMAINS.iter().any(|s| lower.contains(s))
 }
 
+mod fusion;
 mod google_lens;
 mod yandex;
-mod fusion;
 
+pub use fusion::ReverseSearchEngine;
 pub use google_lens::GoogleLens;
 pub use yandex::YandexImages;
-pub use fusion::ReverseSearchEngine;
 
 #[cfg(test)]
 mod tests {
@@ -141,7 +141,10 @@ mod tests {
 
     #[test]
     fn extract_domain_with_port() {
-        assert_eq!(extract_domain("https://example.com:8080/path"), "example.com");
+        assert_eq!(
+            extract_domain("https://example.com:8080/path"),
+            "example.com"
+        );
     }
 
     #[test]
@@ -176,10 +179,19 @@ mod tests {
     #[test]
     fn stock_domain_all_known_sites() {
         let domains = [
-            "shutterstock.com", "gettyimages.com", "istockphoto.com",
-            "adobestock.com", "depositphotos.com", "dreamstime.com",
-            "123rf.com", "alamy.com", "bigstockphoto.com", "stocksy.com",
-            "pond5.com", "freepik.com", "vectorstock.com",
+            "shutterstock.com",
+            "gettyimages.com",
+            "istockphoto.com",
+            "adobestock.com",
+            "depositphotos.com",
+            "dreamstime.com",
+            "123rf.com",
+            "alamy.com",
+            "bigstockphoto.com",
+            "stocksy.com",
+            "pond5.com",
+            "freepik.com",
+            "vectorstock.com",
         ];
         for d in domains {
             assert!(is_stock_domain(d), "should detect: {d}");

@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 
-use rswappalyzer::detector::TechDetector;
 use rswappalyzer::RuleConfig;
+use rswappalyzer::detector::TechDetector;
 
 /// A detected technology with name, categories, confidence, and optional version.
 #[derive(Debug, Clone)]
@@ -43,8 +43,7 @@ pub fn detect(
     };
 
     // Build FxHashMap<String, Vec<String>> for detect_with_hashmap.
-    let mut hdr_map: rustc_hash::FxHashMap<String, Vec<String>> =
-        rustc_hash::FxHashMap::default();
+    let mut hdr_map: rustc_hash::FxHashMap<String, Vec<String>> = rustc_hash::FxHashMap::default();
 
     for (k, v) in headers {
         hdr_map.entry(k.clone()).or_default().push(v.clone());
@@ -57,10 +56,7 @@ pub fn detect(
             .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join("; ");
-        hdr_map
-            .entry("cookie".into())
-            .or_default()
-            .push(cookie_str);
+        hdr_map.entry("cookie".into()).or_default().push(cookie_str);
     }
 
     let urls = &[url];

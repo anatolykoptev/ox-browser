@@ -6,12 +6,26 @@ use super::resolve_url;
 
 /// Patterns in URL path that indicate non-photo images.
 const SKIP_PATTERNS: &[&str] = &[
-    "/logo", "/icon", "/favicon", "/sprite", "/avatar",
-    "/badge", "/banner-ad", "/pixel", "/tracking",
-    "/spacer", "/blank", "/loading", "/spinner",
-    "/emoji", "/smiley", "/button",
-    "mc.yandex.ru/watch", "google-analytics.com",
-    "facebook.com/tr", "doubleclick.net",
+    "/logo",
+    "/icon",
+    "/favicon",
+    "/sprite",
+    "/avatar",
+    "/badge",
+    "/banner-ad",
+    "/pixel",
+    "/tracking",
+    "/spacer",
+    "/blank",
+    "/loading",
+    "/spinner",
+    "/emoji",
+    "/smiley",
+    "/button",
+    "mc.yandex.ru/watch",
+    "google-analytics.com",
+    "facebook.com/tr",
+    "doubleclick.net",
 ];
 
 /// File extensions to skip.
@@ -76,7 +90,11 @@ pub(crate) fn best_srcset_url(srcset: &Option<String>, base: &Option<Url>) -> Op
         }
     }
 
-    if best_url.is_empty() { None } else { Some(best_url) }
+    if best_url.is_empty() {
+        None
+    } else {
+        Some(best_url)
+    }
 }
 
 /// Extract URLs from `background-image: url(...)` in inline style.

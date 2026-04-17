@@ -13,7 +13,11 @@ fn detect_fetch_endpoints() {
     let urls: Vec<&str> = r.endpoints.iter().map(|e| e.url.as_str()).collect();
     assert!(urls.contains(&"/api/users"), "got: {:?}", urls);
     assert!(urls.contains(&"/api/posts"), "got: {:?}", urls);
-    assert!(urls.contains(&"https://api.example.com/data"), "got: {:?}", urls);
+    assert!(
+        urls.contains(&"https://api.example.com/data"),
+        "got: {:?}",
+        urls
+    );
     assert!(r.endpoints.iter().all(|e| e.source == "fetch"));
 }
 
@@ -49,9 +53,20 @@ fn detect_form_actions() {
         <form action=""><input type="submit"></form>
     </body></html>"##;
     let r = analyze(html);
-    assert!(r.form_actions.contains(&"/login".to_string()), "got: {:?}", r.form_actions);
-    assert!(r.form_actions.contains(&"/register".to_string()), "got: {:?}", r.form_actions);
-    assert!(!r.form_actions.contains(&"#".to_string()), "# should be excluded");
+    assert!(
+        r.form_actions.contains(&"/login".to_string()),
+        "got: {:?}",
+        r.form_actions
+    );
+    assert!(
+        r.form_actions.contains(&"/register".to_string()),
+        "got: {:?}",
+        r.form_actions
+    );
+    assert!(
+        !r.form_actions.contains(&"#".to_string()),
+        "# should be excluded"
+    );
     assert_eq!(r.form_actions.len(), 2);
 }
 
@@ -96,7 +111,10 @@ fn detect_websocket_urls() {
         </script>
     </body></html>"#;
     let r = analyze(html);
-    assert!(r.websocket_urls.contains(&"wss://ws.example.com/socket".to_string()));
+    assert!(
+        r.websocket_urls
+            .contains(&"wss://ws.example.com/socket".to_string())
+    );
 }
 
 #[test]
@@ -117,10 +135,20 @@ fn detect_webmcp_declarative_tools() {
     assert!(r.webmcp.supported);
     assert_eq!(r.webmcp.declarative_tools.len(), 2);
     assert_eq!(r.webmcp.tool_count, 2);
-    let flight = r.webmcp.declarative_tools.iter().find(|t| t.name == "searchFlights").unwrap();
+    let flight = r
+        .webmcp
+        .declarative_tools
+        .iter()
+        .find(|t| t.name == "searchFlights")
+        .unwrap();
     assert_eq!(flight.description, "Search available flights");
     assert_eq!(flight.inputs, vec!["origin", "destination", "date"]);
-    let hotel = r.webmcp.declarative_tools.iter().find(|t| t.name == "bookHotel").unwrap();
+    let hotel = r
+        .webmcp
+        .declarative_tools
+        .iter()
+        .find(|t| t.name == "bookHotel")
+        .unwrap();
     assert_eq!(hotel.inputs, vec!["city", "stars"]);
 }
 
@@ -161,8 +189,15 @@ fn detect_public_api_openapi_link() {
     </body></html>"#;
     let r = analyze(html);
     assert!(r.public_api.detected);
-    assert!(r.public_api.api_links.contains(&"/api/openapi.json".to_string()));
-    assert_eq!(r.public_api.openapi_url, Some("/api/v2/openapi.yaml".to_string()));
+    assert!(
+        r.public_api
+            .api_links
+            .contains(&"/api/openapi.json".to_string())
+    );
+    assert_eq!(
+        r.public_api.openapi_url,
+        Some("/api/v2/openapi.yaml".to_string())
+    );
 }
 
 #[test]
@@ -175,8 +210,16 @@ fn detect_public_api_well_known() {
     </body></html>"#;
     let r = analyze(html);
     assert!(r.public_api.detected);
-    assert!(r.public_api.well_known.contains(&"/.well-known/openid-configuration".to_string()));
-    assert!(r.public_api.well_known.contains(&"/.well-known/ai-plugin.json".to_string()));
+    assert!(
+        r.public_api
+            .well_known
+            .contains(&"/.well-known/openid-configuration".to_string())
+    );
+    assert!(
+        r.public_api
+            .well_known
+            .contains(&"/.well-known/ai-plugin.json".to_string())
+    );
 }
 
 #[test]
@@ -188,7 +231,11 @@ fn detect_public_api_swagger_ui() {
     </body></html>"#;
     let r = analyze(html);
     assert!(r.public_api.detected);
-    assert!(r.public_api.hints.contains(&"openapi_config_detected".to_string()));
+    assert!(
+        r.public_api
+            .hints
+            .contains(&"openapi_config_detected".to_string())
+    );
 }
 
 #[test]
@@ -199,7 +246,11 @@ fn detect_public_api_graphql_playground() {
     </body></html>"#;
     let r = analyze(html);
     assert!(r.public_api.detected);
-    assert!(r.public_api.hints.contains(&"graphql_playground".to_string()));
+    assert!(
+        r.public_api
+            .hints
+            .contains(&"graphql_playground".to_string())
+    );
 }
 
 #[test]

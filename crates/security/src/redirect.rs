@@ -21,10 +21,7 @@ pub struct RedirectFinding {
 
 /// Analyze URL security properties (HTTPS, mixed signals).
 /// `url` is the scanned URL, `resp_headers` can contain Location for redirect detection.
-pub fn analyze_redirect(
-    url: &str,
-    resp_headers: &HashMap<String, String>,
-) -> RedirectReport {
+pub fn analyze_redirect(url: &str, resp_headers: &HashMap<String, String>) -> RedirectReport {
     let mut findings = Vec::new();
     let is_https = url.starts_with("https://");
 
@@ -41,9 +38,7 @@ pub fn analyze_redirect(
         // Redirect from HTTPS to HTTP = downgrade
         if is_https && location.starts_with("http://") {
             findings.push(RedirectFinding {
-                description: format!(
-                    "HTTPS downgrade: redirects to HTTP URL: {location}"
-                ),
+                description: format!("HTTPS downgrade: redirects to HTTP URL: {location}"),
                 severity: Severity::High,
             });
         }
@@ -51,14 +46,9 @@ pub fn analyze_redirect(
         // Redirect to different host
         let orig_host = extract_host(url);
         let dest_host = extract_host(location);
-        if !orig_host.is_empty()
-            && !dest_host.is_empty()
-            && orig_host != dest_host
-        {
+        if !orig_host.is_empty() && !dest_host.is_empty() && orig_host != dest_host {
             findings.push(RedirectFinding {
-                description: format!(
-                    "Cross-host redirect: {orig_host} → {dest_host}"
-                ),
+                description: format!("Cross-host redirect: {orig_host} → {dest_host}"),
                 severity: Severity::Info,
             });
         }
@@ -134,15 +124,13 @@ mod tests {
     #[test]
     fn test_cross_host_redirect() {
         let mut headers = HashMap::new();
-        headers.insert(
-            "location".to_string(),
-            "https://other.com/page".to_string(),
-        );
+        headers.insert("location".to_string(), "https://other.com/page".to_string());
         let r = analyze_redirect("https://example.com", &headers);
-        assert!(r
-            .findings
-            .iter()
-            .any(|f| f.description.contains("Cross-host")));
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| f.description.contains("Cross-host"))
+        );
     }
 
     #[test]
@@ -153,9 +141,6 @@ mod tests {
             "https://example.com/new-page".to_string(),
         );
         let r = analyze_redirect("https://example.com/old", &headers);
-        assert!(r
-            .findings
-            .iter()
-            .all(|f| f.severity != Severity::High));
+        assert!(r.findings.iter().all(|f| f.severity != Severity::High));
     }
 }

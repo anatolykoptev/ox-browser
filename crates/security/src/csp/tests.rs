@@ -73,7 +73,11 @@ fn test_missing_object_src() {
 fn test_missing_form_action() {
     let report = evaluate_csp("default-src 'self'");
     assert!(report.findings.iter().any(|f| f.directive == "form-action"));
-    assert!(report.missing_directives.contains(&"form-action".to_string()));
+    assert!(
+        report
+            .missing_directives
+            .contains(&"form-action".to_string())
+    );
 }
 
 #[test]
@@ -137,10 +141,7 @@ fn test_multiple_policies() {
 fn test_report_to_detection() {
     let csp = "default-src 'self'; report-to csp-endpoint";
     let report = evaluate_csp(csp);
-    assert!(
-        report.has_reporting,
-        "should detect report-to directive"
-    );
+    assert!(report.has_reporting, "should detect report-to directive");
 
     let csp_uri = "default-src 'self'; report-uri /csp-violations";
     let report_uri = evaluate_csp(csp_uri);
@@ -174,7 +175,10 @@ fn no_wildcard_for_exact_domain() {
         .findings
         .iter()
         .any(|f| f.description.contains("Wildcard subdomain"));
-    assert!(!has_wildcard, "exact domain should not trigger wildcard check");
+    assert!(
+        !has_wildcard,
+        "exact domain should not trigger wildcard check"
+    );
 }
 
 #[test]

@@ -123,7 +123,11 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
             let content = match format {
                 ContentFormat::Text => {
                     let tc = collapse_whitespace(&a.text_content.unwrap_or_default());
-                    if tc.is_empty() { html_to_plain(&raw) } else { tc }
+                    if tc.is_empty() {
+                        html_to_plain(&raw)
+                    } else {
+                        tc
+                    }
                 }
                 _ => convert_format(&raw, format),
             };
@@ -155,13 +159,16 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
                 meta,
             }
         }
-    }}
+    }
+}
 
 /// Extract og:image URL from HTML meta tags.
 fn extract_og_image(html: &str) -> String {
     // Look for <meta property="og:image" content="...">
     let needle = "property=\"og:image\"";
-    let pos = html.find(needle).or_else(|| html.find("property='og:image'"));
+    let pos = html
+        .find(needle)
+        .or_else(|| html.find("property='og:image'"));
     let Some(pos) = pos else { return String::new() };
 
     // Search for content="..." nearby (within 200 chars)
@@ -251,10 +258,26 @@ fn collapse_whitespace(s: &str) -> String {
 }
 
 pub const NOISE_SELECTORS: &[&str] = &[
-    "nav", "footer", "header", ".nav", ".navbar", ".footer", ".sidebar",
-    ".menu", ".breadcrumb", ".pagination", ".cookie-banner", ".cookie-consent",
-    "#cookie-banner", "[role=navigation]", "[role=banner]", "[role=contentinfo]",
-    "script", "style", "noscript", "iframe",
+    "nav",
+    "footer",
+    "header",
+    ".nav",
+    ".navbar",
+    ".footer",
+    ".sidebar",
+    ".menu",
+    ".breadcrumb",
+    ".pagination",
+    ".cookie-banner",
+    ".cookie-consent",
+    "#cookie-banner",
+    "[role=navigation]",
+    "[role=banner]",
+    "[role=contentinfo]",
+    "script",
+    "style",
+    "noscript",
+    "iframe",
 ];
 
 impl Default for ArticleMeta {
@@ -468,7 +491,8 @@ fn json_ld_string(json_ld: &[serde_json::Value], field: &str) -> Option<String> 
         // For "keywords" — may be an array
         if field == "keywords" {
             if let Some(arr) = obj.get("keywords").and_then(|v| v.as_array()) {
-                let kw: Vec<String> = arr.iter()
+                let kw: Vec<String> = arr
+                    .iter()
                     .filter_map(|v| v.as_str().map(String::from))
                     .collect();
                 if !kw.is_empty() {

@@ -70,9 +70,13 @@ pub fn analyze_supply_chain(html: &str, page_domain: &str) -> SupplyChainReport 
 
     for cap in script_re.captures_iter(html) {
         let attrs = &cap[1];
-        let Some(src_cap) = src_re.captures(attrs) else { continue };
+        let Some(src_cap) = src_re.captures(attrs) else {
+            continue;
+        };
         let url = &src_cap[1];
-        let Some(domain) = extract_domain(url) else { continue };
+        let Some(domain) = extract_domain(url) else {
+            continue;
+        };
 
         if !seen_urls.insert(url.to_string()) {
             continue; // skip duplicate script URL
@@ -151,7 +155,8 @@ mod tests {
 
     #[test]
     fn test_third_party_with_sri() {
-        let html = r#"<script src="https://cdn.jsdelivr.net/app.js" integrity="sha256-abc"></script>"#;
+        let html =
+            r#"<script src="https://cdn.jsdelivr.net/app.js" integrity="sha256-abc"></script>"#;
         let r = analyze_supply_chain(html, "example.com");
         assert_eq!(r.total_third_party, 1);
         assert!(r.third_party_scripts[0].has_integrity);
@@ -160,8 +165,7 @@ mod tests {
 
     #[test]
     fn test_risky_domain_polyfill() {
-        let html =
-            r#"<script src="https://cdn.polyfill.io/v3/polyfill.min.js"></script>"#;
+        let html = r#"<script src="https://cdn.polyfill.io/v3/polyfill.min.js"></script>"#;
         let r = analyze_supply_chain(html, "example.com");
         assert!(r.third_party_scripts[0].is_known_risky);
         assert!(r.findings.iter().any(|f| f.severity == Severity::Critical));
@@ -187,7 +191,11 @@ mod tests {
         assert_eq!(r.total_third_party, 4);
         // Findings grouped by domain, not per-script
         assert_eq!(r.findings.len(), 2);
-        assert!(r.findings.iter().any(|f| f.description.contains("cdn.other.com") && f.description.contains("3")));
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| f.description.contains("cdn.other.com") && f.description.contains("3"))
+        );
     }
 
     #[test]
@@ -197,7 +205,10 @@ mod tests {
             r#"<script src="https://cdn.other.com/app.js"></script>"#,
         );
         let r = analyze_supply_chain(html, "example.com");
-        assert_eq!(r.total_third_party, 1, "duplicate URL should be counted once");
+        assert_eq!(
+            r.total_third_party, 1,
+            "duplicate URL should be counted once"
+        );
         assert_eq!(r.third_party_scripts.len(), 1);
     }
 }

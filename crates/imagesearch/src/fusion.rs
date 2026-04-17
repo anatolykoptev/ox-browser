@@ -89,9 +89,7 @@ pub fn fuse_wrr(result_sets: Vec<Vec<ImageResult>>) -> Vec<ImageResult> {
         .into_iter()
         .filter_map(|url| scores.remove(&url))
         .collect();
-    merged.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    merged.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     merged.into_iter().map(|(r, _)| r).collect()
 }
 

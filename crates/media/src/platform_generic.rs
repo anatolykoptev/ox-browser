@@ -4,7 +4,7 @@ use dom_query::Document;
 use tracing::{debug, info};
 
 use crate::download::{download_to_file, media_path};
-use crate::extract::{extract_media, MediaKind};
+use crate::extract::{MediaKind, extract_media};
 use crate::platform::PlatformDownloader;
 use crate::{MediaConfig, MediaError, MediaFile, MediaRequest, MediaResult, MediaType};
 
@@ -42,7 +42,8 @@ impl PlatformDownloader for GenericDownloader {
         items.sort_by(|a, b| {
             let rank = |k: MediaKind| if k == MediaKind::Video { 0u8 } else { 1 };
             rank(a.media_kind).cmp(&rank(b.media_kind)).then_with(|| {
-                let area = |m: &crate::extract::ExtractedMedia| (m.width as u64) * (m.height as u64);
+                let area =
+                    |m: &crate::extract::ExtractedMedia| (m.width as u64) * (m.height as u64);
                 area(b).cmp(&area(a))
             })
         });
@@ -57,15 +58,27 @@ impl PlatformDownloader for GenericDownloader {
             files.push(MediaFile {
                 path: dest.to_string_lossy().into_owned(),
                 size_bytes: size,
-                width: if item.width > 0 { Some(item.width) } else { None },
-                height: if item.height > 0 { Some(item.height) } else { None },
+                width: if item.width > 0 {
+                    Some(item.width)
+                } else {
+                    None
+                },
+                height: if item.height > 0 {
+                    Some(item.height)
+                } else {
+                    None
+                },
             });
         }
 
         let doc = Document::from(self.html.as_str());
         let title = crate::extract::helpers::extract_og_title(&doc);
         let first_kind = items.first().map(|i| i.media_kind);
-        let result_type = if first_kind == Some(MediaKind::Video) { MediaType::Video } else { MediaType::Image };
+        let result_type = if first_kind == Some(MediaKind::Video) {
+            MediaType::Video
+        } else {
+            MediaType::Image
+        };
         let title = if title.is_empty() { None } else { Some(title) };
         info!(count = files.len(), "generic download complete");
         Ok(MediaResult::generic(files, title, result_type))
@@ -92,19 +105,37 @@ mod tests {
 
     #[test]
     fn url_extension_from_path() {
-        assert_eq!(url_extension("https://example.com/video.mp4", MediaKind::Video), "mp4");
-        assert_eq!(url_extension("https://example.com/photo.webp", MediaKind::Image), "webp");
-        assert_eq!(url_extension("https://example.com/img.jpg?w=800", MediaKind::Image), "jpg");
+        assert_eq!(
+            url_extension("https://example.com/video.mp4", MediaKind::Video),
+            "mp4"
+        );
+        assert_eq!(
+            url_extension("https://example.com/photo.webp", MediaKind::Image),
+            "webp"
+        );
+        assert_eq!(
+            url_extension("https://example.com/img.jpg?w=800", MediaKind::Image),
+            "jpg"
+        );
     }
 
     #[test]
     fn url_extension_fallback() {
-        assert_eq!(url_extension("https://example.com/media", MediaKind::Video), "mp4");
-        assert_eq!(url_extension("https://example.com/media", MediaKind::Image), "jpg");
+        assert_eq!(
+            url_extension("https://example.com/media", MediaKind::Video),
+            "mp4"
+        );
+        assert_eq!(
+            url_extension("https://example.com/media", MediaKind::Image),
+            "jpg"
+        );
     }
 
     #[test]
     fn url_extension_ignores_long() {
-        assert_eq!(url_extension("https://example.com/file.toolong", MediaKind::Video), "mp4");
+        assert_eq!(
+            url_extension("https://example.com/file.toolong", MediaKind::Video),
+            "mp4"
+        );
     }
 }

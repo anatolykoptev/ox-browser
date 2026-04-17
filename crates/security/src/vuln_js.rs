@@ -153,7 +153,11 @@ pub fn detect_vulnerable_js(html: &str) -> VulnJsReport {
         .sum::<i32>()
         .max(-25);
 
-    VulnJsReport { libraries, findings, score_modifier }
+    VulnJsReport {
+        libraries,
+        findings,
+        score_modifier,
+    }
 }
 
 #[cfg(test)]

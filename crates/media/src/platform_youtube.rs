@@ -27,7 +27,11 @@ impl PlatformDownloader for YouTubeDownloader {
         let pr = innertube::fetch_player_response(video_id, config, proxy).await?;
         let info = build_video_info(&pr, req.max_height.unwrap_or(config.default_max_height));
         let video_url = info.video_url.as_deref().ok_or(MediaError::NoVideoFound)?;
-        debug!(video_url, audio = info.audio_url.is_some(), "YouTube streams found");
+        debug!(
+            video_url,
+            audio = info.audio_url.is_some(),
+            "YouTube streams found"
+        );
 
         let video_dest = media_path("yt", url, "mp4");
         let video_size = download_to_file(video_url, &video_dest, max_bytes, proxy).await?;
@@ -55,10 +59,15 @@ impl PlatformDownloader for YouTubeDownloader {
             height: Some(info.height),
         };
         Ok(MediaResult::youtube(YouTubeResultParams {
-            file, title: info.title, author: info.author,
+            file,
+            title: info.title,
+            author: info.author,
             description: info.description,
             duration_secs: info.duration_secs.map(|s| s as f64),
-            views: info.views, width: info.width, height: info.height, merged,
+            views: info.views,
+            width: info.width,
+            height: info.height,
+            merged,
         }))
     }
 }

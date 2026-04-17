@@ -2,7 +2,7 @@
 
 use tracing::info;
 
-use crate::detect::{detect_platform, Platform};
+use crate::detect::{Platform, detect_platform};
 use crate::platform::PlatformDownloader;
 use crate::platform_generic::GenericDownloader;
 use crate::platform_youtube::YouTubeDownloader;
@@ -20,7 +20,9 @@ pub async fn download(
 
     match platform {
         Platform::YouTube => {
-            YouTubeDownloader.download(&req.url, req, max_bytes, config).await
+            YouTubeDownloader
+                .download(&req.url, req, max_bytes, config)
+                .await
         }
         Platform::Generic => {
             let resp = http_client

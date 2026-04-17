@@ -24,8 +24,8 @@ pub enum SitemapContent {
 
 /// Parse a sitemap XML document (either index or urlset).
 pub fn parse_sitemap(xml: &[u8]) -> Result<SitemapContent> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
 
     // Detect gzip (magic bytes 0x1f, 0x8b)
     let data = if xml.len() >= 2 && xml[0] == 0x1f && xml[1] == 0x8b {
@@ -85,10 +85,7 @@ pub fn parse_sitemap(xml: &[u8]) -> Result<SitemapContent> {
     }
 }
 
-fn parse_index(
-    reader: &mut quick_xml::Reader<&[u8]>,
-    buf: &mut Vec<u8>,
-) -> Result<SitemapContent> {
+fn parse_index(reader: &mut quick_xml::Reader<&[u8]>, buf: &mut Vec<u8>) -> Result<SitemapContent> {
     use quick_xml::events::Event;
 
     let mut urls = Vec::new();
@@ -128,8 +125,7 @@ fn parse_urlset_xml(
     loop {
         match reader.read_event_into(buf) {
             Ok(Event::Start(ref e)) => {
-                let name =
-                    String::from_utf8_lossy(e.local_name().as_ref()).to_string();
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
                 match name.as_str() {
                     "url" => {
                         current = Some(SitemapEntry {
@@ -258,8 +254,8 @@ mod tests {
 
     #[test]
     fn parse_gzipped_urlset() {
-        use flate2::write::GzEncoder;
         use flate2::Compression;
+        use flate2::write::GzEncoder;
         use std::io::Write;
 
         let xml = br#"<?xml version="1.0"?>

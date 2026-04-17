@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use rmcp::model::*;
 use rmcp::ErrorData as McpError;
+use rmcp::model::*;
 use serde::Deserialize;
 
 use rmcp::schemars;

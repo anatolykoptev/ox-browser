@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ox_http::{backoff_duration, is_retryable_status, parse_retry_after, RetryConfig};
+use ox_http::{RetryConfig, backoff_duration, is_retryable_status, parse_retry_after};
 
 #[test]
 fn backoff_increases_with_attempt() {
@@ -28,20 +28,14 @@ fn backoff_capped_at_max_wait() {
 #[test]
 fn retryable_status_true_for_server_errors() {
     for code in [429, 500, 502, 503, 504] {
-        assert!(
-            is_retryable_status(code),
-            "{code} should be retryable"
-        );
+        assert!(is_retryable_status(code), "{code} should be retryable");
     }
 }
 
 #[test]
 fn retryable_status_false_for_client_responses() {
     for code in [200, 301, 400, 403, 404] {
-        assert!(
-            !is_retryable_status(code),
-            "{code} should not be retryable"
-        );
+        assert!(!is_retryable_status(code), "{code} should not be retryable");
     }
 }
 

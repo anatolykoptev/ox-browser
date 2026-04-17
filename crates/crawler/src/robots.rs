@@ -112,10 +112,7 @@ mod tests {
         let mut cache = RobotsCache::new(UA);
         let body = b"User-agent: *\nDisallow: /private/\n";
         cache.insert("example.com", body);
-        assert!(!cache.is_allowed(
-            "example.com",
-            "https://example.com/private/data"
-        ));
+        assert!(!cache.is_allowed("example.com", "https://example.com/private/data"));
         assert!(cache.is_allowed("example.com", "https://example.com/public"));
     }
 

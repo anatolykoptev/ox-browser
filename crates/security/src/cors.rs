@@ -57,7 +57,12 @@ pub fn analyze_cors(headers: &HashMap<String, String>) -> CorsReport {
         }
     }
 
-    CorsReport { acao, acac, findings, score_modifier }
+    CorsReport {
+        acao,
+        acac,
+        findings,
+        score_modifier,
+    }
 }
 
 #[cfg(test)]
@@ -65,7 +70,10 @@ mod tests {
     use super::*;
 
     fn headers(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -113,9 +121,10 @@ mod tests {
 
     #[test]
     fn test_cors_specific_origin_without_credentials() {
-        let r = analyze_cors(&headers(&[
-            ("access-control-allow-origin", "https://example.com"),
-        ]));
+        let r = analyze_cors(&headers(&[(
+            "access-control-allow-origin",
+            "https://example.com",
+        )]));
         assert!(r.findings.is_empty());
         assert_eq!(r.score_modifier, 0);
     }

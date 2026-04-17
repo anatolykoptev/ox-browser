@@ -3,9 +3,9 @@
 //! DEPRECATED: Use the `read` tool instead.
 
 use ox_http::ChallengeType;
+use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 use rmcp::schemars;
-use rmcp::ErrorData as McpError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -67,11 +67,17 @@ impl OxMcpServer {
             })?;
             (html, "solved")
         } else {
-            return Err(McpError::internal_error(format!("HTTP {}", resp.status), None));
+            return Err(McpError::internal_error(
+                format!("HTTP {}", resp.status),
+                None,
+            ));
         };
 
-        let format = if input.plain_text { ox_http::content::ContentFormat::Text }
-                     else { ox_http::content::ContentFormat::Html };
+        let format = if input.plain_text {
+            ox_http::content::ContentFormat::Text
+        } else {
+            ox_http::content::ContentFormat::Html
+        };
         let extracted = ox_http::content::extract_content(&html, &input.url, format);
         let mut content = extracted.content;
         if input.max_length > 0 {
@@ -88,8 +94,8 @@ impl OxMcpServer {
             method: method.into(),
         };
 
-        let json = serde_json::to_string(&result)
-            .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
+        let json =
+            serde_json::to_string(&result).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 

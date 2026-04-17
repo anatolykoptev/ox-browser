@@ -19,9 +19,7 @@ use crate::{HttpResponse, Result};
 /// Only adds hints that are not already present in the request, matching
 /// the go-stealth behavior of never overwriting explicitly-set headers.
 pub fn client_hints_middleware() -> MiddlewareFn {
-    Arc::new(|next: Arc<dyn Handler>| -> Arc<dyn Handler> {
-        Arc::new(ClientHintsHandler { next })
-    })
+    Arc::new(|next: Arc<dyn Handler>| -> Arc<dyn Handler> { Arc::new(ClientHintsHandler { next }) })
 }
 
 struct ClientHintsHandler {

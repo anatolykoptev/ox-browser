@@ -33,7 +33,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let domain_configs = config.ratelimit.to_domain_configs();
     if !domain_configs.is_empty() {
         http_config.rate_limiter = Some(Arc::new(DomainLimiter::new(domain_configs)));
-        tracing::info!("initialized domain rate limiter with {} rules", config.ratelimit.rules.len());
+        tracing::info!(
+            "initialized domain rate limiter with {} rules",
+            config.ratelimit.rules.len()
+        );
     }
 
     // Initialize proxy pool from Webshare API if key is available.
@@ -71,7 +74,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     let media_config = config.media.to_media_config();
 
-    let gobrowser_url = config.solver.go_browser_url.clone()
+    let gobrowser_url = config
+        .solver
+        .go_browser_url
+        .clone()
         .or_else(|| std::env::var("GO_BROWSER_URL").ok())
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| "http://127.0.0.1:8906".to_string());

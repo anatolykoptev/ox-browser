@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use rand::Rng;
 
-use crate::error::HttpError;
 use crate::Result;
+use crate::error::HttpError;
 
 /// Configuration for retry with exponential backoff.
 #[derive(Debug, Clone)]
@@ -105,7 +105,10 @@ mod tests {
 
     #[test]
     fn backoff_exponential() {
-        let cfg = RetryConfig { jitter_pct: 0.0, ..Default::default() };
+        let cfg = RetryConfig {
+            jitter_pct: 0.0,
+            ..Default::default()
+        };
         let d0 = backoff_duration(&cfg, 0);
         let d1 = backoff_duration(&cfg, 1);
         let d2 = backoff_duration(&cfg, 2);
@@ -116,7 +119,10 @@ mod tests {
 
     #[test]
     fn backoff_capped_at_max_wait() {
-        let cfg = RetryConfig { jitter_pct: 0.0, ..Default::default() };
+        let cfg = RetryConfig {
+            jitter_pct: 0.0,
+            ..Default::default()
+        };
         let d10 = backoff_duration(&cfg, 10);
         assert_eq!(d10, cfg.max_wait);
     }

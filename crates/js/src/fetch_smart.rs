@@ -4,9 +4,9 @@
 
 use std::time::Instant;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -46,18 +46,42 @@ pub async fn fetch_smart(
     match state.http_client.get(&req.url).await {
         Ok(resp) => (
             StatusCode::OK,
-            Json(make_response(resp.status, resp.body, "auto", false, start, save, &url, None)),
+            Json(make_response(
+                resp.status,
+                resp.body,
+                "auto",
+                false,
+                start,
+                save,
+                &url,
+                None,
+            )),
         ),
         Err(e) => (
             StatusCode::BAD_GATEWAY,
-            Json(make_response(0, String::new(), "auto", false, start, save, &url, Some(e.to_string()))),
+            Json(make_response(
+                0,
+                String::new(),
+                "auto",
+                false,
+                start,
+                save,
+                &url,
+                Some(e.to_string()),
+            )),
         ),
     }
 }
 
 fn make_response(
-    status: u16, body: String, method: &str, cf: bool,
-    start: Instant, save: bool, url: &str, error: Option<String>,
+    status: u16,
+    body: String,
+    method: &str,
+    cf: bool,
+    start: Instant,
+    save: bool,
+    url: &str,
+    error: Option<String>,
 ) -> FetchSmartResponse {
     let (body_field, file_path) = if save && !body.is_empty() {
         match ox_core::save::save_response(url, &body) {
@@ -72,8 +96,13 @@ fn make_response(
     };
 
     FetchSmartResponse {
-        status, body: body_field, file_path, method: method.into(),
-        cf_detected: cf, elapsed_ms: start.elapsed().as_millis() as u64, error,
+        status,
+        body: body_field,
+        file_path,
+        method: method.into(),
+        cf_detected: cf,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+        error,
     }
 }
 
@@ -91,8 +120,13 @@ mod tests {
     #[test]
     fn fetch_smart_response_serializes_inline() {
         let resp = FetchSmartResponse {
-            status: 200, body: Some("ok".into()), file_path: None,
-            method: "direct".into(), cf_detected: false, elapsed_ms: 100, error: None,
+            status: 200,
+            body: Some("ok".into()),
+            file_path: None,
+            method: "direct".into(),
+            cf_detected: false,
+            elapsed_ms: 100,
+            error: None,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["method"], "direct");
@@ -103,9 +137,13 @@ mod tests {
     #[test]
     fn fetch_smart_response_serializes_file() {
         let resp = FetchSmartResponse {
-            status: 200, body: None,
+            status: 200,
+            body: None,
             file_path: Some("/tmp/ox-browser/example.com_abc.html".into()),
-            method: "direct".into(), cf_detected: false, elapsed_ms: 100, error: None,
+            method: "direct".into(),
+            cf_detected: false,
+            elapsed_ms: 100,
+            error: None,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert!(json.get("body").is_none());

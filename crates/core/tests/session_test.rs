@@ -29,10 +29,7 @@ fn session_profile_is_set() {
         !profile.browser.is_empty(),
         "profile browser should be non-empty"
     );
-    assert!(
-        !profile.os.is_empty(),
-        "profile os should be non-empty"
-    );
+    assert!(!profile.os.is_empty(), "profile os should be non-empty");
 }
 
 #[test]

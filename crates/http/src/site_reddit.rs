@@ -9,9 +9,9 @@ use std::time::Instant;
 
 use url::Url;
 
+use crate::HttpClient;
 use crate::content::{ContentFormat, ExtractedContent, ReadOutput, ReadParams};
 use crate::read_pipeline::{build_output, elapsed};
-use crate::HttpClient;
 
 /// Try Reddit JSON endpoint. Returns Some(output) if URL is reddit.com, None otherwise.
 ///
@@ -100,8 +100,15 @@ fn parse_post_comments(arr: &[serde_json::Value]) -> (String, Vec<String>) {
     let mut title = String::new();
     let mut lines = Vec::new();
 
-    if let Some(post) = arr.first().and_then(|l| l["data"]["children"][0]["data"].as_object()) {
-        title = post.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if let Some(post) = arr
+        .first()
+        .and_then(|l| l["data"]["children"][0]["data"].as_object())
+    {
+        title = post
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if let Some(text) = post.get("selftext").and_then(|v| v.as_str()) {
             if !text.is_empty() {
                 lines.push(text.to_string());
@@ -173,7 +180,10 @@ mod tests {
         let parsed = Url::parse(url).unwrap();
         let path = parsed.path().trim_end_matches('/');
         let json_url = format!("https://old.reddit.com{path}.json?limit=25&raw_json=1");
-        assert_eq!(json_url, "https://old.reddit.com/r/rust.json?limit=25&raw_json=1");
+        assert_eq!(
+            json_url,
+            "https://old.reddit.com/r/rust.json?limit=25&raw_json=1"
+        );
     }
 
     #[test]
@@ -182,6 +192,9 @@ mod tests {
         let parsed = Url::parse(url).unwrap();
         let path = parsed.path().trim_end_matches('/');
         let json_url = format!("https://old.reddit.com{path}.json?limit=25&raw_json=1");
-        assert_eq!(json_url, "https://old.reddit.com/r/rust/comments/abc123/my_post.json?limit=25&raw_json=1");
+        assert_eq!(
+            json_url,
+            "https://old.reddit.com/r/rust/comments/abc123/my_post.json?limit=25&raw_json=1"
+        );
     }
 }

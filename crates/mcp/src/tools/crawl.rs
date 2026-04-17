@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use ox_crawler::{CrawlConfig, CrawlResult, CrawlScope, Crawler};
-use rmcp::model::*;
 use rmcp::ErrorData as McpError;
+use rmcp::model::*;
 use serde::{Deserialize, Serialize};
 
 use rmcp::schemars;
@@ -104,10 +104,7 @@ impl From<CrawlResult> for PageSummary {
 }
 
 impl OxMcpServer {
-    pub(crate) async fn do_crawl(
-        &self,
-        input: CrawlInput,
-    ) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_crawl(&self, input: CrawlInput) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
 
         let scope = match input.scope.as_deref() {
@@ -162,14 +159,22 @@ impl OxMcpServer {
             pages_crawled: pages.len() - error_count,
             errors: error_count,
             elapsed_ms: start.elapsed().as_millis() as u64,
-            discovery: if discovery_mode != "bfs" { Some(discovery_mode) } else { None },
-            sitemaps_found: if discovery.sitemaps_found > 0 { Some(discovery.sitemaps_found) } else { None },
+            discovery: if discovery_mode != "bfs" {
+                Some(discovery_mode)
+            } else {
+                None
+            },
+            sitemaps_found: if discovery.sitemaps_found > 0 {
+                Some(discovery.sitemaps_found)
+            } else {
+                None
+            },
             output_dir,
             pages,
         };
 
-        let json = serde_json::to_string(&result)
-            .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
+        let json =
+            serde_json::to_string(&result).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }

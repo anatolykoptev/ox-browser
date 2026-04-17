@@ -20,7 +20,10 @@ use crate::{HttpResponse, Result};
 /// response, the error bubbles up to the solver middleware.
 pub fn residential_proxy_middleware(proxy_url: String) -> MiddlewareFn {
     Arc::new(move |next: Arc<dyn Handler>| -> Arc<dyn Handler> {
-        Arc::new(ResidentialHandler { next, proxy_url: proxy_url.clone() })
+        Arc::new(ResidentialHandler {
+            next,
+            proxy_url: proxy_url.clone(),
+        })
     })
 }
 
@@ -71,11 +74,22 @@ mod tests {
     use wreq::header::HeaderMap;
 
     fn ok_response(url: &str) -> HttpResponse {
-        HttpResponse { status: 200, url: url.to_owned(), headers: HeaderMap::new(), body: "ok".to_owned() }
+        HttpResponse {
+            status: 200,
+            url: url.to_owned(),
+            headers: HeaderMap::new(),
+            body: "ok".to_owned(),
+        }
     }
 
     fn make_req(url: &str) -> Request {
-        Request { method: "GET".into(), url: url.to_owned(), headers: vec![], body: None, proxy: None }
+        Request {
+            method: "GET".into(),
+            url: url.to_owned(),
+            headers: vec![],
+            body: None,
+            proxy: None,
+        }
     }
 
     /// First call returns CF, second call returns 200.
@@ -89,7 +103,11 @@ mod tests {
         async fn handle(&self, req: Request) -> Result<HttpResponse> {
             let n = self.call_count.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
-                return Err(HttpError::Cloudflare(ChallengeType::JsChallenge, 503, "ray-1".into()));
+                return Err(HttpError::Cloudflare(
+                    ChallengeType::JsChallenge,
+                    503,
+                    "ray-1".into(),
+                ));
             }
             *self.captured_proxy.lock().unwrap() = req.proxy.clone();
             Ok(ok_response(&req.url))
@@ -106,16 +124,25 @@ mod tests {
         });
         let proxy_url = "http://residential:8080".to_owned();
         let handler = chain(vec![residential_proxy_middleware(proxy_url.clone())], base);
-        let resp = handler.handle(make_req("https://example.com")).await.unwrap();
+        let resp = handler
+            .handle(make_req("https://example.com"))
+            .await
+            .unwrap();
         assert_eq!(resp.status, 200);
-        assert_eq!(call_count.load(Ordering::SeqCst), 2, "should call handler twice");
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            2,
+            "should call handler twice"
+        );
         let proxy = captured_proxy.lock().unwrap().clone();
         assert_eq!(proxy.as_deref(), Some("http://residential:8080"));
     }
 
     #[tokio::test]
     async fn passes_through_without_cf() {
-        struct AlwaysOkHandler { call_count: Arc<AtomicUsize> }
+        struct AlwaysOkHandler {
+            call_count: Arc<AtomicUsize>,
+        }
         #[async_trait]
         impl Handler for AlwaysOkHandler {
             async fn handle(&self, req: Request) -> Result<HttpResponse> {
@@ -124,48 +151,102 @@ mod tests {
             }
         }
         let call_count = Arc::new(AtomicUsize::new(0));
-        let base: Arc<dyn Handler> = Arc::new(AlwaysOkHandler { call_count: call_count.clone() });
-        let handler = chain(vec![residential_proxy_middleware("http://proxy:8080".into())], base);
-        let resp = handler.handle(make_req("https://normal.com")).await.unwrap();
+        let base: Arc<dyn Handler> = Arc::new(AlwaysOkHandler {
+            call_count: call_count.clone(),
+        });
+        let handler = chain(
+            vec![residential_proxy_middleware("http://proxy:8080".into())],
+            base,
+        );
+        let resp = handler
+            .handle(make_req("https://normal.com"))
+            .await
+            .unwrap();
         assert_eq!(resp.status, 200);
-        assert_eq!(call_count.load(Ordering::SeqCst), 1, "should call handler exactly once");
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "should call handler exactly once"
+        );
     }
 
     /// JsChallenge (503) persists even after residential retry — should propagate after 2 attempts.
     #[tokio::test]
     async fn propagates_cf_if_residential_fails() {
-        struct AlwaysCfHandler { call_count: Arc<AtomicUsize> }
+        struct AlwaysCfHandler {
+            call_count: Arc<AtomicUsize>,
+        }
         #[async_trait]
         impl Handler for AlwaysCfHandler {
             async fn handle(&self, _req: Request) -> Result<HttpResponse> {
                 self.call_count.fetch_add(1, Ordering::SeqCst);
-                Err(HttpError::Cloudflare(ChallengeType::JsChallenge, 503, "ray-x".into()))
+                Err(HttpError::Cloudflare(
+                    ChallengeType::JsChallenge,
+                    503,
+                    "ray-x".into(),
+                ))
             }
         }
         let call_count = Arc::new(AtomicUsize::new(0));
-        let base: Arc<dyn Handler> = Arc::new(AlwaysCfHandler { call_count: call_count.clone() });
-        let handler = chain(vec![residential_proxy_middleware("http://proxy:8080".into())], base);
-        let err = handler.handle(make_req("https://hard.com")).await.unwrap_err();
-        assert!(matches!(err, HttpError::Cloudflare(ChallengeType::JsChallenge, ..)), "should propagate CF error");
-        assert_eq!(call_count.load(Ordering::SeqCst), 2, "should have tried twice (initial + residential retry)");
+        let base: Arc<dyn Handler> = Arc::new(AlwaysCfHandler {
+            call_count: call_count.clone(),
+        });
+        let handler = chain(
+            vec![residential_proxy_middleware("http://proxy:8080".into())],
+            base,
+        );
+        let err = handler
+            .handle(make_req("https://hard.com"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, HttpError::Cloudflare(ChallengeType::JsChallenge, ..)),
+            "should propagate CF error"
+        );
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            2,
+            "should have tried twice (initial + residential retry)"
+        );
     }
 
     #[tokio::test]
     async fn does_not_retry_block_errors() {
-        struct BlockHandler { call_count: Arc<AtomicUsize> }
+        struct BlockHandler {
+            call_count: Arc<AtomicUsize>,
+        }
         #[async_trait]
         impl Handler for BlockHandler {
             async fn handle(&self, _req: Request) -> Result<HttpResponse> {
                 self.call_count.fetch_add(1, Ordering::SeqCst);
-                Err(HttpError::Cloudflare(ChallengeType::Block, 403, "ray-block".into()))
+                Err(HttpError::Cloudflare(
+                    ChallengeType::Block,
+                    403,
+                    "ray-block".into(),
+                ))
             }
         }
         let call_count = Arc::new(AtomicUsize::new(0));
-        let base: Arc<dyn Handler> = Arc::new(BlockHandler { call_count: call_count.clone() });
-        let handler = chain(vec![residential_proxy_middleware("http://proxy:8080".into())], base);
-        let err = handler.handle(make_req("https://blocked.com")).await.unwrap_err();
-        assert!(matches!(err, HttpError::Cloudflare(ChallengeType::Block, ..)), "block errors should pass through");
-        assert_eq!(call_count.load(Ordering::SeqCst), 1, "should NOT retry block errors");
+        let base: Arc<dyn Handler> = Arc::new(BlockHandler {
+            call_count: call_count.clone(),
+        });
+        let handler = chain(
+            vec![residential_proxy_middleware("http://proxy:8080".into())],
+            base,
+        );
+        let err = handler
+            .handle(make_req("https://blocked.com"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, HttpError::Cloudflare(ChallengeType::Block, ..)),
+            "block errors should pass through"
+        );
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "should NOT retry block errors"
+        );
     }
 
     /// ManagedChallenge (200 body JS challenge) must NOT be retried with a
@@ -180,15 +261,30 @@ mod tests {
         impl Handler for ManagedChallengeHandler {
             async fn handle(&self, _req: Request) -> Result<HttpResponse> {
                 self.call_count.fetch_add(1, Ordering::SeqCst);
-                Err(HttpError::Cloudflare(ChallengeType::ManagedChallenge, 200, "ray-mc".into()))
+                Err(HttpError::Cloudflare(
+                    ChallengeType::ManagedChallenge,
+                    200,
+                    "ray-mc".into(),
+                ))
             }
         }
         let call_count = Arc::new(AtomicUsize::new(0));
-        let base: Arc<dyn Handler> = Arc::new(ManagedChallengeHandler { call_count: call_count.clone() });
-        let handler = chain(vec![residential_proxy_middleware("http://proxy:8080".into())], base);
-        let err = handler.handle(make_req("https://cf-challenge.com")).await.unwrap_err();
+        let base: Arc<dyn Handler> = Arc::new(ManagedChallengeHandler {
+            call_count: call_count.clone(),
+        });
+        let handler = chain(
+            vec![residential_proxy_middleware("http://proxy:8080".into())],
+            base,
+        );
+        let err = handler
+            .handle(make_req("https://cf-challenge.com"))
+            .await
+            .unwrap_err();
         assert!(
-            matches!(err, HttpError::Cloudflare(ChallengeType::ManagedChallenge, ..)),
+            matches!(
+                err,
+                HttpError::Cloudflare(ChallengeType::ManagedChallenge, ..)
+            ),
             "ManagedChallenge should pass through unchanged"
         );
         assert_eq!(
@@ -200,21 +296,36 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_retry_when_proxy_already_set() {
-        struct AlwaysCfHandler2 { call_count: Arc<AtomicUsize> }
+        struct AlwaysCfHandler2 {
+            call_count: Arc<AtomicUsize>,
+        }
         #[async_trait]
         impl Handler for AlwaysCfHandler2 {
             async fn handle(&self, _req: Request) -> Result<HttpResponse> {
                 self.call_count.fetch_add(1, Ordering::SeqCst);
-                Err(HttpError::Cloudflare(ChallengeType::ManagedChallenge, 200, "ray".into()))
+                Err(HttpError::Cloudflare(
+                    ChallengeType::ManagedChallenge,
+                    200,
+                    "ray".into(),
+                ))
             }
         }
         let call_count = Arc::new(AtomicUsize::new(0));
-        let base: Arc<dyn Handler> = Arc::new(AlwaysCfHandler2 { call_count: call_count.clone() });
-        let handler = chain(vec![residential_proxy_middleware("http://proxy:8080".into())], base);
+        let base: Arc<dyn Handler> = Arc::new(AlwaysCfHandler2 {
+            call_count: call_count.clone(),
+        });
+        let handler = chain(
+            vec![residential_proxy_middleware("http://proxy:8080".into())],
+            base,
+        );
         let mut req = make_req("https://example.com");
         req.proxy = Some("http://existing:1234".into());
         let err = handler.handle(req).await.unwrap_err();
         assert!(matches!(err, HttpError::Cloudflare(..)));
-        assert_eq!(call_count.load(Ordering::SeqCst), 1, "should NOT retry when proxy already set");
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "should NOT retry when proxy already set"
+        );
     }
 }

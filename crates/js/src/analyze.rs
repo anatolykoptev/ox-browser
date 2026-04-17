@@ -3,17 +3,17 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use ox_core::Page;
 use ox_http::detect_cloudflare;
 use ox_intelligence::{
     accessibility, api_discovery, content, fingerprint, fonts, media, performance, pwa, seo,
 };
 
-use crate::analyze_types::*;
 use crate::AppState;
+use crate::analyze_types::*;
 
 pub async fn analyze(
     State(state): State<AppState>,
@@ -72,18 +72,20 @@ pub async fn analyze(
                     let mut kv = pair.trim().splitn(2, '=');
                     let k = kv.next()?.trim().to_owned();
                     let val = kv.next().unwrap_or("").trim().to_owned();
-                    if k.is_empty() {
-                        None
-                    } else {
-                        Some((k, val))
-                    }
+                    if k.is_empty() { None } else { Some((k, val)) }
                 })
                 .collect()
         })
         .unwrap_or_default();
 
-    let detections =
-        fingerprint::detect(&req.url, &headers, &resp.body, &meta_tags, &script_srcs, &cookies);
+    let detections = fingerprint::detect(
+        &req.url,
+        &headers,
+        &resp.body,
+        &meta_tags,
+        &script_srcs,
+        &cookies,
+    );
 
     let technologies: Vec<TechInfo> = detections
         .into_iter()

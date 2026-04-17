@@ -42,7 +42,13 @@ fn output_dir() -> PathBuf {
 fn sanitize_domain(domain: &str) -> String {
     domain
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -60,7 +66,13 @@ mod tests {
         let path = save_response("https://example.com/page", "<html>test</html>").unwrap();
         assert!(path.exists());
         assert_eq!(fs::read_to_string(&path).unwrap(), "<html>test</html>");
-        assert!(path.file_name().unwrap().to_str().unwrap().starts_with("example.com_"));
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("example.com_")
+        );
 
         // SAFETY: test runs single-threaded, no concurrent env access.
         unsafe { std::env::remove_var("OUTPUT_DIR") };

@@ -2,16 +2,16 @@
 
 use std::collections::HashMap;
 
-use super::super::{body_scan, cookies, cors, csp, dangerous_js, headers, info_disclosure};
-use super::super::{mixed_content, protection, redirect, sri, supply_chain, vuln_js};
-use super::super::types::ScanMode;
 use super::super::cookies::CookieReport;
 use super::super::cors::CorsReport;
 use super::super::csp::CspReport;
 use super::super::headers::{HeaderStatus, HeadersReport};
 use super::super::sri::SriReport;
+use super::super::types::ScanMode;
 use super::super::types::Severity;
-use super::{score_to_grade, FindingsSummary, SecurityReport};
+use super::super::{body_scan, cookies, cors, csp, dangerous_js, headers, info_disclosure};
+use super::super::{mixed_content, protection, redirect, sri, supply_chain, vuln_js};
+use super::{FindingsSummary, SecurityReport, score_to_grade};
 
 /// Run all security checks and produce aggregate report.
 pub fn analyze_security(
@@ -48,9 +48,8 @@ pub fn analyze_security(
         .iter()
         .filter_map(|h| h.split('=').next().map(|n| n.trim().to_string()))
         .collect();
-    let protection_report = protection::detect_protection(
-        resp_headers, &cookie_names, html, url, mode,
-    );
+    let protection_report =
+        protection::detect_protection(resp_headers, &cookie_names, html, url, mode);
 
     let score = compute_score(
         resp_headers,
@@ -140,7 +139,9 @@ fn compute_score(
             "strict-transport-security" if missing => headers_score -= 15,
             "strict-transport-security"
                 if f.status == HeaderStatus::Present && f.severity == Severity::Medium =>
-            { headers_score -= 5; }
+            {
+                headers_score -= 5;
+            }
             "x-content-type-options" if missing => headers_score -= 3,
             "x-frame-options" if missing => headers_score -= 10,
             "referrer-policy" if missing => headers_score -= 3,
@@ -176,19 +177,25 @@ fn compute_score(
 }
 
 fn count_findings(
-    headers: &HeadersReport, csp: &Option<CspReport>,
-    cookies: &CookieReport, cors: &CorsReport, sri: &SriReport,
+    headers: &HeadersReport,
+    csp: &Option<CspReport>,
+    cookies: &CookieReport,
+    cors: &CorsReport,
+    sri: &SriReport,
     supply: &supply_chain::SupplyChainReport,
     mixed: &mixed_content::MixedContentReport,
     info: &info_disclosure::InfoDisclosureReport,
-    body: &body_scan::BodyScanReport, vuln: &vuln_js::VulnJsReport,
+    body: &body_scan::BodyScanReport,
+    vuln: &vuln_js::VulnJsReport,
     dangerous: &dangerous_js::DangerousJsReport,
     redirect: &redirect::RedirectReport,
     protection: &protection::ProtectionReport,
 ) -> FindingsSummary {
     let mut sevs: Vec<Severity> = Vec::new();
     sevs.extend(headers.findings.iter().map(|f| f.severity));
-    if let Some(c) = csp { sevs.extend(c.findings.iter().map(|f| f.severity)); }
+    if let Some(c) = csp {
+        sevs.extend(c.findings.iter().map(|f| f.severity));
+    }
     sevs.extend(cookies.findings.iter().map(|f| f.severity));
     sevs.extend(cors.findings.iter().map(|f| f.severity));
     sevs.extend(sri.findings.iter().map(|f| f.severity));

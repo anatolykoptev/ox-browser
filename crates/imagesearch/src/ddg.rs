@@ -101,8 +101,7 @@ mod tests {
 
     #[test]
     fn extract_vqd_token() {
-        let html =
-            r#"<script>nrj('/d.js?q=cats&vqd=4-123456789-abc&kl=ru-ru')</script>"#;
+        let html = r#"<script>nrj('/d.js?q=cats&vqd=4-123456789-abc&kl=ru-ru')</script>"#;
         assert_eq!(parse_vqd(html), Some("4-123456789-abc".into()));
     }
 

@@ -32,14 +32,21 @@ pub struct CookieFinding {
 }
 
 const SESSION_PATTERNS: &[&str] = &[
-    "sess", "sid", "token", "auth", "login", "phpsessid",
-    "jsessionid", "asp.net_sessionid", "connect.sid",
-    "laravel_session", "wp-settings",
+    "sess",
+    "sid",
+    "token",
+    "auth",
+    "login",
+    "phpsessid",
+    "jsessionid",
+    "asp.net_sessionid",
+    "connect.sid",
+    "laravel_session",
+    "wp-settings",
 ];
 
 const TRACKER_NAMES: &[&str] = &[
-    "_ga", "_gid", "_fbp", "_fbc", "__gads", "__gpi",
-    "_gcl_au", "IDE", "NID", "fr",
+    "_ga", "_gid", "_fbp", "_fbc", "__gads", "__gpi", "_gcl_au", "IDE", "NID", "fr",
 ];
 
 fn is_session_cookie(name: &str) -> bool {
@@ -164,9 +171,7 @@ fn check_domain_scope(cookie_str: &str, page_host: &str) -> Option<CookieFinding
     if domain_val != page && page.ends_with(&format!(".{domain_val}")) {
         return Some(CookieFinding {
             cookie: name,
-            description: format!(
-                "Loosely scoped cookie: domain '.{domain_val}' set from '{page}'"
-            ),
+            description: format!("Loosely scoped cookie: domain '.{domain_val}' set from '{page}'"),
             severity: Severity::Medium,
         });
     }
@@ -216,7 +221,11 @@ pub fn analyze_cookies(set_cookie_headers: &[String], page_url: &str) -> CookieR
     }
 
     let score_modifier = compute_score(&cookies);
-    CookieReport { cookies, findings, score_modifier }
+    CookieReport {
+        cookies,
+        findings,
+        score_modifier,
+    }
 }
 
 #[cfg(test)]

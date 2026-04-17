@@ -3,16 +3,16 @@
 //! Each test targets a real-world edge case that could cause false
 //! positives or false negatives in production.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use wreq::header::HeaderMap;
 
 use ox_http::{
-    chain, cloudflare_detect_middleware, detect_cloudflare, retry_middleware, ChallengeType,
-    Handler, HttpError, HttpResponse, MiddlewareFn, Request, Result, RetryConfig,
+    ChallengeType, Handler, HttpError, HttpResponse, MiddlewareFn, Request, Result, RetryConfig,
+    chain, cloudflare_detect_middleware, detect_cloudflare, retry_middleware,
 };
 
 fn make_resp(status: u16, body: &str, headers: HeaderMap) -> HttpResponse {
@@ -128,11 +128,7 @@ fn server_header_contains_cloudflare() {
 
 #[test]
 fn missing_ray_id_gives_empty_string() {
-    let resp = make_resp(
-        403,
-        "you have been blocked",
-        cf_headers("cloudflare", None),
-    );
+    let resp = make_resp(403, "you have been blocked", cf_headers("cloudflare", None));
     let cf = detect_cloudflare(&resp).unwrap();
     assert_eq!(cf.ray_id, "", "missing cf-ray should give empty string");
 }
@@ -276,11 +272,7 @@ async fn retry_middleware_retries_on_cloudflare_error() {
     let call_count = Arc::new(AtomicUsize::new(0));
     let base: Arc<dyn Handler> = Arc::new(CfThenOkHandler {
         responses: vec![
-            (
-                503,
-                "challenge-platform".into(),
-                "cloudflare".into(),
-            ),
+            (503, "challenge-platform".into(), "cloudflare".into()),
             (200, "ok".into(), "nginx".into()),
         ],
         call_count: call_count.clone(),
@@ -295,10 +287,8 @@ async fn retry_middleware_retries_on_cloudflare_error() {
     };
 
     // Chain: retry(outer) -> cloudflare(inner)
-    let middlewares: Vec<MiddlewareFn> = vec![
-        retry_middleware(fast_retry),
-        cloudflare_detect_middleware(),
-    ];
+    let middlewares: Vec<MiddlewareFn> =
+        vec![retry_middleware(fast_retry), cloudflare_detect_middleware()];
     let handler = chain(middlewares, base);
 
     let req = Request {
@@ -341,10 +331,8 @@ async fn persistent_cf_block_exhausts_retries() {
         ..Default::default()
     };
 
-    let middlewares: Vec<MiddlewareFn> = vec![
-        retry_middleware(fast_retry),
-        cloudflare_detect_middleware(),
-    ];
+    let middlewares: Vec<MiddlewareFn> =
+        vec![retry_middleware(fast_retry), cloudflare_detect_middleware()];
     let handler = chain(middlewares, base);
 
     let req = Request {

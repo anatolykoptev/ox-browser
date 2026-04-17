@@ -26,13 +26,10 @@ pub fn analyze(html: &str) -> PwaReport {
         .unwrap_or_default();
 
     // Service worker from inline scripts containing registration calls
-    let has_service_worker = doc
-        .select("script:not([src])")
-        .iter()
-        .any(|n| {
-            let text = n.text().to_string();
-            text.contains("serviceWorker.register") || text.contains("navigator.serviceWorker")
-        });
+    let has_service_worker = doc.select("script:not([src])").iter().any(|n| {
+        let text = n.text().to_string();
+        text.contains("serviceWorker.register") || text.contains("navigator.serviceWorker")
+    });
 
     // Theme color from <meta name="theme-color">
     let theme_color = doc

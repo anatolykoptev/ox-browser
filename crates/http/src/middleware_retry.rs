@@ -9,7 +9,7 @@ use async_trait::async_trait;
 
 use crate::error::HttpError;
 use crate::middleware::{Handler, MiddlewareFn, Request};
-use crate::retry::{is_retryable_status, retry_do, RetryConfig};
+use crate::retry::{RetryConfig, is_retryable_status, retry_do};
 use crate::{HttpResponse, Result};
 
 /// Returns a middleware that retries requests using exponential backoff.
@@ -57,9 +57,9 @@ impl Handler for RetryHandler {
 mod tests {
     use super::*;
     use crate::middleware::chain;
-    use wreq::header::HeaderMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+    use wreq::header::HeaderMap;
 
     struct StatusHandler {
         statuses: Vec<u16>,

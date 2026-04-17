@@ -141,7 +141,9 @@ mod tests {
         // Block until a time already in the past.
         limiter.mark_rate_limited(
             "a",
-            Instant::now().checked_sub(Duration::from_millis(1)).unwrap(),
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .unwrap(),
         );
         assert!(limiter.allow("a"));
     }

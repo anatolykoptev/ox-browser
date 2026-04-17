@@ -15,9 +15,7 @@ use crate::{HttpResponse, Result};
 /// On success: logs method, url, status code, and latency.
 /// On error: logs method, url, error message, and latency.
 pub fn logging_middleware() -> MiddlewareFn {
-    Arc::new(|next: Arc<dyn Handler>| -> Arc<dyn Handler> {
-        Arc::new(LoggingHandler { next })
-    })
+    Arc::new(|next: Arc<dyn Handler>| -> Arc<dyn Handler> { Arc::new(LoggingHandler { next }) })
 }
 
 struct LoggingHandler {

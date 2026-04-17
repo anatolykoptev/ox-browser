@@ -42,9 +42,8 @@ impl ImageEngine for BingImages {
     }
 }
 
-static M_ATTR_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"m="(\{[^"]*\})""#).expect("bing m-attr regex")
-});
+static M_ATTR_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"m="(\{[^"]*\})""#).expect("bing m-attr regex"));
 
 #[derive(Deserialize)]
 struct BingMAttr {
@@ -111,8 +110,7 @@ mod tests {
 
     #[test]
     fn parse_bing_html_missing_murl() {
-        let html =
-            r#"<a m="{&quot;turl&quot;:&quot;https://th.jpg&quot;}"></a>"#;
+        let html = r#"<a m="{&quot;turl&quot;:&quot;https://th.jpg&quot;}"></a>"#;
         assert!(parse_bing_html(html).is_empty());
     }
 }

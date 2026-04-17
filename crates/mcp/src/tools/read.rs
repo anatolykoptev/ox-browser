@@ -4,8 +4,8 @@
 
 use ox_http::content::ReadParams;
 use ox_http::read_pipeline;
-use rmcp::model::*;
 use rmcp::ErrorData as McpError;
+use rmcp::model::*;
 use rmcp::schemars::{self, JsonSchema};
 use serde::Deserialize;
 
@@ -24,21 +24,25 @@ pub struct ReadInput {
     pub max_length: usize,
 }
 
-fn default_format() -> String { "text".into() }
+fn default_format() -> String {
+    "text".into()
+}
 
 impl From<ReadInput> for ReadParams {
     fn from(i: ReadInput) -> Self {
-        Self { url: i.url, format: i.format, max_length: i.max_length }
+        Self {
+            url: i.url,
+            format: i.format,
+            max_length: i.max_length,
+        }
     }
 }
 
 impl OxMcpServer {
-    pub(crate) async fn do_read(
-        &self,
-        input: ReadInput,
-    ) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_read(&self, input: ReadInput) -> Result<CallToolResult, McpError> {
         let params: ReadParams = input.into();
-        let output = read_pipeline::read_page(&self.http_client, &params, &self.site_handlers).await;
+        let output =
+            read_pipeline::read_page(&self.http_client, &params, &self.site_handlers).await;
 
         let is_err = output.error.is_some();
         let json = serde_json::to_string(&output).unwrap_or_default();

@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use ox_http::detect_cloudflare;
+use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 use rmcp::schemars;
-use rmcp::ErrorData as McpError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -115,7 +115,15 @@ impl OxMcpServer {
 
         // Middleware chain handles CF detect + solve + retry automatically.
         match self.http_client.get(&input.url).await {
-            Ok(resp) => Ok(smart_ok(resp.status, resp.body, "auto", false, start, save, &url)),
+            Ok(resp) => Ok(smart_ok(
+                resp.status,
+                resp.body,
+                "auto",
+                false,
+                start,
+                save,
+                &url,
+            )),
             Err(e) => Ok(smart_error(start, &e.to_string())),
         }
     }

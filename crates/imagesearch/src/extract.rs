@@ -12,12 +12,26 @@ use crate::ImageResult;
 
 /// Patterns in URL path that indicate non-photo images.
 const SKIP_PATTERNS: &[&str] = &[
-    "/logo", "/icon", "/favicon", "/sprite", "/avatar",
-    "/badge", "/banner-ad", "/pixel", "/tracking",
-    "/spacer", "/blank", "/loading", "/spinner",
-    "/emoji", "/smiley", "/button",
-    "mc.yandex.ru/watch", "google-analytics.com",
-    "facebook.com/tr", "doubleclick.net",
+    "/logo",
+    "/icon",
+    "/favicon",
+    "/sprite",
+    "/avatar",
+    "/badge",
+    "/banner-ad",
+    "/pixel",
+    "/tracking",
+    "/spacer",
+    "/blank",
+    "/loading",
+    "/spinner",
+    "/emoji",
+    "/smiley",
+    "/button",
+    "mc.yandex.ru/watch",
+    "google-analytics.com",
+    "facebook.com/tr",
+    "doubleclick.net",
 ];
 
 /// File extensions to skip.
@@ -55,10 +69,7 @@ pub fn extract_images(html: &str, base_url: &str) -> Vec<ImageResult> {
     for node in doc.select("img").iter() {
         let src = node.attr("src").map(|s| s.to_string());
         let srcset = node.attr("srcset").map(|s| s.to_string());
-        let alt = node
-            .attr("alt")
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+        let alt = node.attr("alt").map(|s| s.to_string()).unwrap_or_default();
         let w = parse_dimension(&node.attr("width").unwrap_or_default());
         let h = parse_dimension(&node.attr("height").unwrap_or_default());
 

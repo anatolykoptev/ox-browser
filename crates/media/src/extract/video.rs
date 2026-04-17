@@ -3,14 +3,13 @@
 //! Extracts `<video>` tags, `og:video`, `twitter:player:stream`,
 //! JSON-LD VideoObject, and inline JS video URL heuristics.
 
-use std::sync::LazyLock;
-use regex::Regex;
 use super::{ExtractContext, resolve_url, video_media};
+use regex::Regex;
+use std::sync::LazyLock;
 
 /// Regex for video URLs in inline JS.
-static VIDEO_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"["']([^"'\s]+\.(?:mp4|m3u8|webm))["']"#).unwrap()
-});
+static VIDEO_URL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"["']([^"'\s]+\.(?:mp4|m3u8|webm))["']"#).unwrap());
 
 /// Run all video extraction methods and append to results.
 pub(crate) fn extract_videos(ctx: &mut ExtractContext) {
@@ -25,7 +24,8 @@ pub(crate) fn extract_videos(ctx: &mut ExtractContext) {
 fn push_video(raw: &str, ctx: &mut ExtractContext, title: &str) {
     let url = resolve_url(raw, ctx.base);
     if !url.is_empty() && ctx.seen.insert(url.clone()) {
-        ctx.results.push(video_media(url, title.to_string(), ctx.base_url));
+        ctx.results
+            .push(video_media(url, title.to_string(), ctx.base_url));
     }
 }
 
@@ -78,8 +78,11 @@ fn walk_json_ld(value: &serde_json::Value, ctx: &mut ExtractContext) {
     match value {
         serde_json::Value::Object(obj) => {
             if obj.get("@type").and_then(|t| t.as_str()) == Some("VideoObject") {
-                let raw = obj.get("contentUrl").or_else(|| obj.get("embedUrl"))
-                    .and_then(|v| v.as_str()).unwrap_or_default();
+                let raw = obj
+                    .get("contentUrl")
+                    .or_else(|| obj.get("embedUrl"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
                 let title = obj.get("name").and_then(|v| v.as_str()).unwrap_or_default();
                 push_video(raw, ctx, title);
             }

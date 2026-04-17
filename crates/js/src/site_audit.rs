@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use ox_intelligence::{accessibility, audit, performance, seo};
 use serde::Deserialize;
 
@@ -56,7 +56,11 @@ pub async fn site_audit(
     let perf_report = performance::analyze(&headers, &resp.body);
     let a11y_report = accessibility::analyze(&resp.body);
     let sec_report = ox_security::analyze_security(
-        &req.url, &headers, &set_cookie_headers, &resp.body, ox_security::ScanMode::Public,
+        &req.url,
+        &headers,
+        &set_cookie_headers,
+        &resp.body,
+        ox_security::ScanMode::Public,
     );
 
     let sec_score = sec_report.score.clamp(0, 100) as u8;
@@ -86,7 +90,10 @@ pub async fn site_audit(
     };
 
     let overall = audit::overall_score(
-        seo_report.score, perf_report.score, a11y_report.score, sec_score,
+        seo_report.score,
+        perf_report.score,
+        a11y_report.score,
+        sec_score,
     );
     let top_issues = audit::top_issues(&categories, 10);
 

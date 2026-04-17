@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use ox_http::{platform_matched_profile, BrowserProfile, HttpClient, HttpConfig, HttpResponse};
+use ox_http::{BrowserProfile, HttpClient, HttpConfig, HttpResponse, platform_matched_profile};
 use rand::Rng;
 
 use crate::Result;

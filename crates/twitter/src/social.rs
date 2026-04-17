@@ -62,12 +62,15 @@ pub async fn fetch_tweet(base_url: &str, tweet_id: &str) -> Result<Tweet, String
         .map_err(|e| format!("go-social tweet request: {e}"))?;
 
     let status = resp.status().as_u16();
-    let body = resp.text().await.map_err(|e| format!("go-social read: {e}"))?;
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("go-social read: {e}"))?;
 
     match status {
         200 => {
-            let go_tweet: GoTweet = serde_json::from_str(&body)
-                .map_err(|e| format!("go-social parse: {e}"))?;
+            let go_tweet: GoTweet =
+                serde_json::from_str(&body).map_err(|e| format!("go-social parse: {e}"))?;
             Ok(go_tweet.into())
         }
         404 => Err(format!("go-social: tweet {tweet_id} not found")),

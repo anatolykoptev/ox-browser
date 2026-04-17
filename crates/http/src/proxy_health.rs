@@ -97,7 +97,9 @@ impl HealthyPool {
     /// Records a successful request through the given proxy.
     pub fn record_success(&self, proxy: &str, latency: Duration) {
         let mut health = self.health.lock().unwrap();
-        let entry = health.entry(proxy.to_string()).or_insert_with(ProxyHealth::new);
+        let entry = health
+            .entry(proxy.to_string())
+            .or_insert_with(ProxyHealth::new);
         entry.successes += 1;
         entry.total_latency += latency;
         entry.last_used = Instant::now();
@@ -107,7 +109,9 @@ impl HealthyPool {
     /// rate exceeds the threshold after `min_requests`.
     pub fn record_failure(&self, proxy: &str, latency: Duration) {
         let mut health = self.health.lock().unwrap();
-        let entry = health.entry(proxy.to_string()).or_insert_with(ProxyHealth::new);
+        let entry = health
+            .entry(proxy.to_string())
+            .or_insert_with(ProxyHealth::new);
         entry.failures += 1;
         entry.total_latency += latency;
         entry.last_used = Instant::now();

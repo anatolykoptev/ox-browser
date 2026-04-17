@@ -56,10 +56,16 @@ impl XtidManager {
 
     async fn initialize(&self) -> Result<(), String> {
         tracing::info!("xtid: fetching x.com HTML");
-        let html = self.fetch_url(X_COM_URL).await.map_err(|e| format!("fetch x.com: {e}"))?;
+        let html = self
+            .fetch_url(X_COM_URL)
+            .await
+            .map_err(|e| format!("fetch x.com: {e}"))?;
         let ondemand_url = parse_ondemand_url(&html)?;
         tracing::info!("xtid: fetching ondemand.s from {ondemand_url}");
-        let js = self.fetch_url(&ondemand_url).await.map_err(|e| format!("fetch ondemand.s: {e}"))?;
+        let js = self
+            .fetch_url(&ondemand_url)
+            .await
+            .map_err(|e| format!("fetch ondemand.s: {e}"))?;
 
         let ct = ClientTransaction::new(&html, &js)?;
         tracing::info!("xtid: ClientTransaction built successfully");
@@ -76,7 +82,10 @@ impl XtidManager {
                 url,
                 &[
                     ("user-agent", crate::TWITTER_USER_AGENT),
-                    ("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+                    (
+                        "accept",
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    ),
                     ("accept-language", "en-US,en;q=0.9"),
                 ],
             )

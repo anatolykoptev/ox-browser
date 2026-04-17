@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
-use axum::Json;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use ox_crawler::{CrawlConfig, CrawlScope, Crawler};
 use serde::{Deserialize, Serialize};
 
@@ -73,10 +73,7 @@ pub async fn crawl(
         Some("same_host") => CrawlScope::SameHost,
         Some("same_domain") | None => CrawlScope::SameDomain,
         Some(other) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("unknown scope: {other}"),
-            ));
+            return Err((StatusCode::BAD_REQUEST, format!("unknown scope: {other}")));
         }
     };
 

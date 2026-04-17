@@ -34,10 +34,7 @@ impl ImageEngine for PexelsImages {
             .get_with_headers(&url, &[("Authorization", &self.api_key)])
             .await?;
         if resp.status != 200 {
-            return Err(Error::Parse(format!(
-                "pexels status {}",
-                resp.status
-            )));
+            return Err(Error::Parse(format!("pexels status {}", resp.status)));
         }
         let mut results = parse_pexels_json(&resp.body);
         results.truncate(max);

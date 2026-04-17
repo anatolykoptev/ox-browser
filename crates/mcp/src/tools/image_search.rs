@@ -10,8 +10,8 @@ use ox_imagesearch::fusion::ImageSearchEngine;
 use ox_imagesearch::openverse::OpenverseImages;
 use ox_imagesearch::pexels::PexelsImages;
 use ox_imagesearch::{ImageEngine, ImageResult};
-use rmcp::model::*;
 use rmcp::ErrorData as McpError;
+use rmcp::model::*;
 use serde::{Deserialize, Serialize};
 
 use rmcp::schemars;
@@ -65,8 +65,7 @@ impl OxMcpServer {
             engines.push(Arc::new(BraveImages));
         }
 
-        let engine_names: Vec<String> =
-            engines.iter().map(|e| e.name().to_owned()).collect();
+        let engine_names: Vec<String> = engines.iter().map(|e| e.name().to_owned()).collect();
         let max_results = input.max_results.unwrap_or(self.defaults.image_max_results);
         let search = ImageSearchEngine::new(engines);
         let images = search
@@ -78,8 +77,8 @@ impl OxMcpServer {
             engines_used: engine_names,
             elapsed_ms: start.elapsed().as_millis() as u64,
         };
-        let json = serde_json::to_string(&result)
-            .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
+        let json =
+            serde_json::to_string(&result).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }

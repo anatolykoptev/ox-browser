@@ -38,16 +38,20 @@ pub(crate) fn extract_tools(doc: &Document) -> Vec<WebMcpTool> {
                 .iter()
                 .filter_map(|inp| inp.attr("name").map(|v| v.to_string()))
                 .collect();
-            Some(WebMcpTool { name, description, inputs })
+            Some(WebMcpTool {
+                name,
+                description,
+                inputs,
+            })
         })
         .collect()
 }
 
 /// Detect imperative WebMCP usage in inline scripts.
 pub(crate) fn detect_imperative(scripts: &[String]) -> bool {
-    scripts.iter().any(|s| {
-        s.contains("navigator.modelContext") || s.contains("modelContext.registerTool")
-    })
+    scripts
+        .iter()
+        .any(|s| s.contains("navigator.modelContext") || s.contains("modelContext.registerTool"))
 }
 
 /// Build a WebMcpReport from document and scripts.

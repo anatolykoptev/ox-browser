@@ -5,9 +5,9 @@
 
 use std::time::Instant;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use ox_http::ChallengeType;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -54,7 +54,11 @@ pub async fn readability(
         Err(e) => {
             return (
                 StatusCode::BAD_GATEWAY,
-                Json(error_response(start, "direct", &format!("fetch failed: {e}"))),
+                Json(error_response(
+                    start,
+                    "direct",
+                    &format!("fetch failed: {e}"),
+                )),
             );
         }
     };
@@ -83,12 +87,19 @@ pub async fn readability(
     } else {
         return (
             StatusCode::BAD_GATEWAY,
-            Json(error_response(start, "direct", &format!("HTTP {}", resp.status))),
+            Json(error_response(
+                start,
+                "direct",
+                &format!("HTTP {}", resp.status),
+            )),
         );
     };
 
-    let format = if req.plain_text { ox_http::content::ContentFormat::Text }
-                 else { ox_http::content::ContentFormat::Html };
+    let format = if req.plain_text {
+        ox_http::content::ContentFormat::Text
+    } else {
+        ox_http::content::ContentFormat::Html
+    };
     let extracted = ox_http::content::extract_content(&html, &req.url, format);
     let mut content = extracted.content;
     if req.max_length > 0 {

@@ -129,7 +129,11 @@ mod tests {
     #[test]
     fn media_path_generates_correct_format() {
         let path = media_path("yt", "https://youtube.com/watch?v=abc123", "mp4");
-        assert!(path.to_str().unwrap().starts_with("/tmp/ox-browser/media/yt_"));
+        assert!(
+            path.to_str()
+                .unwrap()
+                .starts_with("/tmp/ox-browser/media/yt_")
+        );
         assert!(path.to_str().unwrap().ends_with(".mp4"));
         // hash is deterministic
         let path2 = media_path("yt", "https://youtube.com/watch?v=abc123", "mp4");

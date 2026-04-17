@@ -55,20 +55,20 @@ pub fn analyze(html: &str) -> SeoReport {
     let doc = Document::from(html);
 
     let og = OgTags {
-        title:       meta_property(&doc, "og:title"),
+        title: meta_property(&doc, "og:title"),
         description: meta_property(&doc, "og:description"),
-        image:       meta_property(&doc, "og:image"),
-        og_type:     meta_property(&doc, "og:type"),
-        url:         meta_property(&doc, "og:url"),
-        site_name:   meta_property(&doc, "og:site_name"),
+        image: meta_property(&doc, "og:image"),
+        og_type: meta_property(&doc, "og:type"),
+        url: meta_property(&doc, "og:url"),
+        site_name: meta_property(&doc, "og:site_name"),
     };
 
     let twitter = TwitterCard {
-        card:        meta_name(&doc, "twitter:card"),
-        title:       meta_name(&doc, "twitter:title"),
+        card: meta_name(&doc, "twitter:card"),
+        title: meta_name(&doc, "twitter:title"),
         description: meta_name(&doc, "twitter:description"),
-        image:       meta_name(&doc, "twitter:image"),
-        site:        meta_name(&doc, "twitter:site"),
+        image: meta_name(&doc, "twitter:image"),
+        site: meta_name(&doc, "twitter:site"),
     };
 
     let canonical = link_href(&doc, "canonical");
@@ -83,11 +83,10 @@ pub fn analyze(html: &str) -> SeoReport {
         })
         .collect();
 
-    let robots      = meta_name(&doc, "robots");
+    let robots = meta_name(&doc, "robots");
     let description = meta_name(&doc, "description");
-    let keywords    = meta_name(&doc, "keywords");
-    let favicon     = link_href(&doc, "icon")
-        .or_else(|| link_href(&doc, "shortcut icon"));
+    let keywords = meta_name(&doc, "keywords");
+    let favicon = link_href(&doc, "icon").or_else(|| link_href(&doc, "shortcut icon"));
 
     let json_ld: Vec<JsonLd> = doc
         .select("script[type=\"application/ld+json\"]")
@@ -97,7 +96,9 @@ pub fn analyze(html: &str) -> SeoReport {
             let schema_type = serde_json::from_str::<serde_json::Value>(&raw_full)
                 .ok()
                 .and_then(|v| {
-                    v.get("@type").and_then(|t| t.as_str()).map(String::from)
+                    v.get("@type")
+                        .and_then(|t| t.as_str())
+                        .map(String::from)
                         .or_else(|| {
                             v.get("@graph")
                                 .and_then(|g| g.as_array())
@@ -109,12 +110,17 @@ pub fn analyze(html: &str) -> SeoReport {
                 })
                 .unwrap_or_default();
             let raw = if raw_full.len() > 2048 {
-                let end = raw_full.char_indices()
+                let end = raw_full
+                    .char_indices()
                     .take_while(|(i, _)| *i <= 2048)
                     .last()
                     .map(|(i, c)| i + c.len_utf8())
                     .unwrap_or(0);
-                format!("{}... ({} bytes truncated)", &raw_full[..end], raw_full.len() - end)
+                format!(
+                    "{}... ({} bytes truncated)",
+                    &raw_full[..end],
+                    raw_full.len() - end
+                )
             } else {
                 raw_full
             };
@@ -122,25 +128,66 @@ pub fn analyze(html: &str) -> SeoReport {
         })
         .collect();
 
-    let score = compute_score(&og, &twitter, &canonical, &json_ld, &favicon, &hreflang, &description);
-    SeoReport { score, og, twitter, json_ld, canonical, hreflang, robots, description, keywords, favicon }
+    let score = compute_score(
+        &og,
+        &twitter,
+        &canonical,
+        &json_ld,
+        &favicon,
+        &hreflang,
+        &description,
+    );
+    SeoReport {
+        score,
+        og,
+        twitter,
+        json_ld,
+        canonical,
+        hreflang,
+        robots,
+        description,
+        keywords,
+        favicon,
+    }
 }
 
 fn compute_score(
-    og: &OgTags, twitter: &TwitterCard, canonical: &Option<String>,
-    json_ld: &[JsonLd], favicon: &Option<String>,
-    hreflang: &[HreflangEntry], description: &str,
+    og: &OgTags,
+    twitter: &TwitterCard,
+    canonical: &Option<String>,
+    json_ld: &[JsonLd],
+    favicon: &Option<String>,
+    hreflang: &[HreflangEntry],
+    description: &str,
 ) -> u8 {
     let mut score: u8 = 0;
-    if !description.is_empty()    { score += 15; }
-    if !og.title.is_empty()       { score += 15; }
-    if !og.description.is_empty() { score += 10; }
-    if !og.image.is_empty()       { score += 10; }
-    if !twitter.card.is_empty()   { score += 10; }
-    if canonical.is_some()        { score += 15; }
-    if !json_ld.is_empty()        { score += 15; }
-    if favicon.is_some()          { score +=  5; }
-    if !hreflang.is_empty()       { score +=  5; }
+    if !description.is_empty() {
+        score += 15;
+    }
+    if !og.title.is_empty() {
+        score += 15;
+    }
+    if !og.description.is_empty() {
+        score += 10;
+    }
+    if !og.image.is_empty() {
+        score += 10;
+    }
+    if !twitter.card.is_empty() {
+        score += 10;
+    }
+    if canonical.is_some() {
+        score += 15;
+    }
+    if !json_ld.is_empty() {
+        score += 15;
+    }
+    if favicon.is_some() {
+        score += 5;
+    }
+    if !hreflang.is_empty() {
+        score += 5;
+    }
     score
 }
 
@@ -257,7 +304,11 @@ mod tests {
         let r = analyze(&html);
         assert_eq!(r.json_ld.len(), 1);
         assert_eq!(r.json_ld[0].schema_type, "Article");
-        assert!(r.json_ld[0].raw.len() <= 2100, "raw should be truncated, got {}", r.json_ld[0].raw.len());
+        assert!(
+            r.json_ld[0].raw.len() <= 2100,
+            "raw should be truncated, got {}",
+            r.json_ld[0].raw.len()
+        );
     }
 
     #[test]

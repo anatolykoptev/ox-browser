@@ -102,10 +102,7 @@ mod tests {
         let keys: Vec<&str> = result.iter().map(|(k, _)| k.as_str()).collect();
         let auth_pos = keys.iter().position(|&k| k == "authorization").unwrap();
         let custom_pos = keys.iter().position(|&k| k == "x-custom-header").unwrap();
-        assert!(
-            auth_pos < custom_pos,
-            "known header before unknown header"
-        );
+        assert!(auth_pos < custom_pos, "known header before unknown header");
     }
 
     #[test]
@@ -120,7 +117,10 @@ mod tests {
 
     #[test]
     fn test_ordered_headers_preserves_values() {
-        let pairs = &[("authorization", "Bearer mytoken123"), ("cookie", "ct0=xyz")];
+        let pairs = &[
+            ("authorization", "Bearer mytoken123"),
+            ("cookie", "ct0=xyz"),
+        ];
         let result = ordered_headers(pairs);
         let auth = result.iter().find(|(k, _)| k == "authorization").unwrap();
         assert_eq!(auth.1, "Bearer mytoken123");

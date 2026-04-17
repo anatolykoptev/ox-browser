@@ -46,7 +46,8 @@ impl Handler for RateLimitHandler {
         if resp.status == 429 {
             if let Some(ra) = resp.headers.get("retry-after") {
                 if let Some(dur) = parse_retry_after(ra.to_str().unwrap_or("")) {
-                    self.limiter.mark_rate_limited(&req.url, Instant::now() + dur);
+                    self.limiter
+                        .mark_rate_limited(&req.url, Instant::now() + dur);
                 }
             }
         }

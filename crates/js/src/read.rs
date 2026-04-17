@@ -1,8 +1,8 @@
 //! POST /read — unified content extraction.
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use ox_http::content::ReadParams;
 use ox_http::read_pipeline;
 

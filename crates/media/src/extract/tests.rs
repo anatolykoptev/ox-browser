@@ -97,8 +97,7 @@ fn skip_tracking_pixels() {
 
 #[test]
 fn extract_video_tag() {
-    let html =
-        r#"<html><body><video src="https://example.com/clip.mp4"></video></body></html>"#;
+    let html = r#"<html><body><video src="https://example.com/clip.mp4"></video></body></html>"#;
     let results = extract_media(html, "https://example.com/");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].media_kind, MediaKind::Video);
@@ -117,8 +116,11 @@ fn extract_video_source_tag() {
 fn extract_og_video() {
     let html = r#"<html><head><meta property="og:video" content="https://example.com/video.mp4"/></head></html>"#;
     let results = extract_media(html, "https://example.com/");
-    assert!(results.iter().any(|r| r.media_kind == MediaKind::Video
-        && r.url == "https://example.com/video.mp4"));
+    assert!(
+        results
+            .iter()
+            .any(|r| r.media_kind == MediaKind::Video && r.url == "https://example.com/video.mp4")
+    );
 }
 
 #[test]

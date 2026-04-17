@@ -6,7 +6,11 @@ use std::collections::HashMap;
 fn seo_findings_missing_all() {
     let report = seo::analyze("");
     let findings = seo_findings(&report);
-    assert!(findings.iter().any(|f| f.message.contains("meta description")));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.message.contains("meta description"))
+    );
     assert!(findings.iter().any(|f| f.message.contains("canonical")));
     assert!(findings.iter().any(|f| f.severity == "high"));
 }
@@ -24,7 +28,11 @@ fn seo_findings_perfect() {
     </head></html>"#;
     let report = seo::analyze(html);
     let findings = seo_findings(&report);
-    assert!(findings.is_empty(), "expected no findings, got {:?}", findings);
+    assert!(
+        findings.is_empty(),
+        "expected no findings, got {:?}",
+        findings
+    );
 }
 
 #[test]

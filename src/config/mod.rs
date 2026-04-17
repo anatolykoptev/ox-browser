@@ -15,6 +15,7 @@
 //! - `images` — image search/extraction defaults
 
 mod cache;
+mod chrome;
 mod cloudflare;
 mod crawler;
 mod fetch;
@@ -27,9 +28,9 @@ mod ratelimit;
 mod retry;
 mod server;
 mod solver;
-mod chrome;
 
 pub use cache::CacheSection;
+pub use chrome::ChromeSection;
 pub use cloudflare::CloudflareSection;
 pub use crawler::CrawlerSection;
 pub use fetch::FetchSection;
@@ -42,15 +43,14 @@ pub use ratelimit::RatelimitSection;
 pub use retry::RetrySection;
 pub use server::ServerSection;
 pub use solver::SolverSection;
-pub use chrome::ChromeSection;
 
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use ox_http::{
-    ByparrConfig, ByparrSolver, ChallengeType,
-    CookieCache, CookieProvider, HttpConfig, SolvedChallenge,
+    ByparrConfig, ByparrSolver, ChallengeType, CookieCache, CookieProvider, HttpConfig,
+    SolvedChallenge,
 };
 use serde::Deserialize;
 
@@ -117,11 +117,7 @@ struct NoOpProvider;
 
 #[async_trait::async_trait]
 impl CookieProvider for NoOpProvider {
-    async fn solve(
-        &self,
-        _url: &str,
-        _ct: ChallengeType,
-    ) -> Result<SolvedChallenge, String> {
+    async fn solve(&self, _url: &str, _ct: ChallengeType) -> Result<SolvedChallenge, String> {
         Err("no solver configured".into())
     }
 }
@@ -131,7 +127,10 @@ impl CookieProvider for NoOpProvider {
 /// Priority: go_browser_url → byparr_url → NoOp.
 pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
     // Highest priority: go-browser HTTP solver
-    let go_browser_url = config.solver.go_browser_url.clone()
+    let go_browser_url = config
+        .solver
+        .go_browser_url
+        .clone()
         .or_else(|| std::env::var("GO_BROWSER_URL").ok());
     if let Some(ref url) = go_browser_url {
         if !url.is_empty() {

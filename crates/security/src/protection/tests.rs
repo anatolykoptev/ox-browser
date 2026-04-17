@@ -11,7 +11,10 @@ fn empty_headers() -> HashMap<String, String> {
 }
 
 fn headers(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 fn cookies(names: &[&str]) -> Vec<String> {
@@ -24,7 +27,10 @@ fn detect_cloudflare_from_headers() {
     let hdrs = headers(&[("cf-ray", "abc123"), ("server", "cloudflare")]);
     let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "Cloudflare CDN");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Cloudflare CDN");
     assert!(det.is_some(), "should detect Cloudflare CDN");
     assert!(report.summary.has_waf);
 }
@@ -35,7 +41,10 @@ fn detect_cloudflare_bot_mgmt_from_cookies() {
     let cks = cookies(&["cf_clearance", "__cf_bm"]);
     let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "Cloudflare Bot Management");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Cloudflare Bot Management");
     assert!(det.is_some(), "should detect Cloudflare Bot Management");
     assert!(report.summary.has_bot_detection);
 }
@@ -46,7 +55,10 @@ fn detect_akamai_from_cookies() {
     let cks = cookies(&["_abck", "bm_sz"]);
     let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "Akamai Bot Manager");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Akamai Bot Manager");
     assert!(det.is_some(), "should detect Akamai Bot Manager");
 }
 
@@ -68,7 +80,10 @@ fn detect_perimeterx_from_cookies() {
     let cks = cookies(&["_px3", "_pxhd"]);
     let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "PerimeterX / HUMAN");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "PerimeterX / HUMAN");
     assert!(det.is_some(), "should detect PerimeterX / HUMAN");
 }
 
@@ -78,7 +93,10 @@ fn detect_imperva_from_cookie_prefix() {
     let cks = cookies(&["incap_ses_1234", "visid_incap_5678"]);
     let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "Imperva / Incapsula");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Imperva / Incapsula");
     assert!(det.is_some(), "should detect Imperva / Incapsula");
 }
 
@@ -115,7 +133,10 @@ fn detect_turnstile_from_html() {
     "#;
     let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "Cloudflare Turnstile");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Cloudflare Turnstile");
     assert!(det.is_some(), "should detect Cloudflare Turnstile");
 }
 
@@ -136,7 +157,10 @@ fn detect_fingerprint_pro_from_script() {
     let html = r#"<script src="https://fpjscdn.net/v3/abc123"></script>"#;
     let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "Fingerprint Pro");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Fingerprint Pro");
     assert!(det.is_some(), "should detect Fingerprint Pro");
 }
 
@@ -175,7 +199,10 @@ fn login_mode_warns_no_captcha() {
     let report = detect_protection(&empty_headers(), &[], "", "", ScanMode::Login);
 
     let finding = report.findings.iter().find(|f| f.check == "no_captcha");
-    assert!(finding.is_some(), "login mode should warn about missing CAPTCHA");
+    assert!(
+        finding.is_some(),
+        "login mode should warn about missing CAPTCHA"
+    );
 }
 
 // 16. Login mode no warning when CAPTCHA present
@@ -185,7 +212,10 @@ fn login_mode_no_warning_when_captcha_present() {
     let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Login);
 
     let finding = report.findings.iter().find(|f| f.check == "no_captcha");
-    assert!(finding.is_none(), "should not warn about CAPTCHA when hCaptcha is present");
+    assert!(
+        finding.is_none(),
+        "should not warn about CAPTCHA when hCaptcha is present"
+    );
 }
 
 // 17. Public mode emits no absence findings
@@ -193,7 +223,10 @@ fn login_mode_no_warning_when_captcha_present() {
 fn public_mode_no_absence_findings() {
     let report = detect_protection(&empty_headers(), &[], "", "", ScanMode::Public);
 
-    assert!(report.findings.is_empty(), "public mode should have no absence findings");
+    assert!(
+        report.findings.is_empty(),
+        "public mode should have no absence findings"
+    );
 }
 
 // 18. Multiple systems detected simultaneously
@@ -205,9 +238,15 @@ fn multiple_systems_detected() {
 
     let report = detect_protection(&hdrs, &cks, html, "", ScanMode::Public);
 
-    assert!(report.summary.total_systems >= 3, "should detect at least 3 systems");
+    assert!(
+        report.summary.total_systems >= 3,
+        "should detect at least 3 systems"
+    );
     assert!(report.summary.has_waf, "should detect WAF");
-    assert!(report.summary.has_bot_detection, "should detect bot detection");
+    assert!(
+        report.summary.has_bot_detection,
+        "should detect bot detection"
+    );
     assert!(report.summary.has_captcha, "should detect CAPTCHA");
 }
 
@@ -217,7 +256,10 @@ fn shape_security_detected_from_header_regex() {
     let hdrs = headers(&[("x-ab12cd34-a", "1"), ("x-ab12cd34-z", "2")]);
     let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "Shape Security / F5");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Shape Security / F5");
     assert!(det.is_some(), "should detect Shape Security / F5");
 }
 
@@ -237,8 +279,15 @@ fn detect_altcha_pow_from_html() {
     let html = r#"<input type="hidden" name="challenge" value="abc"><input type="hidden" name="salt" value="def"><input type="hidden" name="sig" value="ghi">var CHALLENGE = SHA-256(salt + nonce)"#;
     let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "ALTCHA PoW Challenge");
-    assert!(det.is_some(), "should detect ALTCHA PoW, got: {:?}", report.detections);
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "ALTCHA PoW Challenge");
+    assert!(
+        det.is_some(),
+        "should detect ALTCHA PoW, got: {:?}",
+        report.detections
+    );
     assert!(report.summary.has_bot_detection);
 }
 
@@ -248,7 +297,10 @@ fn detect_njs_antibot_from_cookie() {
     let cks = cookies(&["pn_antibot"]);
     let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "NJS Antibot Gate");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "NJS Antibot Gate");
     assert!(det.is_some(), "should detect NJS Antibot Gate");
     assert!(report.summary.has_bot_detection);
 }
@@ -259,8 +311,14 @@ fn detect_njs_antibot_from_challenge_html() {
     let html = r#"<title>Проверка браузера</title><div>Проверяем ваш браузер...</div>"#;
     let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
 
-    let det = report.detections.iter().find(|d| d.name == "NJS Antibot Gate");
-    assert!(det.is_some(), "should detect NJS Antibot from challenge page");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "NJS Antibot Gate");
+    assert!(
+        det.is_some(),
+        "should detect NJS Antibot from challenge page"
+    );
 }
 
 // 24. Qrator detected from cookies
@@ -280,11 +338,23 @@ fn login_mode_pow_suppresses_no_captcha() {
     let html = r#"<input name="challenge" value="x"><input name="salt" value="y"><input name="sig" value="z">SHA-256("#;
     let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Login);
 
-    assert!(report.summary.has_bot_detection, "PoW should count as bot_detection");
+    assert!(
+        report.summary.has_bot_detection,
+        "PoW should count as bot_detection"
+    );
     let no_captcha = report.findings.iter().find(|f| f.check == "no_captcha");
-    assert!(no_captcha.is_none(), "PoW should suppress no_captcha finding");
-    let no_bot = report.findings.iter().find(|f| f.check == "no_bot_detection");
-    assert!(no_bot.is_none(), "PoW should suppress no_bot_detection finding");
+    assert!(
+        no_captcha.is_none(),
+        "PoW should suppress no_captcha finding"
+    );
+    let no_bot = report
+        .findings
+        .iter()
+        .find(|f| f.check == "no_bot_detection");
+    assert!(
+        no_bot.is_none(),
+        "PoW should suppress no_bot_detection finding"
+    );
 }
 
 // 26. Akamai Kona from Server header
@@ -292,7 +362,10 @@ fn login_mode_pow_suppresses_no_captcha() {
 fn detect_akamai_kona_from_header() {
     let hdrs = headers(&[("server", "AkamaiGHost")]);
     let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
-    let det = report.detections.iter().find(|d| d.name == "Akamai Kona Site Defender");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Akamai Kona Site Defender");
     assert!(det.is_some(), "should detect Akamai Kona Site Defender");
     assert!(report.summary.has_waf);
 }
@@ -302,7 +375,10 @@ fn detect_akamai_kona_from_header() {
 fn detect_azure_front_door_from_header() {
     let hdrs = headers(&[("x-azure-ref", "abc123")]);
     let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
-    let det = report.detections.iter().find(|d| d.name == "Azure Front Door");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Azure Front Door");
     assert!(det.is_some(), "should detect Azure Front Door");
 }
 
@@ -311,7 +387,10 @@ fn detect_azure_front_door_from_header() {
 fn detect_aws_cloudfront_from_header() {
     let hdrs = headers(&[("x-amz-cf-id", "abc123"), ("x-amz-cf-pop", "IAD55-C1")]);
     let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
-    let det = report.detections.iter().find(|d| d.name == "AWS CloudFront");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "AWS CloudFront");
     assert!(det.is_some(), "should detect AWS CloudFront");
 }
 
@@ -383,7 +462,10 @@ fn detect_fortiweb_from_cookie() {
 fn detect_citrix_netscaler_from_cookie() {
     let cks = cookies(&["NSC_aaaa_bbb_1.2.3.4"]);
     let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
-    let det = report.detections.iter().find(|d| d.name == "Citrix NetScaler");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Citrix NetScaler");
     assert!(det.is_some(), "should detect Citrix NetScaler");
 }
 
@@ -401,7 +483,10 @@ fn detect_litespeed_from_header() {
 fn detect_distil_from_header() {
     let hdrs = headers(&[("x-distil-cs", "abc123")]);
     let report = detect_protection(&hdrs, &[], "", "", ScanMode::Public);
-    let det = report.detections.iter().find(|d| d.name == "Distil Networks");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Distil Networks");
     assert!(det.is_some(), "should detect Distil Networks");
 }
 
@@ -410,7 +495,10 @@ fn detect_distil_from_header() {
 fn detect_friendly_captcha_from_script() {
     let html = r#"<script src="https://friendlycaptcha.com/widget.js"></script>"#;
     let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
-    let det = report.detections.iter().find(|d| d.name == "Friendly Captcha");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Friendly Captcha");
     assert!(det.is_some(), "should detect Friendly Captcha");
     assert!(report.summary.has_captcha);
 }
@@ -420,7 +508,10 @@ fn detect_friendly_captcha_from_script() {
 fn detect_yandex_smartcaptcha_from_script() {
     let html = r#"<script src="https://smartcaptcha.yandexcloud.net/captcha.js"></script>"#;
     let report = detect_protection(&empty_headers(), &[], html, "", ScanMode::Public);
-    let det = report.detections.iter().find(|d| d.name == "Yandex SmartCaptcha");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Yandex SmartCaptcha");
     assert!(det.is_some(), "should detect Yandex SmartCaptcha");
 }
 
@@ -429,7 +520,10 @@ fn detect_yandex_smartcaptcha_from_script() {
 fn detect_aliyundun_from_cookie() {
     let cks = cookies(&["aliyungf_tc"]);
     let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
-    let det = report.detections.iter().find(|d| d.name == "AliYunDun (Alibaba Cloud WAF)");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "AliYunDun (Alibaba Cloud WAF)");
     assert!(det.is_some(), "should detect AliYunDun");
 }
 
@@ -438,7 +532,10 @@ fn detect_aliyundun_from_cookie() {
 fn detect_baidu_yunjiasu_from_cookie() {
     let cks = cookies(&["__jsluid_h"]);
     let report = detect_protection(&empty_headers(), &cks, "", "", ScanMode::Public);
-    let det = report.detections.iter().find(|d| d.name == "Baidu Yunjiasu");
+    let det = report
+        .detections
+        .iter()
+        .find(|d| d.name == "Baidu Yunjiasu");
     assert!(det.is_some(), "should detect Baidu Yunjiasu");
 }
 

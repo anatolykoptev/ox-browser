@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use ox_http::detect_cloudflare;
 use serde::{Deserialize, Serialize};
 
@@ -49,9 +49,7 @@ pub async fn fetch(
             let headers: HashMap<String, String> = resp
                 .headers
                 .iter()
-                .filter_map(|(k, v)| {
-                    v.to_str().ok().map(|val| (k.to_string(), val.to_owned()))
-                })
+                .filter_map(|(k, v)| v.to_str().ok().map(|val| (k.to_string(), val.to_owned())))
                 .collect();
 
             (

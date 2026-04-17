@@ -21,11 +21,7 @@ impl GoBrowserProxy {
     }
 
     /// Forward a JSON POST request to go-browser.
-    pub async fn forward(
-        &self,
-        path: &str,
-        body: &Value,
-    ) -> Result<(u16, Value), String> {
+    pub async fn forward(&self, path: &str, body: &Value) -> Result<(u16, Value), String> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
             .client

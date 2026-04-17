@@ -5,20 +5,32 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-use crate::{extract_domain, Result, ReverseEngine, ReverseMatch};
+use crate::{Result, ReverseEngine, ReverseMatch, extract_domain};
 use ox_http::HttpClient;
 
 const LENS_URL: &str = "https://lens.google.com/uploadbyurl";
 const GOOGLE_DOMAINS: &[&str] = &[
-    "google.com", "gstatic.com", "googleapis.com", "googleusercontent.com",
+    "google.com",
+    "gstatic.com",
+    "googleapis.com",
+    "googleusercontent.com",
 ];
 
 pub struct GoogleLens;
 
 #[async_trait]
 impl ReverseEngine for GoogleLens {
-    async fn search(&self, client: &HttpClient, image_url: &str, max: usize) -> Result<Vec<ReverseMatch>> {
-        let url = format!("{}?url={}&hl=en-US&gl=us", LENS_URL, urlencoding::encode(image_url));
+    async fn search(
+        &self,
+        client: &HttpClient,
+        image_url: &str,
+        max: usize,
+    ) -> Result<Vec<ReverseMatch>> {
+        let url = format!(
+            "{}?url={}&hl=en-US&gl=us",
+            LENS_URL,
+            urlencoding::encode(image_url)
+        );
         let resp = client.get(&url).await?;
         let html = if resp.status == 302 || resp.status == 303 {
             let loc = resp.headers.get("location").and_then(|v| v.to_str().ok());
@@ -27,37 +39,66 @@ impl ReverseEngine for GoogleLens {
                     tracing::debug!(redirect = %loc, "google_lens: following redirect");
                     match client.get(loc).await {
                         Ok(r) => r.body,
-                        Err(e) => { tracing::warn!(error = %e, "google_lens: redirect failed"); return Ok(vec![]); }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "google_lens: redirect failed");
+                            return Ok(vec![]);
+                        }
                     }
                 }
-                None => { tracing::warn!("google_lens: redirect with no location"); return Ok(vec![]); }
+                None => {
+                    tracing::warn!("google_lens: redirect with no location");
+                    return Ok(vec![]);
+                }
             }
-        } else if resp.status == 200 { resp.body }
-        else { tracing::warn!(status = resp.status, "google_lens: unexpected status"); return Ok(vec![]); };
+        } else if resp.status == 200 {
+            resp.body
+        } else {
+            tracing::warn!(status = resp.status, "google_lens: unexpected status");
+            return Ok(vec![]);
+        };
         let mut results = parse_lens_html(&html);
         results.truncate(max);
         Ok(results)
     }
-    fn name(&self) -> &str { "google_lens" }
+    fn name(&self) -> &str {
+        "google_lens"
+    }
 }
 
 fn is_google_url(u: &str) -> bool {
-    url::Url::parse(u).ok().and_then(|p| p.host_str().map(|h| {
-        GOOGLE_DOMAINS.iter().any(|d| h == *d || h.ends_with(&format!(".{d}")))
-    })).unwrap_or(false)
+    url::Url::parse(u)
+        .ok()
+        .and_then(|p| {
+            p.host_str().map(|h| {
+                GOOGLE_DOMAINS
+                    .iter()
+                    .any(|d| h == *d || h.ends_with(&format!(".{d}")))
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn make_match(page_url: String, title: String) -> ReverseMatch {
     let domain = extract_domain(&page_url);
-    ReverseMatch { page_url, title, thumbnail: None, domain, engine: "google_lens".into(), description: None, image_size: None }
+    ReverseMatch {
+        page_url,
+        title,
+        thumbnail: None,
+        domain,
+        engine: "google_lens".into(),
+        description: None,
+        image_size: None,
+    }
 }
 
 // --- Regexes (LazyLock) ---
 
 static LDI_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"google\.ldi\s*=\s*(\{[^}]+\})").expect("ldi regex"));
-static AF_DATA_RE: LazyLock<Regex> = LazyLock::new(||
-    Regex::new(r"AF_initDataCallback\(\{[^}]*data:(\[[\s\S]*?\])\s*,\s*sideChannel").expect("af regex"));
+static AF_DATA_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"AF_initDataCallback\(\{[^}]*data:(\[[\s\S]*?\])\s*,\s*sideChannel")
+        .expect("af regex")
+});
 static URL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#""(https?://[^"]{10,})""#).expect("url regex"));
 static TITLE_RE: LazyLock<Regex> =
@@ -67,26 +108,41 @@ static TITLE_RE: LazyLock<Regex> =
 
 fn parse_lens_html(html: &str) -> Vec<ReverseMatch> {
     let r = parse_ldi_map(html);
-    if !r.is_empty() { return r; }
+    if !r.is_empty() {
+        return r;
+    }
     let r = parse_af_callbacks(html);
-    if !r.is_empty() { return r; }
+    if !r.is_empty() {
+        return r;
+    }
     parse_dom_links(html)
 }
 
 fn add_link(a: &dom_query::Selection<'_>, seen: &mut HashSet<String>, out: &mut Vec<ReverseMatch>) {
     let Some(href) = a.attr("href") else { return };
     let h = href.as_ref();
-    if !h.starts_with("http") || is_google_url(h) { return; }
-    if !seen.insert(h.to_owned()) { return; }
-    out.push(make_match(h.to_owned(), a.text().to_string().trim().to_owned()));
+    if !h.starts_with("http") || is_google_url(h) {
+        return;
+    }
+    if !seen.insert(h.to_owned()) {
+        return;
+    }
+    out.push(make_match(
+        h.to_owned(),
+        a.text().to_string().trim().to_owned(),
+    ));
 }
 
 /// Strategy 1: parse `google.ldi` script map for dimg_ image keys,
 /// then find associated `<a href>` in DOM via data-iid attribute.
 fn parse_ldi_map(html: &str) -> Vec<ReverseMatch> {
-    let Some(cap) = LDI_RE.captures(html) else { return vec![]; };
+    let Some(cap) = LDI_RE.captures(html) else {
+        return vec![];
+    };
     let raw = cap[1].replace("\\u003d", "=").replace("\\u0026", "&");
-    let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw) else { return vec![]; };
+    let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw) else {
+        return vec![];
+    };
     let doc = dom_query::Document::from(html);
     let (mut results, mut seen) = (Vec::new(), HashSet::new());
     for key in map.keys().filter(|k| k.starts_with("dimg_")) {
@@ -96,7 +152,9 @@ fn parse_ldi_map(html: &str) -> Vec<ReverseMatch> {
             format!("a[href]:has([data-iid=\"{key}\"])"),
             format!("[data-iid=\"{key}\"] a[href]"),
         ] {
-            for a in doc.select(&sel).iter() { add_link(&a, &mut seen, &mut results); }
+            for a in doc.select(&sel).iter() {
+                add_link(&a, &mut seen, &mut results);
+            }
         }
     }
     results
@@ -107,15 +165,29 @@ fn parse_af_callbacks(html: &str) -> Vec<ReverseMatch> {
     let (mut results, mut seen) = (Vec::new(), HashSet::new());
     for cap in AF_DATA_RE.captures_iter(html) {
         let data = &cap[1];
-        let urls: Vec<String> = URL_RE.captures_iter(data)
-            .map(|c| c[1].to_owned()).filter(|u| !is_google_url(u)).collect();
-        let titles: Vec<String> = TITLE_RE.captures_iter(data)
+        let urls: Vec<String> = URL_RE
+            .captures_iter(data)
             .map(|c| c[1].to_owned())
-            .filter(|s| !s.starts_with("http") && !s.contains('\\') && !s.contains('{') && s.chars().any(|c| c.is_alphabetic()))
+            .filter(|u| !is_google_url(u))
+            .collect();
+        let titles: Vec<String> = TITLE_RE
+            .captures_iter(data)
+            .map(|c| c[1].to_owned())
+            .filter(|s| {
+                !s.starts_with("http")
+                    && !s.contains('\\')
+                    && !s.contains('{')
+                    && s.chars().any(|c| c.is_alphabetic())
+            })
             .collect();
         for (i, url) in urls.iter().enumerate() {
-            if !seen.insert(url.clone()) { continue; }
-            results.push(make_match(url.clone(), titles.get(i).cloned().unwrap_or_default()));
+            if !seen.insert(url.clone()) {
+                continue;
+            }
+            results.push(make_match(
+                url.clone(),
+                titles.get(i).cloned().unwrap_or_default(),
+            ));
         }
     }
     results
@@ -128,9 +200,16 @@ fn parse_dom_links(html: &str) -> Vec<ReverseMatch> {
     for node in doc.select("a[href]").iter() {
         let href = node.attr("href").unwrap_or_default();
         let h = href.as_ref();
-        if !h.starts_with("http") || is_google_url(h) { continue; }
-        if !seen.insert(h.to_owned()) { continue; }
-        results.push(make_match(h.to_owned(), node.text().to_string().trim().to_owned()));
+        if !h.starts_with("http") || is_google_url(h) {
+            continue;
+        }
+        if !seen.insert(h.to_owned()) {
+            continue;
+        }
+        results.push(make_match(
+            h.to_owned(),
+            node.text().to_string().trim().to_owned(),
+        ));
     }
     results
 }
@@ -173,7 +252,9 @@ mod tests {
     }
 
     fn make_af_html(data: &str) -> String {
-        format!(r#"<html><script>AF_initDataCallback({{key:'ds:1',data:{data},sideChannel:{{}}}});</script></html>"#)
+        format!(
+            r#"<html><script>AF_initDataCallback({{key:'ds:1',data:{data},sideChannel:{{}}}});</script></html>"#
+        )
     }
 
     #[test]
@@ -360,7 +441,9 @@ mod tests {
         // But we test that parse_lens_html can handle many results.
         let mut links = String::new();
         for i in 0..50 {
-            links.push_str(&format!(r#"<a href="https://site{i}.com/page">Title {i}</a>"#));
+            links.push_str(&format!(
+                r#"<a href="https://site{i}.com/page">Title {i}</a>"#
+            ));
         }
         let html = format!("<html><body>{links}</body></html>");
         let r = parse_lens_html(&html);

@@ -22,11 +22,7 @@ impl Page {
 
     pub fn select_single(&self, css: &str) -> Option<dom_query::Selection<'_>> {
         let sel = self.doc.select(css);
-        if sel.is_empty() {
-            None
-        } else {
-            Some(sel)
-        }
+        if sel.is_empty() { None } else { Some(sel) }
     }
 
     pub fn title(&self) -> String {

@@ -4,9 +4,7 @@ mod findings;
 #[cfg(test)]
 mod tests;
 
-pub use findings::{
-    accessibility_findings, performance_findings, security_findings, seo_findings,
-};
+pub use findings::{accessibility_findings, performance_findings, security_findings, seo_findings};
 
 use serde::Serialize;
 

@@ -4,7 +4,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 
-use crate::xtid_cubic::{interpolate, rotation_to_matrix, Cubic};
+use crate::xtid_cubic::{Cubic, interpolate, rotation_to_matrix};
 use crate::xtid_parser::{parse_key_indices, parse_svg_frames, parse_verification_key};
 
 const KEYWORD: &str = "obfiowerehiring";
@@ -30,7 +30,12 @@ impl ClientTransaction {
         let animation_key =
             Self::build_animation_key(&key_bytes, row_index, &key_bytes_indices, &svg_frames)?;
 
-        Ok(Self { key_bytes, animation_key, row_index, key_bytes_indices })
+        Ok(Self {
+            key_bytes,
+            animation_key,
+            row_index,
+            key_bytes_indices,
+        })
     }
 
     pub(crate) fn generate_id(&self, method: &str, path: &str) -> String {
@@ -52,8 +57,7 @@ impl ClientTransaction {
             time_bytes[i] = ((time_now >> (i * 8)) & 0xFF) as u8;
         }
 
-        let hash_input =
-            format!("{method}!{path}!{time_now}{KEYWORD}{}", self.animation_key);
+        let hash_input = format!("{method}!{path}!{time_now}{KEYWORD}{}", self.animation_key);
         let hash = Sha256::digest(hash_input.as_bytes());
         let hash_bytes = &hash[..16];
 

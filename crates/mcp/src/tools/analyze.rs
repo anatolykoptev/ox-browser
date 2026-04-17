@@ -8,8 +8,8 @@ use ox_http::detect_cloudflare;
 use ox_intelligence::{
     accessibility, api_discovery, content, fingerprint, fonts, media, performance, pwa, seo,
 };
-use rmcp::model::*;
 use rmcp::ErrorData as McpError;
+use rmcp::model::*;
 use serde::{Deserialize, Serialize};
 
 use rmcp::schemars;
@@ -70,10 +70,7 @@ struct AssetInfo {
 
 impl OxMcpServer {
     /// Fetch a page and run full site intelligence analysis.
-    pub(crate) async fn do_analyze(
-        &self,
-        input: AnalyzeInput,
-    ) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_analyze(&self, input: AnalyzeInput) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
 
         let resp = match self.http_client.get(&input.url).await {
@@ -151,11 +148,7 @@ impl OxMcpServer {
                         let mut kv = pair.trim().splitn(2, '=');
                         let k = kv.next()?.trim().to_owned();
                         let val = kv.next().unwrap_or("").trim().to_owned();
-                        if k.is_empty() {
-                            None
-                        } else {
-                            Some((k, val))
-                        }
+                        if k.is_empty() { None } else { Some((k, val)) }
                     })
                     .collect()
             })
@@ -163,7 +156,12 @@ impl OxMcpServer {
 
         // Technology fingerprinting (rswappalyzer — 7,000+ techs)
         let detections = fingerprint::detect(
-            &input.url, &headers, &resp.body, &meta_tags, &script_srcs, &cookies,
+            &input.url,
+            &headers,
+            &resp.body,
+            &meta_tags,
+            &script_srcs,
+            &cookies,
         );
 
         let technologies: Vec<TechInfo> = detections
@@ -179,10 +177,7 @@ impl OxMcpServer {
         let meta = MetaInfo {
             generator: meta_tags.get("generator").cloned().unwrap_or_default(),
             server: headers.get("server").cloned().unwrap_or_default(),
-            powered_by: headers
-                .get("x-powered-by")
-                .cloned()
-                .unwrap_or_default(),
+            powered_by: headers.get("x-powered-by").cloned().unwrap_or_default(),
             title: page.title(),
         };
 

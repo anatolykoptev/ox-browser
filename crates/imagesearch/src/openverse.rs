@@ -20,7 +20,9 @@ impl OpenverseImages {
     /// Create from `OPENVERSE_ACCESS_TOKEN` env var if set, otherwise anonymous.
     pub fn from_env() -> Self {
         Self {
-            access_token: std::env::var("OPENVERSE_ACCESS_TOKEN").ok().filter(|s| !s.is_empty()),
+            access_token: std::env::var("OPENVERSE_ACCESS_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty()),
         }
     }
 }
@@ -50,10 +52,7 @@ impl ImageEngine for OpenverseImages {
 
         let resp = client.get_with_headers(&url, &headers).await?;
         if resp.status != 200 {
-            return Err(Error::Parse(format!(
-                "openverse status {}",
-                resp.status
-            )));
+            return Err(Error::Parse(format!("openverse status {}", resp.status)));
         }
         let mut results = parse_openverse_json(&resp.body);
         results.truncate(max);

@@ -141,10 +141,19 @@ impl MediaResult {
             media_type: MediaType::Video,
             files: vec![p.file],
             platform: Some("youtube".into()),
-            title: p.title, author: p.author, description: p.description,
+            title: p.title,
+            author: p.author,
+            description: p.description,
             duration_secs: p.duration_secs,
-            stats: Some(MediaStats { views: Some(p.views), likes: None, comments: None }),
-            quality: Some(Quality { width: p.width, height: p.height }),
+            stats: Some(MediaStats {
+                views: Some(p.views),
+                likes: None,
+                comments: None,
+            }),
+            quality: Some(Quality {
+                width: p.width,
+                height: p.height,
+            }),
             merged: p.merged,
         }
     }
@@ -156,8 +165,12 @@ impl MediaResult {
             files,
             platform: Some("generic".into()),
             title,
-            author: None, description: None, duration_secs: None,
-            stats: None, quality: None, merged: false,
+            author: None,
+            description: None,
+            duration_secs: None,
+            stats: None,
+            quality: None,
+            merged: false,
         }
     }
 }

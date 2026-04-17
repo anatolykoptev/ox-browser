@@ -11,12 +11,23 @@ fn read_params_defaults() {
 #[test]
 fn read_output_skips_none_error() {
     let out = ReadOutput {
-        title: "T".into(), content: "C".into(), author: String::new(),
-        excerpt: String::new(), url: "https://x.com".into(),
-        format: "text".into(), length: 1, method: "direct".into(),
-        elapsed_ms: 50, json_ld: Vec::new(), og_image: String::new(),
-        published_at: String::new(), modified_at: String::new(), section: String::new(),
-        site_name: String::new(), tags: Vec::new(), language: String::new(),
+        title: "T".into(),
+        content: "C".into(),
+        author: String::new(),
+        excerpt: String::new(),
+        url: "https://x.com".into(),
+        format: "text".into(),
+        length: 1,
+        method: "direct".into(),
+        elapsed_ms: 50,
+        json_ld: Vec::new(),
+        og_image: String::new(),
+        published_at: String::new(),
+        modified_at: String::new(),
+        section: String::new(),
+        site_name: String::new(),
+        tags: Vec::new(),
+        language: String::new(),
         error: None,
     };
     let json = serde_json::to_value(&out).unwrap();
@@ -27,12 +38,23 @@ fn read_output_skips_none_error() {
 #[test]
 fn read_output_includes_error() {
     let out = ReadOutput {
-        title: String::new(), content: String::new(), author: String::new(),
-        excerpt: String::new(), url: "https://fail.com".into(),
-        format: "text".into(), length: 0, method: "direct".into(),
-        elapsed_ms: 10, json_ld: Vec::new(), og_image: String::new(),
-        published_at: String::new(), modified_at: String::new(), section: String::new(),
-        site_name: String::new(), tags: Vec::new(), language: String::new(),
+        title: String::new(),
+        content: String::new(),
+        author: String::new(),
+        excerpt: String::new(),
+        url: "https://fail.com".into(),
+        format: "text".into(),
+        length: 0,
+        method: "direct".into(),
+        elapsed_ms: 10,
+        json_ld: Vec::new(),
+        og_image: String::new(),
+        published_at: String::new(),
+        modified_at: String::new(),
+        section: String::new(),
+        site_name: String::new(),
+        tags: Vec::new(),
+        language: String::new(),
         error: Some("fail".into()),
     };
     let json = serde_json::to_value(&out).unwrap();

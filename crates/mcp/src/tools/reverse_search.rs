@@ -3,11 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use ox_reverse::{
-    GoogleLens, ReverseEngine, ReverseSearchEngine, YandexImages,
-};
-use rmcp::model::*;
+use ox_reverse::{GoogleLens, ReverseEngine, ReverseSearchEngine, YandexImages};
 use rmcp::ErrorData as McpError;
+use rmcp::model::*;
 use serde::Deserialize;
 
 use rmcp::schemars;
@@ -45,15 +43,16 @@ impl OxMcpServer {
             engines.push(Arc::new(YandexImages));
         }
 
-        let max_results =
-            input.max_results.unwrap_or(self.defaults.reverse_max_results);
+        let max_results = input
+            .max_results
+            .unwrap_or(self.defaults.reverse_max_results);
         let search = ReverseSearchEngine::new(engines);
         let result = search
             .search(self.http_client.clone(), &input.url, max_results)
             .await;
 
-        let json = serde_json::to_string(&result)
-            .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
+        let json =
+            serde_json::to_string(&result).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }

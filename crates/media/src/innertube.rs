@@ -87,7 +87,8 @@ pub async fn fetch_player_response(
     proxy_url: &str,
 ) -> Result<PlayerResponse, MediaError> {
     let body = build_android_vr_body(video_id, config);
-    let client = crate::http::build_client(proxy_url, std::time::Duration::from_secs(20), "innertube")?;
+    let client =
+        crate::http::build_client(proxy_url, std::time::Duration::from_secs(20), "innertube")?;
 
     let resp = client
         .post(&config.innertube_url)
@@ -117,7 +118,8 @@ pub async fn fetch_player_response(
         tracing::debug!(status = %ps.status, reason = %ps.reason, "innertube playability");
         if ps.status == "LOGIN_REQUIRED" {
             return Err(MediaError::FetchFailed(format!(
-                "YouTube bot detection: {}", ps.reason
+                "YouTube bot detection: {}",
+                ps.reason
             )));
         }
     }
@@ -136,10 +138,22 @@ mod tests {
 
     #[test]
     fn extract_video_id_all_formats() {
-        assert_eq!(extract_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
-        assert_eq!(extract_video_id("https://youtu.be/dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
-        assert_eq!(extract_video_id("https://www.youtube.com/embed/dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
-        assert_eq!(extract_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ"), Some("dQw4w9WgXcQ"));
+        assert_eq!(
+            extract_video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+            Some("dQw4w9WgXcQ")
+        );
+        assert_eq!(
+            extract_video_id("https://youtu.be/dQw4w9WgXcQ"),
+            Some("dQw4w9WgXcQ")
+        );
+        assert_eq!(
+            extract_video_id("https://www.youtube.com/embed/dQw4w9WgXcQ"),
+            Some("dQw4w9WgXcQ")
+        );
+        assert_eq!(
+            extract_video_id("https://www.youtube.com/shorts/dQw4w9WgXcQ"),
+            Some("dQw4w9WgXcQ")
+        );
         assert_eq!(extract_video_id("https://www.youtube.com/"), None);
         assert_eq!(extract_video_id("https://example.com"), None);
     }

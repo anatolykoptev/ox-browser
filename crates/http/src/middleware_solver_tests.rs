@@ -16,7 +16,9 @@ impl Handler for CfThenOkHandler {
         let n = self.call_count.fetch_add(1, Ordering::SeqCst);
         if n == 0 {
             return Err(HttpError::Cloudflare(
-                ChallengeType::JsChallenge, 503, "ray-1".into(),
+                ChallengeType::JsChallenge,
+                503,
+                "ray-1".into(),
             ));
         }
         let cookie = req.header("cookie").unwrap_or("").to_owned();
@@ -53,12 +55,18 @@ struct MockProvider {
 #[async_trait]
 impl CookieProvider for MockProvider {
     async fn solve(
-        &self, _url: &str, _ct: ChallengeType,
+        &self,
+        _url: &str,
+        _ct: ChallengeType,
     ) -> std::result::Result<SolvedChallenge, String> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         let mut cookies = HashMap::new();
         cookies.insert("cf_clearance".into(), "solved-token".into());
-        Ok(SolvedChallenge { cookies, user_agent: "Test/1.0".into(), body: None })
+        Ok(SolvedChallenge {
+            cookies,
+            user_agent: "Test/1.0".into(),
+            body: None,
+        })
     }
 }
 
@@ -98,11 +106,14 @@ async fn uses_cached_cookies() {
     let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
     let mut cookies = HashMap::new();
     cookies.insert("cf_clearance".into(), "cached-tok".into());
-    cache.put("example.com", SolvedChallenge {
-        cookies,
-        user_agent: "Cached/1.0".into(),
-        body: None,
-    });
+    cache.put(
+        "example.com",
+        SolvedChallenge {
+            cookies,
+            user_agent: "Cached/1.0".into(),
+            body: None,
+        },
+    );
     let handler = chain(vec![solver_middleware(provider, cache)], base);
     let req = Request {
         method: "GET".into(),
@@ -124,7 +135,9 @@ async fn block_not_solvable() {
     impl Handler for BlockHandler {
         async fn handle(&self, _req: Request) -> Result<HttpResponse> {
             Err(HttpError::Cloudflare(
-                ChallengeType::Block, 403, "ray-block".into(),
+                ChallengeType::Block,
+                403,
+                "ray-block".into(),
             ))
         }
     }
@@ -142,7 +155,10 @@ async fn block_not_solvable() {
         proxy: None,
     };
     let err = handler.handle(req).await.unwrap_err();
-    assert!(matches!(err, HttpError::Cloudflare(ChallengeType::Block, ..)));
+    assert!(matches!(
+        err,
+        HttpError::Cloudflare(ChallengeType::Block, ..)
+    ));
     assert_eq!(provider_calls.load(Ordering::SeqCst), 0);
 }
 
@@ -170,7 +186,10 @@ async fn passes_through_normal_requests() {
 #[test]
 fn domain_extraction() {
     assert_eq!(domain_from_url("https://example.com/page"), "example.com");
-    assert_eq!(domain_from_url("http://sub.test.org:8080/a"), "sub.test.org");
+    assert_eq!(
+        domain_from_url("http://sub.test.org:8080/a"),
+        "sub.test.org"
+    );
     assert_eq!(domain_from_url("not-a-url"), "");
 }
 

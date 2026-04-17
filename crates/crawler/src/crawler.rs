@@ -3,14 +3,14 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use ox_core::{resolve_url, Page};
+use ox_core::{Page, resolve_url};
 use ox_http::HttpClient;
-use tokio::sync::{mpsc, Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, mpsc};
 use url::Url;
 
 use crate::budget::Budget;
 use crate::config::CrawlConfig;
-use crate::dedup::{is_cycle, normalize_url, ContentDedup, UrlDedup};
+use crate::dedup::{ContentDedup, UrlDedup, is_cycle, normalize_url};
 use crate::frontier::{EntrySource, Frontier};
 use crate::markdown::html_to_fit_markdown;
 use crate::result::CrawlResult;
@@ -557,9 +557,12 @@ mod tests {
             if let Some(normalized) = normalize_url(&entry.url) {
                 if d.insert(&normalized) {
                     f.push_with_priority(
-                        normalized, 0,
+                        normalized,
+                        0,
                         entry.priority.unwrap_or(0.5),
-                        EntrySource::Sitemap { lastmod: entry.lastmod.clone() },
+                        EntrySource::Sitemap {
+                            lastmod: entry.lastmod.clone(),
+                        },
                     );
                 }
             }

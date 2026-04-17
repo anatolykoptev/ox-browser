@@ -111,8 +111,7 @@ mod tests {
             default_max_depth = 5
             default_concurrency = 10
         "#;
-        let section: CrawlerSection =
-            toml::from_str(toml_str).expect("valid TOML");
+        let section: CrawlerSection = toml::from_str(toml_str).expect("valid TOML");
         assert_eq!(section.default_max_depth, 5);
         assert_eq!(section.default_concurrency, 10);
         // defaults for omitted fields

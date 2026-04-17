@@ -23,7 +23,10 @@ pub(crate) fn analyze(doc: &Document, html: &str) -> PublicApiReport {
 
     // <link rel="api|service|service-desc|describedby" href="...">
     for node in doc.select("link[rel]").iter() {
-        let rel = node.attr("rel").map(|v| v.to_string().to_lowercase()).unwrap_or_default();
+        let rel = node
+            .attr("rel")
+            .map(|v| v.to_string().to_lowercase())
+            .unwrap_or_default();
         if let Some(href) = node.attr("href") {
             let href = href.to_string();
             if rel == "api" || rel == "service" || rel == "service-desc" || rel == "describedby" {
@@ -38,7 +41,10 @@ pub(crate) fn analyze(doc: &Document, html: &str) -> PublicApiReport {
         if let Some(href) = node.attr("href") {
             let href_str = href.to_string();
             if api_doc_re.is_match(&href_str) {
-                if href_str.ends_with(".json") || href_str.ends_with(".yaml") || href_str.ends_with(".yml") {
+                if href_str.ends_with(".json")
+                    || href_str.ends_with(".yaml")
+                    || href_str.ends_with(".yml")
+                {
                     openapi_url = Some(href_str.clone());
                 }
                 api_links.push(href_str);
@@ -47,7 +53,8 @@ pub(crate) fn analyze(doc: &Document, html: &str) -> PublicApiReport {
     }
 
     // Script content hints: OpenAPI/Swagger config objects
-    let openapi_re = Regex::new(r#"(?i)(SwaggerUI|swagger-ui|openapi|"openapi"\s*:\s*"3)"#).expect("valid");
+    let openapi_re =
+        Regex::new(r#"(?i)(SwaggerUI|swagger-ui|openapi|"openapi"\s*:\s*"3)"#).expect("valid");
     if openapi_re.is_match(html) {
         hints.push("openapi_config_detected".into());
     }
@@ -59,7 +66,8 @@ pub(crate) fn analyze(doc: &Document, html: &str) -> PublicApiReport {
     }
 
     // GraphQL playground/explorer hints
-    if html.contains("graphql-playground") || html.contains("graphiql") || html.contains("GraphiQL") {
+    if html.contains("graphql-playground") || html.contains("graphiql") || html.contains("GraphiQL")
+    {
         hints.push("graphql_playground".into());
     }
 
@@ -71,7 +79,16 @@ pub(crate) fn analyze(doc: &Document, html: &str) -> PublicApiReport {
     hints.sort();
     hints.dedup();
 
-    let detected = openapi_url.is_some() || !api_links.is_empty() || !well_known.is_empty() || !hints.is_empty();
+    let detected = openapi_url.is_some()
+        || !api_links.is_empty()
+        || !well_known.is_empty()
+        || !hints.is_empty();
 
-    PublicApiReport { detected, openapi_url, api_links, well_known, hints }
+    PublicApiReport {
+        detected,
+        openapi_url,
+        api_links,
+        well_known,
+        hints,
+    }
 }

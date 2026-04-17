@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use ox_http::ChallengeType;
-use rmcp::model::*;
 use rmcp::ErrorData as McpError;
+use rmcp::model::*;
 use serde::{Deserialize, Serialize};
 
 use rmcp::schemars;

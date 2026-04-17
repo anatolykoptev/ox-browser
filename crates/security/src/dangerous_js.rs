@@ -24,9 +24,8 @@ pub struct DangerousJsFinding {
     pub severity: Severity,
 }
 
-static INLINE_SCRIPT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?is)<script(?:\s[^>]*)?>(?P<body>[\s\S]*?)</script>").unwrap()
-});
+static INLINE_SCRIPT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<script(?:\s[^>]*)?>(?P<body>[\s\S]*?)</script>").unwrap());
 
 static HAS_SRC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\bsrc\s*=\s*["']"#).unwrap());
@@ -54,7 +53,10 @@ pub fn analyze_dangerous_js(html: &str) -> DangerousJsReport {
         .sum::<i32>()
         .max(-25);
 
-    DangerousJsReport { findings, score_modifier }
+    DangerousJsReport {
+        findings,
+        score_modifier,
+    }
 }
 
 fn analyze_script(source: &str, findings: &mut Vec<DangerousJsFinding>) {
@@ -123,10 +125,7 @@ fn walk_expr(expr: &Expression, findings: &mut Vec<DangerousJsFinding>) {
     }
 }
 
-fn check_call(
-    call: &oxc_ast::ast::CallExpression,
-    findings: &mut Vec<DangerousJsFinding>,
-) {
+fn check_call(call: &oxc_ast::ast::CallExpression, findings: &mut Vec<DangerousJsFinding>) {
     // eval(...) or window.eval(...) or window["eval"](...)
     if is_callee_named(&call.callee, "eval") {
         findings.push(DangerousJsFinding {
@@ -158,9 +157,7 @@ fn check_call(
         return;
     }
     // setTimeout/setInterval with string first arg
-    if is_callee_named(&call.callee, "setTimeout")
-        || is_callee_named(&call.callee, "setInterval")
-    {
+    if is_callee_named(&call.callee, "setTimeout") || is_callee_named(&call.callee, "setInterval") {
         if let Some(first) = call.arguments.first() {
             if matches!(first, Argument::StringLiteral(_)) {
                 let fn_name = callee_name(&call.callee).unwrap_or("setTimeout");
@@ -179,9 +176,7 @@ fn check_assignment(
     findings: &mut Vec<DangerousJsFinding>,
 ) {
     let prop = match &assign.left {
-        AssignmentTarget::StaticMemberExpression(mem) => {
-            Some(mem.property.name.to_string())
-        }
+        AssignmentTarget::StaticMemberExpression(mem) => Some(mem.property.name.to_string()),
         AssignmentTarget::ComputedMemberExpression(mem) => {
             string_literal_value(&mem.expression).map(String::from)
         }
@@ -198,10 +193,7 @@ fn check_assignment(
     }
 }
 
-fn check_new_expr(
-    ne: &oxc_ast::ast::NewExpression,
-    findings: &mut Vec<DangerousJsFinding>,
-) {
+fn check_new_expr(ne: &oxc_ast::ast::NewExpression, findings: &mut Vec<DangerousJsFinding>) {
     if is_callee_named(&ne.callee, "Function") {
         findings.push(DangerousJsFinding {
             pattern: "Function".into(),

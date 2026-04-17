@@ -45,7 +45,10 @@ mod tests {
             <footer><p>Copyright 2026</p></footer>
         "#;
         let md = html_to_fit_markdown(html);
-        assert!(md.contains("Main content"), "expected main content, got: {md}");
+        assert!(
+            md.contains("Main content"),
+            "expected main content, got: {md}"
+        );
         assert!(!md.contains("Home"), "nav should be stripped, got: {md}");
         assert!(
             !md.contains("Copyright"),
@@ -63,7 +66,10 @@ mod tests {
         "#;
         let md = html_to_fit_markdown(html);
         assert!(md.contains("Real content"), "expected content, got: {md}");
-        assert!(!md.contains("alert"), "script should be stripped, got: {md}");
+        assert!(
+            !md.contains("alert"),
+            "script should be stripped, got: {md}"
+        );
         assert!(
             !md.contains("color: red"),
             "style should be stripped, got: {md}"
@@ -73,9 +79,15 @@ mod tests {
     #[test]
     fn handles_empty_html() {
         let md = html_to_markdown("");
-        assert!(md.is_empty() || md.trim().is_empty(), "expected empty, got: {md}");
+        assert!(
+            md.is_empty() || md.trim().is_empty(),
+            "expected empty, got: {md}"
+        );
 
         let md = html_to_fit_markdown("");
-        assert!(md.trim().is_empty() || md.is_empty(), "expected empty, got: {md}");
+        assert!(
+            md.trim().is_empty() || md.is_empty(),
+            "expected empty, got: {md}"
+        );
     }
 }

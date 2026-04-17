@@ -5,7 +5,10 @@ const PAGE: &str = "https://app.example.com/path";
 
 #[test]
 fn test_secure_httponly_samesite() {
-    let r = analyze_cookies(&["session=abc; Secure; HttpOnly; SameSite=Strict".into()], PAGE);
+    let r = analyze_cookies(
+        &["session=abc; Secure; HttpOnly; SameSite=Strict".into()],
+        PAGE,
+    );
     assert_eq!(r.score_modifier, 5);
 }
 
@@ -43,12 +46,12 @@ fn test_no_cookies() {
 
 #[test]
 fn test_public_suffix_domain_critical() {
-    let r = analyze_cookies(
-        &["track=1; Domain=.co.uk".into()],
-        "https://example.co.uk/",
-    );
+    let r = analyze_cookies(&["track=1; Domain=.co.uk".into()], "https://example.co.uk/");
     let finding = r.findings.iter().find(|f| f.severity == Severity::Critical);
-    assert!(finding.is_some(), "expected Critical for public suffix domain");
+    assert!(
+        finding.is_some(),
+        "expected Critical for public suffix domain"
+    );
     assert!(finding.unwrap().description.contains("public suffix"));
 }
 
@@ -59,7 +62,10 @@ fn test_loosely_scoped_domain_medium() {
         "https://app.example.com/page",
     );
     let finding = r.findings.iter().find(|f| f.severity == Severity::Medium);
-    assert!(finding.is_some(), "expected Medium for loosely scoped cookie");
+    assert!(
+        finding.is_some(),
+        "expected Medium for loosely scoped cookie"
+    );
     assert!(finding.unwrap().description.contains("Loosely scoped"));
 }
 
@@ -69,11 +75,10 @@ fn test_no_domain_attr_no_finding() {
         &["id=abc; Secure; HttpOnly".into()],
         "https://app.example.com/",
     );
-    let domain_findings: Vec<_> = r.findings.iter()
-        .filter(|f| {
-            f.description.contains("public suffix")
-                || f.description.contains("Loosely")
-        })
+    let domain_findings: Vec<_> = r
+        .findings
+        .iter()
+        .filter(|f| f.description.contains("public suffix") || f.description.contains("Loosely"))
         .collect();
     assert!(domain_findings.is_empty());
 }
@@ -81,11 +86,18 @@ fn test_no_domain_attr_no_finding() {
 #[test]
 fn test_csrf_cookie_without_samesite() {
     let r = analyze_cookies(&["csrf_token=abc; Secure; HttpOnly".into()], PAGE);
-    assert!(r.findings.iter().any(|f| f.description.contains("CSRF") && f.severity == Severity::Medium));
+    assert!(
+        r.findings
+            .iter()
+            .any(|f| f.description.contains("CSRF") && f.severity == Severity::Medium)
+    );
 }
 
 #[test]
 fn test_csrf_cookie_with_samesite_ok() {
-    let r = analyze_cookies(&["csrf_token=abc; Secure; HttpOnly; SameSite=Strict".into()], PAGE);
+    let r = analyze_cookies(
+        &["csrf_token=abc; Secure; HttpOnly; SameSite=Strict".into()],
+        PAGE,
+    );
     assert!(r.findings.iter().all(|f| !f.description.contains("CSRF")));
 }

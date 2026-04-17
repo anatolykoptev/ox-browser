@@ -37,8 +37,7 @@ impl MediaSection {
     /// Convert to the media crate's config type.
     /// `MEDIA_PROXY_URL` env var overrides config file.
     pub fn to_media_config(&self) -> ox_media::MediaConfig {
-        let proxy_url = std::env::var("MEDIA_PROXY_URL")
-            .unwrap_or_else(|_| self.proxy_url.clone());
+        let proxy_url = std::env::var("MEDIA_PROXY_URL").unwrap_or_else(|_| self.proxy_url.clone());
         ox_media::MediaConfig {
             default_max_height: self.default_max_height,
             default_max_size_mb: self.default_max_size_mb,

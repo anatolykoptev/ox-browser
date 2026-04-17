@@ -10,7 +10,9 @@ pub(crate) struct Cubic {
 impl Cubic {
     pub(crate) fn new(curves: &[f64]) -> Self {
         assert!(curves.len() >= 4, "curves must have at least 4 elements");
-        Self { curves: [curves[0], curves[1], curves[2], curves[3]] }
+        Self {
+            curves: [curves[0], curves[1], curves[2], curves[3]],
+        }
     }
 
     pub(crate) fn get_value(&self, t: f64) -> f64 {
@@ -59,9 +61,7 @@ impl Cubic {
 }
 
 pub(crate) fn cubic_calc(a: f64, b: f64, m: f64) -> f64 {
-    3.0 * a * (1.0 - m) * (1.0 - m) * m
-        + 3.0 * b * (1.0 - m) * m * m
-        + m * m * m
+    3.0 * a * (1.0 - m) * (1.0 - m) * m + 3.0 * b * (1.0 - m) * m * m + m * m * m
 }
 
 pub(crate) fn interpolate(from: &[f64], to: &[f64], progress: f64) -> Vec<f64> {

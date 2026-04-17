@@ -3,30 +3,26 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 /// Legacy format: "ondemand.s":"<hash>" (old webpack, pre-2025)
-static ONDEMAND_LEGACY_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"['|"]{1}ondemand\.s['|"]{1}:\s*['|"]{1}([\w]*)['|"]{1}"#).unwrap()
-});
+static ONDEMAND_LEGACY_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"['|"]{1}ondemand\.s['|"]{1}:\s*['|"]{1}([\w]*)['|"]{1}"#).unwrap());
 
 /// New format step 1: find chunk ID for "ondemand.s" in name map (e.g. 20113:"ondemand.s")
-static ONDEMAND_CHUNK_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(\d+)\s*:\s*["']ondemand\.s["']"#).unwrap()
-});
+static ONDEMAND_CHUNK_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(\d+)\s*:\s*["']ondemand\.s["']"#).unwrap());
 
-static INDICES_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\(\w{1}\[(\d{1,2})\],\s*16\)").unwrap()
-});
+static INDICES_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\(\w{1}\[(\d{1,2})\],\s*16\)").unwrap());
 
 static VERIFY_NC_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"<meta[^>]+name=["']twitter-site-verification["'][^>]+content=["']([^"']+)["']"#).unwrap()
+    Regex::new(r#"<meta[^>]+name=["']twitter-site-verification["'][^>]+content=["']([^"']+)["']"#)
+        .unwrap()
 });
 
 static VERIFY_CN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter-site-verification["']"#).unwrap()
+    Regex::new(r#"<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter-site-verification["']"#)
+        .unwrap()
 });
 
-static NUM_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"-?\d+").unwrap()
-});
+static NUM_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"-?\d+").unwrap());
 
 /// Parse twitter-site-verification meta tag and base64-decode its content.
 pub(crate) fn parse_verification_key(html: &str) -> Result<Vec<u8>, String> {
@@ -131,10 +127,15 @@ pub(crate) fn parse_svg_frames(html: &str) -> Result<Vec<Vec<Vec<i32>>>, String>
 /// Fallback: second `<path` element inside a `<g>` group (positional).
 fn extract_path_data(svg: &str) -> Option<&str> {
     // Primary: fill="#1d9bf008" before or after d=
-    let primary_nd = Regex::new(r#"<path[^>]*d=["']([^"']+)["'][^>]*fill=["']#1d9bf008["']"#).ok()?;
-    let primary_dn = Regex::new(r#"<path[^>]*fill=["']#1d9bf008["'][^>]*d=["']([^"']+)["']"#).ok()?;
+    let primary_nd =
+        Regex::new(r#"<path[^>]*d=["']([^"']+)["'][^>]*fill=["']#1d9bf008["']"#).ok()?;
+    let primary_dn =
+        Regex::new(r#"<path[^>]*fill=["']#1d9bf008["'][^>]*d=["']([^"']+)["']"#).ok()?;
 
-    if let Some(c) = primary_nd.captures(svg).or_else(|| primary_dn.captures(svg)) {
+    if let Some(c) = primary_nd
+        .captures(svg)
+        .or_else(|| primary_dn.captures(svg))
+    {
         return c.get(1).map(|m| m.as_str());
     }
 

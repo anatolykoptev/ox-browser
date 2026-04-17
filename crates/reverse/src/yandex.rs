@@ -5,14 +5,17 @@ use std::collections::HashSet;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::{extract_domain, Result, ReverseEngine, ReverseMatch};
+use crate::{Result, ReverseEngine, ReverseMatch, extract_domain};
 use ox_http::HttpClient;
 
 const YANDEX_URL: &str = "https://yandex.ru/images/search";
 
 /// Extra headers required by Yandex to avoid blocks.
 const YANDEX_HEADERS: &[(&str, &str)] = &[
-    ("sec-ch-ua", "\" Not A;Brand\";v=\"99\", \"Chromium\";v=\"131\", \"Google Chrome\";v=\"131\""),
+    (
+        "sec-ch-ua",
+        "\" Not A;Brand\";v=\"99\", \"Chromium\";v=\"131\", \"Google Chrome\";v=\"131\"",
+    ),
     ("sec-ch-ua-mobile", "?0"),
     ("sec-ch-ua-platform", "\"Windows\""),
     ("sec-fetch-site", "same-origin"),
@@ -73,14 +76,12 @@ fn parse_yandex_html(html: &str) -> Vec<ReverseMatch> {
 
 /// Double-quoted data-state (real Yandex: entities inside, no raw quotes).
 static DS_DQ_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"id="ImagesApp-[^"]*"[^>]*data-state="([^"]*)"#)
-        .expect("ds_dq regex")
+    regex::Regex::new(r#"id="ImagesApp-[^"]*"[^>]*data-state="([^"]*)"#).expect("ds_dq regex")
 });
 
 /// Single-quoted data-state (test fixtures: raw JSON with quotes).
 static DS_SQ_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"id="ImagesApp-[^"]*"[^>]*data-state='([^']*)'"#)
-        .expect("ds_sq regex")
+    regex::Regex::new(r#"id="ImagesApp-[^"]*"[^>]*data-state='([^']*)'"#).expect("ds_sq regex")
 });
 
 /// Extract data-state JSON from raw HTML (avoids dom_query entity issues).
@@ -90,7 +91,9 @@ fn extract_data_state_from_raw(
     seen: &mut HashSet<String>,
 ) {
     // Try double-quoted first (real Yandex HTML), then single-quoted (tests).
-    let iter = DS_DQ_RE.captures_iter(html).chain(DS_SQ_RE.captures_iter(html));
+    let iter = DS_DQ_RE
+        .captures_iter(html)
+        .chain(DS_SQ_RE.captures_iter(html));
     for cap in iter {
         let raw = &cap[1];
         if raw.is_empty() {
@@ -207,21 +210,33 @@ fn bem_match(page_url: &str, title: String, thumbnail: Option<String>) -> Revers
 
 /// Extract matches from `dups` array.
 fn extract_from_dups(serp: &Value, results: &mut Vec<ReverseMatch>, seen: &mut HashSet<String>) {
-    let Some(dups) = serp.get("dups").and_then(|v| v.as_array()) else { return };
+    let Some(dups) = serp.get("dups").and_then(|v| v.as_array()) else {
+        return;
+    };
     for dup in dups {
         let page_url = dup.get("url").and_then(|v| v.as_str()).unwrap_or_default();
         if page_url.is_empty() || !seen.insert(page_url.to_owned()) {
             continue;
         }
-        let title = dup.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
-        let thumb = dup.get("thumb").and_then(|t| t.get("url")).and_then(|v| v.as_str()).map(normalize_thumb_url);
+        let title = dup
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let thumb = dup
+            .get("thumb")
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str())
+            .map(normalize_thumb_url);
         results.push(bem_match(page_url, title, thumb));
     }
 }
 
 /// Extract matches from `preview` array.
 fn extract_from_preview(serp: &Value, results: &mut Vec<ReverseMatch>, seen: &mut HashSet<String>) {
-    let Some(previews) = serp.get("preview").and_then(|v| v.as_array()) else { return };
+    let Some(previews) = serp.get("preview").and_then(|v| v.as_array()) else {
+        return;
+    };
     for preview in previews {
         let snippet = preview.get("snippet");
         let page_url = snippet
@@ -232,21 +247,40 @@ fn extract_from_preview(serp: &Value, results: &mut Vec<ReverseMatch>, seen: &mu
         if page_url.is_empty() || !seen.insert(page_url.to_owned()) {
             continue;
         }
-        let title = snippet.and_then(|s| s.get("title")).and_then(|v| v.as_str()).unwrap_or_default().to_owned();
-        let thumb = preview.get("thumb").and_then(|t| t.get("url")).and_then(|v| v.as_str()).map(normalize_thumb_url);
+        let title = snippet
+            .and_then(|s| s.get("title"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let thumb = preview
+            .get("thumb")
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str())
+            .map(normalize_thumb_url);
         results.push(bem_match(page_url, title, thumb));
     }
 }
 
 /// Extract matches from `small_dups` array.
-fn extract_from_small_dups(val: &Value, results: &mut Vec<ReverseMatch>, seen: &mut HashSet<String>) {
-    let Some(dups) = val.get("small_dups").and_then(|v| v.as_array()) else { return };
+fn extract_from_small_dups(
+    val: &Value,
+    results: &mut Vec<ReverseMatch>,
+    seen: &mut HashSet<String>,
+) {
+    let Some(dups) = val.get("small_dups").and_then(|v| v.as_array()) else {
+        return;
+    };
     for dup in dups {
         let page_url = dup.get("url").and_then(|v| v.as_str()).unwrap_or_default();
         if page_url.is_empty() || !seen.insert(page_url.to_owned()) {
             continue;
         }
-        let title = dup.get("title").or_else(|| dup.get("text")).and_then(|v| v.as_str()).unwrap_or_default().to_owned();
+        let title = dup
+            .get("title")
+            .or_else(|| dup.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_owned();
         results.push(bem_match(page_url, title, None));
     }
 }
@@ -262,7 +296,11 @@ fn html_unescape(s: &str) -> String {
 
 /// Normalize protocol-relative thumbnail URLs.
 fn normalize_thumb_url(url: &str) -> String {
-    if url.starts_with("//") { format!("https:{url}") } else { url.to_owned() }
+    if url.starts_with("//") {
+        format!("https:{url}")
+    } else {
+        url.to_owned()
+    }
 }
 
 #[cfg(test)]
@@ -272,7 +310,9 @@ mod tests {
     // --- Strategy 1: data-state tests ---
 
     fn make_data_state_html(json: &str) -> String {
-        format!(r#"<html><body><div class="Root" id="ImagesApp-1" data-state='{json}'></div></body></html>"#)
+        format!(
+            r#"<html><body><div class="Root" id="ImagesApp-1" data-state='{json}'></div></body></html>"#
+        )
     }
 
     #[test]
@@ -285,7 +325,10 @@ mod tests {
         assert_eq!(results[0].domain, "example.com");
         assert_eq!(results[0].description.as_deref(), Some("A page"));
         assert_eq!(results[0].image_size.as_deref(), Some("1920x1080"));
-        assert_eq!(results[0].thumbnail.as_deref(), Some("https://t.yandex.com/1.jpg"));
+        assert_eq!(
+            results[0].thumbnail.as_deref(),
+            Some("https://t.yandex.com/1.jpg")
+        );
     }
 
     #[test]
@@ -340,7 +383,10 @@ mod tests {
         assert_eq!(results[0].page_url, "https://example.com/page1");
         assert_eq!(results[0].title, "Page One");
         assert_eq!(results[0].domain, "example.com");
-        assert_eq!(results[0].thumbnail.as_deref(), Some("https://thumb.yandex.com/1.jpg"));
+        assert_eq!(
+            results[0].thumbnail.as_deref(),
+            Some("https://thumb.yandex.com/1.jpg")
+        );
         assert!(results[0].description.is_none());
         assert!(results[0].image_size.is_none());
     }
@@ -376,15 +422,25 @@ mod tests {
         // data-state="{&quot;initialState&quot;:...}"
         let html = r#"<html><body><div class="Root" id="ImagesApp-1" data-state="{&quot;initialState&quot;:{&quot;cbirSites&quot;:{&quot;sites&quot;:[{&quot;url&quot;:&quot;https://example.com/page&quot;,&quot;title&quot;:&quot;Test&quot;,&quot;domain&quot;:&quot;example.com&quot;}]}}}"></div></body></html>"#;
         let results = parse_yandex_html(html);
-        assert_eq!(results.len(), 1, "should parse HTML-entity-encoded data-state");
+        assert_eq!(
+            results.len(),
+            1,
+            "should parse HTML-entity-encoded data-state"
+        );
         assert_eq!(results[0].page_url, "https://example.com/page");
         assert_eq!(results[0].title, "Test");
     }
 
     #[test]
     fn normalize_thumb_protocol_relative() {
-        assert_eq!(normalize_thumb_url("//t.yandex.com/1.jpg"), "https://t.yandex.com/1.jpg");
-        assert_eq!(normalize_thumb_url("https://t.com/2.jpg"), "https://t.com/2.jpg");
+        assert_eq!(
+            normalize_thumb_url("//t.yandex.com/1.jpg"),
+            "https://t.yandex.com/1.jpg"
+        );
+        assert_eq!(
+            normalize_thumb_url("https://t.com/2.jpg"),
+            "https://t.com/2.jpg"
+        );
     }
 
     // --- Hard red tests ---
@@ -493,9 +549,14 @@ mod tests {
     fn many_results_no_panic() {
         let mut sites = Vec::new();
         for i in 0..100 {
-            sites.push(format!(r#"{{"url":"https://site{i}.com/p","title":"Site {i}","domain":"site{i}.com"}}"#));
+            sites.push(format!(
+                r#"{{"url":"https://site{i}.com/p","title":"Site {i}","domain":"site{i}.com"}}"#
+            ));
         }
-        let json = format!(r#"{{"initialState":{{"cbirSites":{{"sites":[{}]}}}}}}"#, sites.join(","));
+        let json = format!(
+            r#"{{"initialState":{{"cbirSites":{{"sites":[{}]}}}}}}"#,
+            sites.join(",")
+        );
         let results = parse_yandex_html(&make_data_state_html(&json));
         assert_eq!(results.len(), 100);
     }

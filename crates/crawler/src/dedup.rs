@@ -128,10 +128,7 @@ pub fn is_cycle(url: &str) -> bool {
         Err(_) => return false,
     };
 
-    let segments: Vec<&str> = path
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
     if segments.len() < 4 {
         return false;
@@ -143,9 +140,7 @@ pub fn is_cycle(url: &str) -> bool {
             continue;
         }
         let pattern = &segments[..pattern_len];
-        let repeats = segments
-            .chunks(pattern_len)
-            .all(|chunk| chunk == pattern);
+        let repeats = segments.chunks(pattern_len).all(|chunk| chunk == pattern);
         if repeats && segments.len() / pattern_len >= 2 {
             return true;
         }

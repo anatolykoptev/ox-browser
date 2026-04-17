@@ -2,9 +2,9 @@
 //! WebMCP tools, and public API detection.
 
 pub mod public_api;
-pub mod webmcp;
 #[cfg(test)]
 mod tests;
+pub mod webmcp;
 
 use dom_query::Document;
 use regex::Regex;
@@ -48,11 +48,11 @@ fn extract_axios_endpoints(script: &str) -> Vec<ApiEndpoint> {
     re.captures_iter(script)
         .map(|cap| {
             let method = match cap[1].to_lowercase().as_str() {
-                "post"   => "POST",
-                "put"    => "PUT",
+                "post" => "POST",
+                "put" => "PUT",
                 "delete" => "DELETE",
-                "patch"  => "PATCH",
-                _        => "GET",
+                "patch" => "PATCH",
+                _ => "GET",
             };
             ApiEndpoint {
                 url: cap[2].to_string(),
@@ -102,7 +102,11 @@ pub fn analyze(html: &str) -> ApiReport {
         .iter()
         .filter_map(|n| {
             let action = n.attr("action")?.to_string();
-            if action.is_empty() || action == "#" { None } else { Some(action) }
+            if action.is_empty() || action == "#" {
+                None
+            } else {
+                Some(action)
+            }
         })
         .collect();
 

@@ -54,10 +54,17 @@ mod tests {
     #[test]
     fn format_tweet_output() {
         let t = Tweet {
-            id: "1".into(), text: "Hello world".into(),
-            author_id: "2".into(), author_name: "Test".into(),
-            author_screen_name: "test".into(), created_at: "2026-03-24".into(),
-            likes: 42, retweets: 10, quotes: 3, replies: 5, views: 1000,
+            id: "1".into(),
+            text: "Hello world".into(),
+            author_id: "2".into(),
+            author_name: "Test".into(),
+            author_screen_name: "test".into(),
+            created_at: "2026-03-24".into(),
+            likes: 42,
+            retweets: 10,
+            quotes: 3,
+            replies: 5,
+            views: 1000,
         };
         let out = format_tweet(&t);
         assert!(out.contains("@test"));
@@ -68,10 +75,15 @@ mod tests {
     #[test]
     fn format_profile_output() {
         let p = UserProfile {
-            id: "1".into(), name: "Test User".into(),
-            screen_name: "test".into(), bio: "A bio".into(),
-            followers: 1000, following: 100, tweet_count: 5000,
-            verified: true, recent_tweets: vec![],
+            id: "1".into(),
+            name: "Test User".into(),
+            screen_name: "test".into(),
+            bio: "A bio".into(),
+            followers: 1000,
+            following: 100,
+            tweet_count: 5000,
+            verified: true,
+            recent_tweets: vec![],
         };
         let out = format_profile(&p);
         assert!(out.contains("@test · Test User"));

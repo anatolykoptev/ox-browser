@@ -13,7 +13,11 @@ fn build_output_populates_all_fields() {
         og_image: String::new(),
         meta: crate::content::ArticleMeta::default(),
     };
-    let params = ReadParams { url: "https://x.com".into(), format: "text".into(), max_length: 0 };
+    let params = ReadParams {
+        url: "https://x.com".into(),
+        format: "text".into(),
+        max_length: 0,
+    };
     let out = build_output(ext, &params, "direct", 42);
     assert_eq!(out.title, "T");
     assert_eq!(out.url, "https://x.com");
@@ -46,7 +50,11 @@ fn truncation_applied_when_max_length_set() {
         og_image: String::new(),
         meta: crate::content::ArticleMeta::default(),
     };
-    let params = ReadParams { url: "https://x.com".into(), format: "text".into(), max_length: 50 };
+    let params = ReadParams {
+        url: "https://x.com".into(),
+        format: "text".into(),
+        max_length: 50,
+    };
     let out = build_output(ext, &params, "direct", 0);
     assert!(out.content.len() <= 55);
 }

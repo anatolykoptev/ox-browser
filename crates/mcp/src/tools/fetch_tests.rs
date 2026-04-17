@@ -69,8 +69,7 @@ fn fetch_result_skips_none_cf_type() {
     assert!(!obj.contains_key("cf_type"));
     assert!(!obj.contains_key("error"));
     assert_eq!(json["status"], 200);
-    let _: HashMap<String, String> =
-        serde_json::from_value(json["headers"].clone()).unwrap();
+    let _: HashMap<String, String> = serde_json::from_value(json["headers"].clone()).unwrap();
 }
 
 // ── FetchSmartResult serialization ───────────────────────────────────────────
@@ -167,13 +166,11 @@ mod smart_result {
 fn default_true_via_serde_default() {
     // Verify the serde(default = "default_true") path indirectly: omitting the
     // field in JSON produces true.
-    let input: FetchSmartInput =
-        serde_json::from_str(r#"{"url":"https://x.com"}"#).unwrap();
+    let input: FetchSmartInput = serde_json::from_str(r#"{"url":"https://x.com"}"#).unwrap();
     assert!(input.save_to_file);
 
     // Explicit false overrides the default.
     let input2: FetchSmartInput =
-        serde_json::from_str(r#"{"url":"https://x.com","save_to_file":false}"#)
-            .unwrap();
+        serde_json::from_str(r#"{"url":"https://x.com","save_to_file":false}"#).unwrap();
     assert!(!input2.save_to_file);
 }

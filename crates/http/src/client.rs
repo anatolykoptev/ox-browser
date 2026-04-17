@@ -3,13 +3,13 @@ use std::sync::Arc;
 use wreq::Client;
 
 use crate::handler_reqwest::WreqHandler;
-use crate::middleware::{chain, Handler, MiddlewareFn, Request};
+use crate::middleware::{Handler, MiddlewareFn, Request, chain};
 use crate::middleware_cloudflare::cloudflare_detect_middleware;
 use crate::middleware_hints::client_hints_middleware;
 use crate::middleware_logging::logging_middleware;
 use crate::middleware_ratelimit::rate_limit_middleware;
-use crate::middleware_retry::retry_middleware;
 use crate::middleware_residential::residential_proxy_middleware;
+use crate::middleware_retry::retry_middleware;
 use crate::middleware_solver::solver_middleware;
 use crate::middleware_ssrf::ssrf_middleware;
 use crate::profile_hints::browser_headers;
@@ -113,12 +113,7 @@ impl HttpClient {
     }
 
     /// Execute a POST request with a text body and content type.
-    pub async fn post(
-        &self,
-        url: &str,
-        body: &str,
-        content_type: &str,
-    ) -> Result<HttpResponse> {
+    pub async fn post(&self, url: &str, body: &str, content_type: &str) -> Result<HttpResponse> {
         let req = self.build_request(
             "POST",
             url,
@@ -169,8 +164,8 @@ impl HttpClient {
 
         // Static proxy (proxy_pool is handled per-request in WreqHandler).
         if let Some(ref proxy_url) = config.proxy_url {
-            let proxy = wreq::Proxy::all(proxy_url)
-                .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+            let proxy =
+                wreq::Proxy::all(proxy_url).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
             builder = builder.proxy(proxy);
         }
 

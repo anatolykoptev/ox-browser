@@ -1,24 +1,24 @@
-pub mod types;
-pub mod url;
-pub mod fxtwitter;
-pub mod graphql;
-pub mod request;
-pub(crate) mod request_vars;
-pub mod parser;
-pub mod social;
 pub mod client;
 pub mod format;
+pub mod fxtwitter;
+pub mod graphql;
+pub mod parser;
+pub mod request;
+pub(crate) mod request_vars;
+pub mod social;
+pub mod types;
+pub mod url;
 
 pub(crate) mod tw_http;
-mod xtid_cubic;
-mod xtid_parser;
 pub(crate) mod xtid;
+mod xtid_cubic;
 pub(crate) mod xtid_manager;
+mod xtid_parser;
 
+pub use client::{fetch_profile, fetch_tweet};
+pub use format::{format_profile, format_tweet};
 pub use types::{Tweet, UserProfile};
-pub use url::{parse as parse_url, TwitterUrl};
-pub use client::{fetch_tweet, fetch_profile};
-pub use format::{format_tweet, format_profile};
+pub use url::{TwitterUrl, parse as parse_url};
 
 /// Shared Chrome UA for all Twitter API requests.
 pub const TWITTER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";

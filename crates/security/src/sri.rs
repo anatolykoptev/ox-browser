@@ -66,7 +66,10 @@ fn is_cross_origin(resource_url: &str, page_url: &str) -> bool {
         return false;
     }
 
-    match (registrable_domain(&res_host), registrable_domain(&page_host)) {
+    match (
+        registrable_domain(&res_host),
+        registrable_domain(&page_host),
+    ) {
         (Some(r), Some(p)) => r != p,
         _ => true,
     }
@@ -150,7 +153,11 @@ pub fn analyze_sri(html: &str, page_url: &str) -> SriReport {
 
     let total_ext = ext_scripts + ext_styles;
     let total_sri = sri_scripts + sri_styles;
-    let coverage_percent = if total_ext == 0 { 0.0 } else { (total_sri as f32 / total_ext as f32) * 100.0 };
+    let coverage_percent = if total_ext == 0 {
+        0.0
+    } else {
+        (total_sri as f32 / total_ext as f32) * 100.0
+    };
 
     let score_modifier = if total_ext == 0 {
         0
@@ -189,7 +196,8 @@ mod tests {
 
     #[test]
     fn test_all_scripts_have_sri() {
-        let html = r#"<script src="https://cdn.otherdomain.com/app.js" integrity="sha256-abc"></script>"#;
+        let html =
+            r#"<script src="https://cdn.otherdomain.com/app.js" integrity="sha256-abc"></script>"#;
         let r = analyze_sri(html, PAGE);
         assert_eq!(r.total_external_scripts, 1);
         assert_eq!(r.scripts_with_integrity, 1);
@@ -265,7 +273,15 @@ mod tests {
         assert_eq!(r.total_external_scripts, 4);
         // Should be 2 findings (one per domain), not 4
         assert_eq!(r.findings.len(), 2);
-        assert!(r.findings.iter().any(|f| f.description.contains("other.com") && f.description.contains("3")));
-        assert!(r.findings.iter().any(|f| f.description.contains("third.com")));
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| f.description.contains("other.com") && f.description.contains("3"))
+        );
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| f.description.contains("third.com"))
+        );
     }
 }

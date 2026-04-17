@@ -3,12 +3,10 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
-use ox_reverse::{
-    GoogleLens, ReverseEngine, ReverseResult, ReverseSearchEngine, YandexImages,
-};
+use ox_reverse::{GoogleLens, ReverseEngine, ReverseResult, ReverseSearchEngine, YandexImages};
 use serde::Deserialize;
 
 use super::AppState;

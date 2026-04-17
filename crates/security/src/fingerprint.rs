@@ -1,8 +1,8 @@
 //! Wappalyzer-compatible technology fingerprinting.
 
-use std::collections::HashMap;
-use serde::Deserialize;
 use regex::RegexBuilder;
+use serde::Deserialize;
+use std::collections::HashMap;
 
 const DB_JSON: &str = include_str!("fingerprints.json");
 
@@ -40,8 +40,8 @@ pub struct Fingerprinter {
 impl Fingerprinter {
     /// Load the embedded fingerprint database.
     pub fn new() -> Self {
-        let db: FingerprintDB = serde_json::from_str(DB_JSON)
-            .expect("embedded fingerprints.json is valid");
+        let db: FingerprintDB =
+            serde_json::from_str(DB_JSON).expect("embedded fingerprints.json is valid");
         Self { db }
     }
 
@@ -78,7 +78,9 @@ impl Fingerprinter {
             for (hdr_name, hdr_pattern) in &def.headers {
                 let hdr_lower = hdr_name.to_lowercase();
                 if let Some(val) = headers.get(&hdr_lower) {
-                    if hdr_pattern.is_empty() || val.to_lowercase().contains(&hdr_pattern.to_lowercase()) {
+                    if hdr_pattern.is_empty()
+                        || val.to_lowercase().contains(&hdr_pattern.to_lowercase())
+                    {
                         confidence = confidence.saturating_add(50);
                         break;
                     }
@@ -88,7 +90,10 @@ impl Fingerprinter {
             // Match meta tags.
             for (meta_name, meta_pattern) in &def.meta {
                 if let Some(content) = meta_tags.get(&meta_name.to_lowercase()) {
-                    if content.to_lowercase().contains(&meta_pattern.to_lowercase()) {
+                    if content
+                        .to_lowercase()
+                        .contains(&meta_pattern.to_lowercase())
+                    {
                         confidence = confidence.saturating_add(25);
                         break;
                     }
@@ -105,12 +110,16 @@ impl Fingerprinter {
                         }
                     }
                 }
-                if confidence > 0 { break; }
+                if confidence > 0 {
+                    break;
+                }
             }
 
             if confidence > 0 {
                 let cat_id = def.cats.first().copied().unwrap_or(0).to_string();
-                let category = self.db.categories
+                let category = self
+                    .db
+                    .categories
                     .get(&cat_id)
                     .cloned()
                     .unwrap_or_else(|| "Other".into());
@@ -128,22 +137,32 @@ impl Fingerprinter {
 }
 
 impl Default for Fingerprinter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn empty_headers() -> HashMap<String, String> { HashMap::new() }
-    fn empty_meta() -> HashMap<String, String> { HashMap::new() }
+    fn empty_headers() -> HashMap<String, String> {
+        HashMap::new()
+    }
+    fn empty_meta() -> HashMap<String, String> {
+        HashMap::new()
+    }
 
     #[test]
     fn detect_react_from_html() {
         let fp = Fingerprinter::new();
         let html = r#"<div id="root" data-reactroot="">Hello</div>"#;
         let results = fp.detect(&empty_headers(), html, &empty_meta(), &[]);
-        assert!(results.iter().any(|d| d.name == "React"), "expected React, got: {:?}", results);
+        assert!(
+            results.iter().any(|d| d.name == "React"),
+            "expected React, got: {:?}",
+            results
+        );
     }
 
     #[test]
@@ -151,7 +170,11 @@ mod tests {
         let fp = Fingerprinter::new();
         let html = r#"<script id="__NEXT_DATA__" type="application/json">{}</script>"#;
         let results = fp.detect(&empty_headers(), html, &empty_meta(), &[]);
-        assert!(results.iter().any(|d| d.name == "Next.js"), "expected Next.js, got: {:?}", results);
+        assert!(
+            results.iter().any(|d| d.name == "Next.js"),
+            "expected Next.js, got: {:?}",
+            results
+        );
     }
 
     #[test]
@@ -160,7 +183,11 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("server".into(), "nginx/1.25.3".into());
         let results = fp.detect(&headers, "", &empty_meta(), &[]);
-        assert!(results.iter().any(|d| d.name == "nginx"), "expected nginx, got: {:?}", results);
+        assert!(
+            results.iter().any(|d| d.name == "nginx"),
+            "expected nginx, got: {:?}",
+            results
+        );
     }
 
     #[test]
@@ -169,7 +196,11 @@ mod tests {
         let mut headers = HashMap::new();
         headers.insert("cf-ray".into(), "abc123".into());
         let results = fp.detect(&headers, "", &empty_meta(), &[]);
-        assert!(results.iter().any(|d| d.name == "Cloudflare"), "expected Cloudflare, got: {:?}", results);
+        assert!(
+            results.iter().any(|d| d.name == "Cloudflare"),
+            "expected Cloudflare, got: {:?}",
+            results
+        );
     }
 
     #[test]
@@ -178,7 +209,11 @@ mod tests {
         let mut meta = HashMap::new();
         meta.insert("generator".into(), "WordPress 6.5".into());
         let results = fp.detect(&empty_headers(), "", &meta, &[]);
-        assert!(results.iter().any(|d| d.name == "WordPress"), "expected WordPress, got: {:?}", results);
+        assert!(
+            results.iter().any(|d| d.name == "WordPress"),
+            "expected WordPress, got: {:?}",
+            results
+        );
     }
 
     #[test]
@@ -186,7 +221,11 @@ mod tests {
         let fp = Fingerprinter::new();
         let scripts = vec!["https://cdn.example.com/jquery-3.7.1.min.js".into()];
         let results = fp.detect(&empty_headers(), "", &empty_meta(), &scripts);
-        assert!(results.iter().any(|d| d.name == "jQuery"), "expected jQuery, got: {:?}", results);
+        assert!(
+            results.iter().any(|d| d.name == "jQuery"),
+            "expected jQuery, got: {:?}",
+            results
+        );
     }
 
     #[test]
@@ -199,7 +238,8 @@ mod tests {
     #[test]
     fn multiple_techs_detected() {
         let fp = Fingerprinter::new();
-        let html = r#"<div data-reactroot=""><script src="/_next/static/chunks/main.js"></script></div>"#;
+        let html =
+            r#"<div data-reactroot=""><script src="/_next/static/chunks/main.js"></script></div>"#;
         let mut headers = HashMap::new();
         headers.insert("server".into(), "nginx".into());
         let results = fp.detect(&headers, html, &empty_meta(), &[]);

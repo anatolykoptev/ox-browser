@@ -1,6 +1,6 @@
 use ox_http::{
-    browser_headers, client_hints_headers, platform_matched_profile, random_profile,
-    BrowserProfile, ProfileFilter, BUILTIN_PROFILES,
+    BUILTIN_PROFILES, BrowserProfile, ProfileFilter, browser_headers, client_hints_headers,
+    platform_matched_profile, random_profile,
 };
 
 #[test]

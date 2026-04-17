@@ -1,7 +1,7 @@
 //! Hard red tests for Cloudflare detection — edge cases, false positives,
 //! priority conflicts, header combinations, and boundary conditions.
 
-use ox_http::{detect_cloudflare, ChallengeType, HttpResponse};
+use ox_http::{ChallengeType, HttpResponse, detect_cloudflare};
 use wreq::header::HeaderMap;
 
 // --- Helpers ---
@@ -155,10 +155,7 @@ fn cf_mitigated_header_takes_priority_over_body() {
     let r = resp(
         200,
         "<html><div class=\"cf-turnstile\"></div></html>",
-        vec![
-            ("server", "cloudflare"),
-            ("cf-mitigated", "challenge"),
-        ],
+        vec![("server", "cloudflare"), ("cf-mitigated", "challenge")],
     );
     let cf = detect_cloudflare(&r).unwrap();
     // Header check comes first → ManagedChallenge, not Turnstile
@@ -222,10 +219,7 @@ fn cf_mitigated_non_challenge_value() {
     let r = resp(
         200,
         "<html>ok</html>",
-        vec![
-            ("server", "cloudflare"),
-            ("cf-mitigated", "captcha"),
-        ],
+        vec![("server", "cloudflare"), ("cf-mitigated", "captcha")],
     );
     assert!(detect_cloudflare(&r).is_none());
 }

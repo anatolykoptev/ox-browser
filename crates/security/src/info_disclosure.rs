@@ -21,19 +21,54 @@ pub struct InfoDisclosureFinding {
 }
 
 const FORBIDDEN_HEADERS: &[(&str, Severity, &str)] = &[
-    ("x-powered-by", Severity::Medium, "Exposes server technology"),
-    ("x-aspnet-version", Severity::Medium, "Exposes ASP.NET version"),
-    ("x-aspnetmvc-version", Severity::Medium, "Exposes ASP.NET MVC version"),
+    (
+        "x-powered-by",
+        Severity::Medium,
+        "Exposes server technology",
+    ),
+    (
+        "x-aspnet-version",
+        Severity::Medium,
+        "Exposes ASP.NET version",
+    ),
+    (
+        "x-aspnetmvc-version",
+        Severity::Medium,
+        "Exposes ASP.NET MVC version",
+    ),
     ("x-generator", Severity::Medium, "Exposes site generator"),
-    ("x-backend-server", Severity::High, "Exposes internal backend hostname"),
-    ("x-debug-token", Severity::High, "Debug token exposed in production"),
-    ("x-debug-token-link", Severity::High, "Debug profiler link exposed in production"),
-    ("x-chromelogger-data", Severity::High, "ChromeLogger debug data exposed"),
-    ("x-runtime", Severity::Low, "Exposes server-side timing information"),
+    (
+        "x-backend-server",
+        Severity::High,
+        "Exposes internal backend hostname",
+    ),
+    (
+        "x-debug-token",
+        Severity::High,
+        "Debug token exposed in production",
+    ),
+    (
+        "x-debug-token-link",
+        Severity::High,
+        "Debug profiler link exposed in production",
+    ),
+    (
+        "x-chromelogger-data",
+        Severity::High,
+        "ChromeLogger debug data exposed",
+    ),
+    (
+        "x-runtime",
+        Severity::Low,
+        "Exposes server-side timing information",
+    ),
 ];
 
 const DEPRECATED_HEADERS: &[(&str, &str)] = &[
-    ("public-key-pins", "HPKP deprecated, no longer supported by browsers"),
+    (
+        "public-key-pins",
+        "HPKP deprecated, no longer supported by browsers",
+    ),
     ("expect-ct", "Expect-CT deprecated since Chrome 107"),
 ];
 
@@ -49,7 +84,10 @@ fn severity_penalty(sev: Severity) -> i32 {
 
 fn server_has_version(value: &str) -> bool {
     if let Some(pos) = value.find('/') {
-        value[pos + 1..].chars().next().is_some_and(|c| c.is_ascii_digit())
+        value[pos + 1..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
     } else {
         false
     }
@@ -98,7 +136,10 @@ pub fn analyze_info_disclosure(headers: &HashMap<String, String>) -> InfoDisclos
     let raw: i32 = findings.iter().map(|f| severity_penalty(f.severity)).sum();
     let score_modifier = raw.max(-30);
 
-    InfoDisclosureReport { findings, score_modifier }
+    InfoDisclosureReport {
+        findings,
+        score_modifier,
+    }
 }
 
 #[cfg(test)]
@@ -106,7 +147,10 @@ mod tests {
     use super::*;
 
     fn h(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]

@@ -18,5 +18,5 @@ pub mod types;
 pub mod vuln_js;
 
 // Re-export main entry point.
-pub use scoring::{analyze_security, SecurityReport};
+pub use scoring::{SecurityReport, analyze_security};
 pub use types::ScanMode;

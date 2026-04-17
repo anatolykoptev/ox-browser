@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use serde::Deserialize;
 
 use crate::AppState;
@@ -48,7 +48,11 @@ pub async fn security_scan(
         .collect();
 
     let report = ox_security::analyze_security(
-        &req.url, &headers, &set_cookie_headers, &resp.body, req.mode,
+        &req.url,
+        &headers,
+        &set_cookie_headers,
+        &resp.body,
+        req.mode,
     );
 
     let json = serde_json::to_value(&report).unwrap_or_default();

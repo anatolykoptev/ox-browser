@@ -1,8 +1,8 @@
 //! MCP tool: chrome_interact — headless Chrome page interaction via go-browser proxy.
 
+use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 use rmcp::schemars::{self, JsonSchema};
-use rmcp::ErrorData as McpError;
 use serde::{Deserialize, Serialize};
 
 use super::OxMcpServer;
@@ -130,9 +130,8 @@ impl OxMcpServer {
         &self,
         input: ChromeInteractInput,
     ) -> Result<CallToolResult, McpError> {
-        let body = serde_json::to_value(&input).map_err(|e| {
-            McpError::internal_error(format!("serialize: {e}"), None)
-        })?;
+        let body = serde_json::to_value(&input)
+            .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
         let (_, resp) = self
             .gobrowser_proxy
             .forward("/chrome/interact", &body)

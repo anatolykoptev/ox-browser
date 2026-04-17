@@ -55,10 +55,15 @@ impl Handler for QualityCheckHandler {
         // 200 but low-quality content → likely anti-bot stub page.
         // Quick heuristic: large body (>5KB) with very little visible text.
         // Skip for JSON responses — they have no HTML tags by design.
-        let first_non_ws = resp.body.as_bytes().iter().find(|b| !b.is_ascii_whitespace());
+        let first_non_ws = resp
+            .body
+            .as_bytes()
+            .iter()
+            .find(|b| !b.is_ascii_whitespace());
         let is_json = matches!(first_non_ws, Some(b'{') | Some(b'['));
         if resp.status == 200 && resp.body.len() > 5_000 && !is_json {
-            let visible: usize = resp.body
+            let visible: usize = resp
+                .body
                 .split('<')
                 .filter_map(|s| s.split_once('>').map(|(_, after)| after))
                 .map(|text| text.chars().filter(|c| !c.is_whitespace()).count())
@@ -134,7 +139,10 @@ mod tests {
         });
         let handler = chain(vec![quality_check_middleware()], base);
         let err = handler.handle(test_req()).await.unwrap_err();
-        assert!(matches!(err, HttpError::Cloudflare(ChallengeType::JsChallenge, 403, _)));
+        assert!(matches!(
+            err,
+            HttpError::Cloudflare(ChallengeType::JsChallenge, 403, _)
+        ));
     }
 
     #[tokio::test]
@@ -145,7 +153,10 @@ mod tests {
         });
         let handler = chain(vec![quality_check_middleware()], base);
         let err = handler.handle(test_req()).await.unwrap_err();
-        assert!(matches!(err, HttpError::Cloudflare(ChallengeType::JsChallenge, 503, _)));
+        assert!(matches!(
+            err,
+            HttpError::Cloudflare(ChallengeType::JsChallenge, 503, _)
+        ));
     }
 
     #[tokio::test]
@@ -165,15 +176,18 @@ mod tests {
         // Pad with attribute noise (no actual text nodes outside tags).
         let attrs = format!(" data-x='{}'", "a".repeat(100));
         let divs: String = (0..60).map(|_| format!("<div{}></div>", attrs)).collect();
-        let body = format!("<html><head><meta charset='utf-8'/></head><body>{}</body></html>", divs);
+        let body = format!(
+            "<html><head><meta charset='utf-8'/></head><body>{}</body></html>",
+            divs
+        );
         assert!(body.len() > 5_000);
-        let base: Arc<dyn Handler> = Arc::new(FixedHandler {
-            status: 200,
-            body,
-        });
+        let base: Arc<dyn Handler> = Arc::new(FixedHandler { status: 200, body });
         let handler = chain(vec![quality_check_middleware()], base);
         let err = handler.handle(test_req()).await.unwrap_err();
-        assert!(matches!(err, HttpError::Cloudflare(ChallengeType::JsChallenge, 200, _)));
+        assert!(matches!(
+            err,
+            HttpError::Cloudflare(ChallengeType::JsChallenge, 200, _)
+        ));
     }
 
     #[tokio::test]
@@ -183,10 +197,7 @@ mod tests {
             "<html><body><p>{}</p></body></html>",
             "This is real content with lots of words. ".repeat(50)
         );
-        let base: Arc<dyn Handler> = Arc::new(FixedHandler {
-            status: 200,
-            body,
-        });
+        let base: Arc<dyn Handler> = Arc::new(FixedHandler { status: 200, body });
         let handler = chain(vec![quality_check_middleware()], base);
         let resp = handler.handle(test_req()).await.unwrap();
         assert_eq!(resp.status, 200);
@@ -195,14 +206,18 @@ mod tests {
     #[tokio::test]
     async fn passes_large_json_response() {
         // Large JSON (e.g. Reddit API) should not trigger quality check
-        let body = format!(r#"{{"data":{{"children":[{}]}}}}"#,
-            (0..200).map(|i| format!(r#"{{"data":{{"title":"post{i}","body":"{}"}}}}"#, "x".repeat(30))).collect::<Vec<_>>().join(",")
+        let body = format!(
+            r#"{{"data":{{"children":[{}]}}}}"#,
+            (0..200)
+                .map(|i| format!(
+                    r#"{{"data":{{"title":"post{i}","body":"{}"}}}}"#,
+                    "x".repeat(30)
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
         );
         assert!(body.len() > 5_000);
-        let base: Arc<dyn Handler> = Arc::new(FixedHandler {
-            status: 200,
-            body,
-        });
+        let base: Arc<dyn Handler> = Arc::new(FixedHandler { status: 200, body });
         let handler = chain(vec![quality_check_middleware()], base);
         let resp = handler.handle(test_req()).await.unwrap();
         assert_eq!(resp.status, 200);

@@ -204,7 +204,10 @@ mod tests {
     fn challenge_type_display() {
         assert_eq!(ChallengeType::JsChallenge.to_string(), "js_challenge");
         assert_eq!(ChallengeType::Turnstile.to_string(), "managed_challenge");
-        assert_eq!(ChallengeType::ManagedChallenge.to_string(), "managed_challenge_200");
+        assert_eq!(
+            ChallengeType::ManagedChallenge.to_string(),
+            "managed_challenge_200"
+        );
         assert_eq!(ChallengeType::Block.to_string(), "block");
     }
 
@@ -272,7 +275,11 @@ mod tests {
 
     #[test]
     fn ignores_normal_200_from_cloudflare() {
-        let resp = cf_response(200, "<html><body>Normal page content</body></html>", "cloudflare");
+        let resp = cf_response(
+            200,
+            "<html><body>Normal page content</body></html>",
+            "cloudflare",
+        );
         assert!(detect_cloudflare(&resp).is_none());
     }
 
@@ -292,6 +299,9 @@ mod tests {
 
     #[test]
     fn managed_challenge_display() {
-        assert_eq!(ChallengeType::ManagedChallenge.to_string(), "managed_challenge_200");
+        assert_eq!(
+            ChallengeType::ManagedChallenge.to_string(),
+            "managed_challenge_200"
+        );
     }
 }

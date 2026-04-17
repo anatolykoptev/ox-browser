@@ -136,8 +136,8 @@ impl CookieProvider for ByparrSolver {
             max_timeout: self.config.timeout.as_millis() as u64,
         };
 
-        let json_body = serde_json::to_string(&body)
-            .map_err(|e| format!("byparr serialize failed: {e}"))?;
+        let json_body =
+            serde_json::to_string(&body).map_err(|e| format!("byparr serialize failed: {e}"))?;
 
         let resp = self
             .client
@@ -163,9 +163,7 @@ impl CookieProvider for ByparrSolver {
             return Err(format!("byparr solver error: {msg}"));
         }
 
-        let solution = parsed
-            .solution
-            .ok_or("byparr response missing solution")?;
+        let solution = parsed.solution.ok_or("byparr response missing solution")?;
 
         let cookies: HashMap<String, String> = solution
             .cookies

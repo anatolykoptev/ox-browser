@@ -11,8 +11,16 @@ pub enum TwitterUrl {
 
 /// Non-profile top-level paths to skip.
 const SKIP_PATHS: &[&str] = &[
-    "settings", "home", "explore", "search", "notifications",
-    "messages", "i", "login", "logout", "signup",
+    "settings",
+    "home",
+    "explore",
+    "search",
+    "notifications",
+    "messages",
+    "i",
+    "login",
+    "logout",
+    "signup",
 ];
 
 /// Parse a URL. Returns `Some(TwitterUrl)` if it's a twitter.com/x.com URL, `None` otherwise.
@@ -23,9 +31,7 @@ pub fn parse(raw: &str) -> Option<TwitterUrl> {
         return None;
     }
 
-    let segments: Vec<&str> = url.path_segments()?
-        .filter(|s| !s.is_empty())
-        .collect();
+    let segments: Vec<&str> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
 
     // /user/status/{id} → Tweet
     if segments.len() >= 3 && segments[1] == "status" {

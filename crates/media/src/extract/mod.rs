@@ -8,8 +8,8 @@ pub(crate) mod helpers;
 mod image;
 mod video;
 
-use std::collections::HashSet;
 use dom_query::Document;
+use std::collections::HashSet;
 use url::Url;
 
 /// Shared context for all extraction methods.
@@ -23,7 +23,13 @@ pub(crate) struct ExtractContext<'a> {
 
 impl<'a> ExtractContext<'a> {
     fn new(doc: &'a Document, base_url: &'a str, base: &'a Option<Url>) -> Self {
-        Self { doc, base_url, base, seen: HashSet::new(), results: Vec::new() }
+        Self {
+            doc,
+            base_url,
+            base,
+            seen: HashSet::new(),
+            results: Vec::new(),
+        }
     }
 }
 
@@ -61,7 +67,14 @@ pub fn extract_media(html: &str, base_url: &str) -> Vec<ExtractedMedia> {
 
 /// Create a video `ExtractedMedia` with default dimensions.
 pub(crate) fn video_media(url: String, title: String, source: &str) -> ExtractedMedia {
-    ExtractedMedia { url, title, width: 0, height: 0, media_kind: MediaKind::Video, source: source.to_string() }
+    ExtractedMedia {
+        url,
+        title,
+        width: 0,
+        height: 0,
+        media_kind: MediaKind::Video,
+        source: source.to_string(),
+    }
 }
 
 /// Resolve a potentially relative URL against a base.

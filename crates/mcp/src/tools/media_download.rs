@@ -1,7 +1,7 @@
 //! MCP tool: media_download
 
-use rmcp::model::*;
 use rmcp::ErrorData as McpError;
+use rmcp::model::*;
 use serde::Deserialize;
 
 use rmcp::schemars;
@@ -51,8 +51,8 @@ impl OxMcpServer {
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        let json = serde_json::to_string(&result)
-            .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
+        let json =
+            serde_json::to_string(&result).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 }

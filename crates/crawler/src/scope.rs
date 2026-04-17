@@ -36,13 +36,10 @@ impl CrawlScope {
                     && !candidate_domain.is_empty()
                     && origin_domain == candidate_domain
             }
-            Self::SameHost => {
-                origin.host_str() == candidate.host_str()
-            }
+            Self::SameHost => origin.host_str() == candidate.host_str(),
             Self::Custom { allow, block } => {
                 let s = candidate.as_str();
-                let matched_allow = allow.is_empty()
-                    || allow.iter().any(|r| r.is_match(s));
+                let matched_allow = allow.is_empty() || allow.iter().any(|r| r.is_match(s));
                 let matched_block = block.iter().any(|r| r.is_match(s));
                 matched_allow && !matched_block
             }
@@ -79,32 +76,17 @@ mod tests {
     fn same_domain_allows_subdomains() {
         let scope = CrawlScope::SameDomain;
         let origin = parse("https://www.example.com/page");
-        assert!(scope.is_allowed(
-            &origin,
-            &parse("https://blog.example.com/post"),
-        ));
-        assert!(scope.is_allowed(
-            &origin,
-            &parse("https://example.com/"),
-        ));
-        assert!(!scope.is_allowed(
-            &origin,
-            &parse("https://other.com/"),
-        ));
+        assert!(scope.is_allowed(&origin, &parse("https://blog.example.com/post"),));
+        assert!(scope.is_allowed(&origin, &parse("https://example.com/"),));
+        assert!(!scope.is_allowed(&origin, &parse("https://other.com/"),));
     }
 
     #[test]
     fn same_host_strict() {
         let scope = CrawlScope::SameHost;
         let origin = parse("https://www.example.com/");
-        assert!(scope.is_allowed(
-            &origin,
-            &parse("https://www.example.com/about"),
-        ));
-        assert!(!scope.is_allowed(
-            &origin,
-            &parse("https://blog.example.com/"),
-        ));
+        assert!(scope.is_allowed(&origin, &parse("https://www.example.com/about"),));
+        assert!(!scope.is_allowed(&origin, &parse("https://blog.example.com/"),));
     }
 
     #[test]
@@ -114,14 +96,8 @@ mod tests {
             block: vec![],
         };
         let origin = parse("https://example.com/");
-        assert!(scope.is_allowed(
-            &origin,
-            &parse("https://docs.example.com/guide"),
-        ));
-        assert!(!scope.is_allowed(
-            &origin,
-            &parse("https://blog.example.com/"),
-        ));
+        assert!(scope.is_allowed(&origin, &parse("https://docs.example.com/guide"),));
+        assert!(!scope.is_allowed(&origin, &parse("https://blog.example.com/"),));
     }
 
     #[test]
@@ -131,14 +107,8 @@ mod tests {
             block: vec![Regex::new(r"/admin").unwrap()],
         };
         let origin = parse("https://example.com/");
-        assert!(scope.is_allowed(
-            &origin,
-            &parse("https://example.com/page"),
-        ));
-        assert!(!scope.is_allowed(
-            &origin,
-            &parse("https://example.com/admin/settings"),
-        ));
+        assert!(scope.is_allowed(&origin, &parse("https://example.com/page"),));
+        assert!(!scope.is_allowed(&origin, &parse("https://example.com/admin/settings"),));
     }
 
     #[test]
@@ -148,17 +118,8 @@ mod tests {
             block: vec![Regex::new(r"/private").unwrap()],
         };
         let origin = parse("https://example.com/");
-        assert!(scope.is_allowed(
-            &origin,
-            &parse("https://example.com/public"),
-        ));
-        assert!(!scope.is_allowed(
-            &origin,
-            &parse("https://example.com/private/data"),
-        ));
-        assert!(!scope.is_allowed(
-            &origin,
-            &parse("https://other.com/page"),
-        ));
+        assert!(scope.is_allowed(&origin, &parse("https://example.com/public"),));
+        assert!(!scope.is_allowed(&origin, &parse("https://example.com/private/data"),));
+        assert!(!scope.is_allowed(&origin, &parse("https://other.com/page"),));
     }
 }

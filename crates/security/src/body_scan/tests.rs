@@ -105,7 +105,11 @@ fn test_no_xss_in_clean_html() {
 fn test_xss_multiple_handlers() {
     let html = r#"<div onclick="a()" onmouseover="b()"><img onerror="c()"></div>"#;
     let r = scan_body(html, URL);
-    let f = r.findings.iter().find(|f| f.check == "xss_event_handlers").unwrap();
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.check == "xss_event_handlers")
+        .unwrap();
     assert!(f.detail.contains("3"));
 }
 #[test]
@@ -124,17 +128,32 @@ fn test_no_source_map() {
 fn test_post_form_without_csrf() {
     let html = r#"<form method="post" action="/login"><input type="text" name="user"><input type="password" name="pass"></form>"#;
     let report = scan_body(html, URL);
-    assert!(report.findings.iter().any(|f| f.check == "form_no_csrf_token"));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.check == "form_no_csrf_token")
+    );
 }
 #[test]
 fn test_post_form_with_csrf() {
     let html = r#"<form method="POST" action="/login"><input type="hidden" name="csrf_token" value="abc123"><input type="text" name="user"></form>"#;
     let report = scan_body(html, URL);
-    assert!(report.findings.iter().all(|f| f.check != "form_no_csrf_token"));
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.check != "form_no_csrf_token")
+    );
 }
 #[test]
 fn test_get_form_no_csrf_needed() {
     let html = r#"<form method="get" action="/search"><input type="text" name="q"></form>"#;
     let report = scan_body(html, URL);
-    assert!(report.findings.iter().all(|f| f.check != "form_no_csrf_token"));
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.check != "form_no_csrf_token")
+    );
 }

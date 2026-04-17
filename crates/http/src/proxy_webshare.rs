@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::Deserialize;
 
-use crate::proxy_pool::ProxyPool;
 use crate::HttpError;
+use crate::proxy_pool::ProxyPool;
 
 const WEBSHARE_API_URL: &str =
     "https://proxy.webshare.io/api/v2/proxy/list/?mode=backbone&page_size=100";

@@ -41,7 +41,10 @@ pub async fn execute(url: &str) -> Result<String, String> {
 
     // On 401/403 — reacquire guest token and retry once
     if resp.0 == 401 || resp.0 == 403 {
-        tracing::warn!(status = resp.0, "graphql: guest token rejected, reacquiring");
+        tracing::warn!(
+            status = resp.0,
+            "graphql: guest token rejected, reacquiring"
+        );
         clear_guest_token();
         let new_token = activate_guest_token().await?;
         save_guest_token(&new_token);
@@ -121,9 +124,15 @@ async fn activate_guest_token() -> Result<String, String> {
         method: "POST".to_string(),
         url: format!("{TWITTER_API_URL}/1.1/guest/activate.json"),
         headers: vec![
-            ("authorization".to_string(), format!("Bearer {BEARER_TOKEN}")),
+            (
+                "authorization".to_string(),
+                format!("Bearer {BEARER_TOKEN}"),
+            ),
             ("content-type".to_string(), "application/json".to_string()),
-            ("user-agent".to_string(), crate::TWITTER_USER_AGENT.to_string()),
+            (
+                "user-agent".to_string(),
+                crate::TWITTER_USER_AGENT.to_string(),
+            ),
         ],
         body: None,
         proxy: None,
@@ -149,7 +158,10 @@ async fn activate_guest_token() -> Result<String, String> {
         return Err("empty guest_token".into());
     }
 
-    tracing::info!(token_prefix = &token[..token.len().min(8)], "guest token activated");
+    tracing::info!(
+        token_prefix = &token[..token.len().min(8)],
+        "guest token activated"
+    );
     Ok(token)
 }
 

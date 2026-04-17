@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::types::{ScanMode, Severity};
-use rules::{DB, COMPILED};
+use rules::{COMPILED, DB};
 
 #[cfg(test)]
 mod tests;
@@ -61,8 +61,10 @@ pub fn detect_protection(
 ) -> ProtectionReport {
     let db = &*DB;
 
-    let lower_cookies: Vec<String> =
-        cookie_names.iter().map(|c| c.to_ascii_lowercase()).collect();
+    let lower_cookies: Vec<String> = cookie_names
+        .iter()
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
 
     let lower_headers: HashMap<String, String> = headers
         .iter()
@@ -74,8 +76,15 @@ pub fn detect_protection(
     let compiled = &*COMPILED;
 
     for (idx, rule) in db.rules.iter().enumerate() {
-        let (confidence, matched) =
-            evaluate_rule(rule, &compiled[idx], &lower_headers, &lower_cookies, cookie_names, html, page_url);
+        let (confidence, matched) = evaluate_rule(
+            rule,
+            &compiled[idx],
+            &lower_headers,
+            &lower_cookies,
+            cookie_names,
+            html,
+            page_url,
+        );
 
         if confidence == 0 {
             continue;
@@ -165,7 +174,11 @@ fn evaluate_rule(
         for (name, value) in &sig.headers {
             let name_lower = name.to_ascii_lowercase();
             if let Some(hdr_val) = headers.get(&name_lower) {
-                if value.is_empty() || hdr_val.to_ascii_lowercase().contains(&value.to_ascii_lowercase()) {
+                if value.is_empty()
+                    || hdr_val
+                        .to_ascii_lowercase()
+                        .contains(&value.to_ascii_lowercase())
+                {
                     confidence += u16::from(pts);
                     matched.push(format!("header:{name}"));
                     break;

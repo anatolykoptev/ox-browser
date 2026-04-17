@@ -44,9 +44,10 @@ fn test_page_meta_tags() {
         r#"<meta name="description" content="A test page">"#,
     );
     let meta = page.meta_tags();
-    assert!(meta
-        .iter()
-        .any(|m| m.name == "description" && m.content == "A test page"));
+    assert!(
+        meta.iter()
+            .any(|m| m.name == "description" && m.content == "A test page")
+    );
 }
 
 #[test]

@@ -3,13 +3,13 @@
 //! These tests FAIL on the pre-fix code, proving the bug exists.
 //! After fixes, they go green.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use ox_http::{
-    backoff_duration, parse_retry_after, HttpClient, HttpConfig, ProxyHealth, ProxyPool,
-    RetryConfig, StaticPool,
+    HttpClient, HttpConfig, ProxyHealth, ProxyPool, RetryConfig, StaticPool, backoff_duration,
+    parse_retry_after,
 };
 
 // ── Bug 1: backoff_duration i32 overflow ─────────────────────────────
@@ -184,5 +184,8 @@ fn parse_retry_after_feb_29_leap_year_accepted() {
 fn parse_retry_after_feb_29_non_leap_rejected() {
     // 2027 is NOT a leap year — Feb 29 is invalid
     let result = parse_retry_after("Mon, 29 Feb 2027 00:00:00 GMT");
-    assert!(result.is_none(), "Feb 29 in non-leap year should be rejected");
+    assert!(
+        result.is_none(),
+        "Feb 29 in non-leap year should be rejected"
+    );
 }

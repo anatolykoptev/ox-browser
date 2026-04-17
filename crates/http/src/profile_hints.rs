@@ -35,7 +35,9 @@ pub fn client_hints_headers(ua: &str) -> Vec<(String, String)> {
     let mobile = if ua.contains("Mobile") { "?1" } else { "?0" };
 
     let mut rng = rand::thread_rng();
-    let grease = GREASE_BRANDS.choose(&mut rng).expect("GREASE_BRANDS non-empty");
+    let grease = GREASE_BRANDS
+        .choose(&mut rng)
+        .expect("GREASE_BRANDS non-empty");
     // Extract GREASE brand name and version for full-version-list (needs .0.0.0 suffix).
     let grease_full = grease_to_full_version(grease);
 
@@ -45,10 +47,7 @@ pub fn client_hints_headers(ua: &str) -> Vec<(String, String)> {
             format!("\"Chromium\";v=\"{version}\", \"Google Chrome\";v=\"{version}\", {grease}"),
         ),
         ("sec-ch-ua-mobile".to_owned(), mobile.to_owned()),
-        (
-            "sec-ch-ua-platform".to_owned(),
-            format!("\"{platform}\""),
-        ),
+        ("sec-ch-ua-platform".to_owned(), format!("\"{platform}\"")),
         (
             "sec-ch-ua-full-version-list".to_owned(),
             format!(
@@ -61,9 +60,8 @@ pub fn client_hints_headers(ua: &str) -> Vec<(String, String)> {
     if ua.contains("Edg/") {
         let edge_ver = extract_edge_version(ua);
         let edge_full = extract_edge_full_version(ua);
-        hints[0].1 = format!(
-            "\"Chromium\";v=\"{version}\", \"Microsoft Edge\";v=\"{edge_ver}\", {grease}"
-        );
+        hints[0].1 =
+            format!("\"Chromium\";v=\"{version}\", \"Microsoft Edge\";v=\"{edge_ver}\", {grease}");
         hints[3].1 = format!(
             "\"Chromium\";v=\"{full_version}\", \"Microsoft Edge\";v=\"{edge_full}\", {grease_full}"
         );
@@ -90,8 +88,12 @@ fn grease_to_full_version(grease: &str) -> String {
 /// Accept header varies by browser to match real fingerprints.
 pub fn browser_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
     let accept = match profile.browser {
-        "chrome" | "edge" => "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "firefox" => "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8",
+        "chrome" | "edge" => {
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        }
+        "firefox" => {
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8"
+        }
         _ => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", // Safari
     };
     let mut headers = vec![
@@ -106,7 +108,9 @@ pub fn browser_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
 
 /// Extracts the major Chrome version number from a user-agent string.
 fn extract_chrome_version(ua: &str) -> &str {
-    let Some(idx) = ua.find("Chrome/") else { return "145" };
+    let Some(idx) = ua.find("Chrome/") else {
+        return "145";
+    };
     let rest = &ua[idx + 7..];
     match rest.find('.') {
         Some(dot) => &rest[..dot],
@@ -116,7 +120,9 @@ fn extract_chrome_version(ua: &str) -> &str {
 
 /// Extracts the full Chrome version (e.g. "145.0.0.0") from a user-agent string.
 fn extract_chrome_full_version(ua: &str) -> &str {
-    let Some(idx) = ua.find("Chrome/") else { return "145.0.0.0" };
+    let Some(idx) = ua.find("Chrome/") else {
+        return "145.0.0.0";
+    };
     let rest = &ua[idx + 7..];
     match rest.find(' ') {
         Some(sp) => &rest[..sp],
@@ -126,7 +132,9 @@ fn extract_chrome_full_version(ua: &str) -> &str {
 
 /// Extracts the major Edge version number from a user-agent string.
 fn extract_edge_version(ua: &str) -> &str {
-    let Some(idx) = ua.find("Edg/") else { return "145" };
+    let Some(idx) = ua.find("Edg/") else {
+        return "145";
+    };
     let rest = &ua[idx + 4..];
     match rest.find('.') {
         Some(dot) => &rest[..dot],
@@ -136,7 +144,9 @@ fn extract_edge_version(ua: &str) -> &str {
 
 /// Extracts the full Edge version (e.g. "145.0.0.0") from a user-agent string.
 fn extract_edge_full_version(ua: &str) -> &str {
-    let Some(idx) = ua.find("Edg/") else { return "145.0.0.0" };
+    let Some(idx) = ua.find("Edg/") else {
+        return "145.0.0.0";
+    };
     let rest = &ua[idx + 4..];
     match rest.find(' ') {
         Some(sp) => &rest[..sp],
@@ -190,7 +200,11 @@ mod tests {
             seen.insert(hints[0].1.clone());
         }
         // With 4 GREASE brands and 100 iterations, we should see at least 2 variants.
-        assert!(seen.len() >= 2, "GREASE brand should be randomized, saw only {} variant(s)", seen.len());
+        assert!(
+            seen.len() >= 2,
+            "GREASE brand should be randomized, saw only {} variant(s)",
+            seen.len()
+        );
     }
 
     #[test]
@@ -259,8 +273,14 @@ mod tests {
 
     #[test]
     fn extract_full_versions() {
-        assert_eq!(extract_chrome_full_version("Chrome/145.0.7632.159 Safari"), "145.0.7632.159");
-        assert_eq!(extract_edge_full_version("Edg/145.0.2903.70"), "145.0.2903.70");
+        assert_eq!(
+            extract_chrome_full_version("Chrome/145.0.7632.159 Safari"),
+            "145.0.7632.159"
+        );
+        assert_eq!(
+            extract_edge_full_version("Edg/145.0.2903.70"),
+            "145.0.2903.70"
+        );
     }
 
     #[test]

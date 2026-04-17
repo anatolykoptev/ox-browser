@@ -236,9 +236,21 @@ mod tests {
         </body></html>"#;
 
         let report = analyze(html);
-        assert!(report.image_cdns.contains(&"Cloudinary".to_string()), "{:?}", report.image_cdns);
-        assert!(report.image_cdns.contains(&"imgix".to_string()), "{:?}", report.image_cdns);
-        assert!(report.image_cdns.contains(&"Cloudflare Images".to_string()), "{:?}", report.image_cdns);
+        assert!(
+            report.image_cdns.contains(&"Cloudinary".to_string()),
+            "{:?}",
+            report.image_cdns
+        );
+        assert!(
+            report.image_cdns.contains(&"imgix".to_string()),
+            "{:?}",
+            report.image_cdns
+        );
+        assert!(
+            report.image_cdns.contains(&"Cloudflare Images".to_string()),
+            "{:?}",
+            report.image_cdns
+        );
         assert!(!report.image_cdns.contains(&"Akamai".to_string()));
     }
 

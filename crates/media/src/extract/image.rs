@@ -2,8 +2,10 @@
 //!
 //! Extracts `og:image`, `<img>`, `<picture><source>`, and CSS background-image URLs.
 
+use super::helpers::{
+    best_srcset_url, extract_bg_urls, extract_og_title, parse_dimension, should_skip,
+};
 use super::{ExtractContext, ExtractedMedia, MediaKind, resolve_url};
-use super::helpers::{should_skip, parse_dimension, extract_og_title, best_srcset_url, extract_bg_urls};
 
 /// Minimum dimension (width or height) to keep an image.
 const MIN_DIMENSION: u32 = 200;
@@ -40,10 +42,7 @@ fn extract_img_tags(ctx: &mut ExtractContext) {
     for node in ctx.doc.select("img").iter() {
         let src = node.attr("src").map(|s| s.to_string());
         let srcset = node.attr("srcset").map(|s| s.to_string());
-        let alt = node
-            .attr("alt")
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+        let alt = node.attr("alt").map(|s| s.to_string()).unwrap_or_default();
         let w = parse_dimension(&node.attr("width").unwrap_or_default());
         let h = parse_dimension(&node.attr("height").unwrap_or_default());
 
@@ -77,7 +76,9 @@ fn extract_picture_sources(ctx: &mut ExtractContext) {
     for node in ctx.doc.select("picture > source[srcset]").iter() {
         let srcset = node.attr("srcset").map(|s| s.to_string());
         if let Some(url) = best_srcset_url(&srcset, ctx.base)
-            && !url.is_empty() && ctx.seen.insert(url.clone()) && !should_skip(&url)
+            && !url.is_empty()
+            && ctx.seen.insert(url.clone())
+            && !should_skip(&url)
         {
             ctx.results.push(ExtractedMedia {
                 url,

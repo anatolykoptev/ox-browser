@@ -9,9 +9,7 @@ pub fn parse_tweet_detail(body: &str) -> Option<Vec<Tweet>> {
     // Try known timeline keys — Twitter uses different names
     let instructions = v["data"]["threaded_conversation_with_injections_v2"]["instructions"]
         .as_array()
-        .or_else(|| {
-            v["data"]["tweetResult"]["result"]["timeline"]["instructions"].as_array()
-        })?;
+        .or_else(|| v["data"]["tweetResult"]["result"]["timeline"]["instructions"].as_array())?;
     extract_tweets_from_instructions(instructions)
 }
 
@@ -191,8 +189,7 @@ mod tests {
 
     #[test]
     fn parse_empty_timeline() {
-        let json =
-            r#"{"data":{"threaded_conversation_with_injections_v2":{"instructions":[]}}}"#;
+        let json = r#"{"data":{"threaded_conversation_with_injections_v2":{"instructions":[]}}}"#;
         let tweets = parse_tweet_detail(json).unwrap();
         assert!(tweets.is_empty());
     }

@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use tokio::task::JoinSet;
 
-use crate::{is_stock_domain, ReverseEngine, ReverseResult};
+use crate::{ReverseEngine, ReverseResult, is_stock_domain};
 use ox_http::HttpClient;
 
 /// Multi-engine reverse image search with parallel execution.
@@ -28,8 +28,7 @@ impl ReverseSearchEngine {
     ) -> ReverseResult {
         let start = Instant::now();
 
-        let engine_names: Vec<String> =
-            self.engines.iter().map(|e| e.name().to_owned()).collect();
+        let engine_names: Vec<String> = self.engines.iter().map(|e| e.name().to_owned()).collect();
 
         let mut set = JoinSet::new();
         for engine in &self.engines {
@@ -70,9 +69,7 @@ impl ReverseSearchEngine {
         let mut stock_domains = Vec::new();
         let mut stock_seen = HashSet::new();
         for m in &deduped {
-            if is_stock_domain(&m.domain)
-                && stock_seen.insert(m.domain.clone())
-            {
+            if is_stock_domain(&m.domain) && stock_seen.insert(m.domain.clone()) {
                 stock_domains.push(m.domain.clone());
             }
         }
@@ -137,9 +134,7 @@ mod tests {
         let mut stock_domains = Vec::new();
         let mut stock_seen = HashSet::new();
         for m in &matches {
-            if is_stock_domain(&m.domain)
-                && stock_seen.insert(m.domain.clone())
-            {
+            if is_stock_domain(&m.domain) && stock_seen.insert(m.domain.clone()) {
                 stock_domains.push(m.domain.clone());
             }
         }
@@ -168,9 +163,7 @@ mod tests {
     #[tokio::test]
     async fn search_with_no_engines() {
         let engine = ReverseSearchEngine::new(vec![]);
-        let client = Arc::new(
-            HttpClient::new(ox_http::HttpConfig::default()).unwrap(),
-        );
+        let client = Arc::new(HttpClient::new(ox_http::HttpConfig::default()).unwrap());
         let result = engine.search(client, "https://img.com/1.jpg", 10).await;
         assert!(result.matches.is_empty());
         assert!(!result.is_stock);
@@ -241,7 +234,11 @@ mod tests {
         let matches = vec![
             make_match("https://shutterstock.com/1", "shutterstock.com", "yandex"),
             make_match("https://shutterstock.com/2", "shutterstock.com", "yandex"),
-            make_match("https://shutterstock.com/3", "shutterstock.com", "google_lens"),
+            make_match(
+                "https://shutterstock.com/3",
+                "shutterstock.com",
+                "google_lens",
+            ),
         ];
         let mut stock_domains = Vec::new();
         let mut stock_seen = HashSet::new();
@@ -258,7 +255,13 @@ mod tests {
     fn truncation_at_max() {
         let mut seen = HashSet::new();
         let matches: Vec<ReverseMatch> = (0..50)
-            .map(|i| make_match(&format!("https://site{i}.com/p"), &format!("site{i}.com"), "yandex"))
+            .map(|i| {
+                make_match(
+                    &format!("https://site{i}.com/p"),
+                    &format!("site{i}.com"),
+                    "yandex",
+                )
+            })
             .collect();
         let mut deduped = Vec::new();
         for m in matches {

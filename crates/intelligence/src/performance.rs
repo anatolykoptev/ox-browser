@@ -59,23 +59,55 @@ pub fn analyze(headers: &HashMap<String, String>, html: &str) -> PerformanceRepo
 
 fn compute_score(r: &PerformanceReport) -> u8 {
     let mut score: u32 = 0;
-    if !r.compression.is_empty() { score += 15; }
-    if !r.cache_control.is_empty() { score += 12; }
-    if !r.etag.is_empty() || !r.expires.is_empty() { score += 10; }
-    if !r.preload.is_empty() { score += 8; }
-    if !r.preconnect.is_empty() { score += 5; }
-    let lazy_ratio = if r.images_total > 0 { r.images_lazy * 100 / r.images_total } else { 100 };
-    if lazy_ratio >= 50 { score += 8; }
-    if r.inline_styles_bytes < 10_000 { score += 5; }
-    if r.http3_supported { score += 5; }
-    if !r.prefetch.is_empty() { score += 2; }
-    if r.inline_styles_count == 0 { score += 3; }
+    if !r.compression.is_empty() {
+        score += 15;
+    }
+    if !r.cache_control.is_empty() {
+        score += 12;
+    }
+    if !r.etag.is_empty() || !r.expires.is_empty() {
+        score += 10;
+    }
+    if !r.preload.is_empty() {
+        score += 8;
+    }
+    if !r.preconnect.is_empty() {
+        score += 5;
+    }
+    let lazy_ratio = if r.images_total > 0 {
+        r.images_lazy * 100 / r.images_total
+    } else {
+        100
+    };
+    if lazy_ratio >= 50 {
+        score += 8;
+    }
+    if r.inline_styles_bytes < 10_000 {
+        score += 5;
+    }
+    if r.http3_supported {
+        score += 5;
+    }
+    if !r.prefetch.is_empty() {
+        score += 2;
+    }
+    if r.inline_styles_count == 0 {
+        score += 3;
+    }
     // New checks
-    if r.has_speculation_rules { score += 5; }
-    if r.font_preloads > 0 { score += 8; }
+    if r.has_speculation_rules {
+        score += 5;
+    }
+    if r.font_preloads > 0 {
+        score += 8;
+    }
     let total_imgs = r.images_modern_format + r.images_legacy_format;
-    if total_imgs > 0 && r.images_legacy_format == 0 { score += 7; }
-    if total_imgs == 0 { score += 7; } // No images = no format issue
+    if total_imgs > 0 && r.images_legacy_format == 0 {
+        score += 7;
+    }
+    if total_imgs == 0 {
+        score += 7;
+    } // No images = no format issue
     score.min(100) as u8
 }
 
@@ -114,7 +146,11 @@ fn parse_html(html: &str, report: &mut PerformanceReport) {
 
     // Resource hints from <link> tags.
     for node in doc.select("link").iter() {
-        let rel = node.attr("rel").map(|v| v.to_string()).unwrap_or_default().to_lowercase();
+        let rel = node
+            .attr("rel")
+            .map(|v| v.to_string())
+            .unwrap_or_default()
+            .to_lowercase();
         let href = node.attr("href").map(|v| v.to_string()).unwrap_or_default();
 
         match rel.as_str() {
@@ -150,21 +186,29 @@ fn parse_html(html: &str, report: &mut PerformanceReport) {
     }
 
     // Speculation rules (prerender/prefetch via JSON).
-    report.has_speculation_rules = doc
-        .select("script[type='speculationrules']")
-        .length() > 0;
+    report.has_speculation_rules = doc.select("script[type='speculationrules']").length() > 0;
 
     // Font preloads (critical for LCP).
-    report.font_preloads = report.preload.iter()
+    report.font_preloads = report
+        .preload
+        .iter()
         .filter(|h| h.as_type == "font")
         .count() as u32;
 
     // Image formats: modern (WebP/AVIF) vs legacy (JPEG/PNG/GIF).
     for img in doc.select("img[src]").iter() {
         let src = img.attr("src").unwrap_or_default().to_lowercase();
-        if src.ends_with(".webp") || src.ends_with(".avif") || src.contains("/webp") || src.contains("/avif") {
+        if src.ends_with(".webp")
+            || src.ends_with(".avif")
+            || src.contains("/webp")
+            || src.contains("/avif")
+        {
             report.images_modern_format += 1;
-        } else if src.ends_with(".jpg") || src.ends_with(".jpeg") || src.ends_with(".png") || src.ends_with(".gif") {
+        } else if src.ends_with(".jpg")
+            || src.ends_with(".jpeg")
+            || src.ends_with(".png")
+            || src.ends_with(".gif")
+        {
             report.images_legacy_format += 1;
         }
     }
@@ -181,7 +225,10 @@ mod tests {
     use super::*;
 
     fn headers(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]

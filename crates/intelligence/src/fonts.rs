@@ -32,7 +32,10 @@ fn parse_google_families(href: &str) -> Vec<String> {
         .map(|part| {
             // Strip variant specs: "Roboto:wght@400" → "Roboto"
             let name = part.split(':').next().unwrap_or(part);
-            name.replace('+', " ").replace("%20", " ").trim().to_string()
+            name.replace('+', " ")
+                .replace("%20", " ")
+                .trim()
+                .to_string()
         })
         .filter(|s| !s.is_empty())
         .collect()
@@ -75,10 +78,11 @@ pub fn analyze(html: &str) -> FontsReport {
     google_fonts.dedup();
 
     // Adobe Fonts: <link href="*use.typekit.net*">
-    let adobe_fonts = doc
-        .select("link[href]")
-        .iter()
-        .any(|n| n.attr("href").map(|h| h.contains("use.typekit.net")).unwrap_or(false));
+    let adobe_fonts = doc.select("link[href]").iter().any(|n| {
+        n.attr("href")
+            .map(|h| h.contains("use.typekit.net"))
+            .unwrap_or(false)
+    });
 
     // @font-face in inline <style> tags
     let mut font_face_count: u32 = 0;
