@@ -134,7 +134,7 @@ impl OxMcpServer {
             .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
         let (_, resp) = self
             .gobrowser_proxy
-            .forward("/chrome/interact", &body)
+            .forward("/api/v1/chrome/interact", &body)
             .await
             .map_err(|e| McpError::internal_error(e, None))?;
         let json = serde_json::to_string(&resp).unwrap_or_default();

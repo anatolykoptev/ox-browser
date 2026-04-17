@@ -15,7 +15,7 @@ pub async fn chrome_interact_handler(
 ) -> (StatusCode, Json<serde_json::Value>) {
     match state
         .gobrowser_proxy
-        .forward("/chrome/interact", &body)
+        .forward("/api/v1/chrome/interact", &body)
         .await
     {
         Ok((status, resp)) => (
