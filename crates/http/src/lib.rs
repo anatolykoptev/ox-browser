@@ -20,6 +20,7 @@ pub mod middleware_solver;
 pub mod middleware_ssrf;
 pub mod profile;
 pub mod profile_hints;
+pub mod proxy_fallback;
 pub mod proxy_health;
 pub mod proxy_pool;
 pub mod proxy_webshare;
@@ -55,6 +56,7 @@ pub use profile::{
     BUILTIN_PROFILES, BrowserProfile, ProfileFilter, platform_matched_profile, random_profile,
 };
 pub use profile_hints::{DEFAULT_HEADER_ORDER, browser_headers, client_hints_headers};
+pub use proxy_fallback::{PROXY_FALLBACK_TOTAL, looks_like_proxy_402, record_webshare_402_fallback};
 pub use proxy_health::{HealthConfig, HealthyPool, ProxyHealth};
 pub use proxy_pool::{ProxyPool, StaticPool};
 pub use proxy_webshare::WebsharePool;

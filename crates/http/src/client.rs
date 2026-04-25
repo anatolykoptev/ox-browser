@@ -31,8 +31,18 @@ impl HttpClient {
     /// `[logging?] -> [rate_limit?] -> [retry?] -> [solver?] -> [residential?] -> [cloudflare?] -> [quality_check] -> [client_hints] -> wreq`
     pub fn new(config: HttpConfig) -> Result<Self> {
         let client = Self::build_wreq_client(&config)?;
+        // A sibling client with no proxy, used as a direct-connection fallback
+        // when an upstream proxy returns HTTP 402 Payment Required.
+        let direct_client = Self::build_direct_wreq_client(&config)?;
+        let needs_fallback =
+            config.proxy_url.is_some() || config.proxy_pool.is_some();
         let base: Arc<dyn Handler> = if let Some(ref pool) = config.proxy_pool {
-            Arc::new(WreqHandler::with_proxy_pool(client, Arc::clone(pool)))
+            Arc::new(
+                WreqHandler::with_proxy_pool(client, Arc::clone(pool))
+                    .with_direct_fallback(direct_client),
+            )
+        } else if needs_fallback {
+            Arc::new(WreqHandler::new(client).with_direct_fallback(direct_client))
         } else {
             Arc::new(WreqHandler::new(client))
         };
@@ -176,6 +186,23 @@ impl HttpClient {
 
         // Note: we do NOT set .user_agent() on the builder — headers are
         // managed by the middleware chain (profile headers or fallback UA).
+
+        Ok(builder.build()?)
+    }
+
+    /// Build a wreq client identical to [`build_wreq_client`] but with no
+    /// proxy. Used as the direct-connection fallback when Webshare returns
+    /// HTTP 402.
+    fn build_direct_wreq_client(config: &HttpConfig) -> Result<Client> {
+        let mut builder = Client::builder()
+            .timeout(config.timeout)
+            .redirect(wreq::redirect::Policy::limited(config.max_redirects))
+            .cookie_store(true)
+            .no_proxy();
+
+        if let Some(emulation) = config.emulation {
+            builder = builder.emulation(emulation);
+        }
 
         Ok(builder.build()?)
     }
