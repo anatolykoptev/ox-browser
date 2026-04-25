@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use ox_http::proxy_fallback::PROXY_FALLBACK_TOTAL;
 use ox_http::{HttpClient, HttpConfig};
+use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -74,11 +75,22 @@ async fn spawn_ok_origin() -> u16 {
 }
 
 #[tokio::test]
+#[serial]
 async fn falls_back_direct_when_proxy_returns_402() {
     let proxy_port = spawn_402_proxy().await;
     let origin_port = spawn_ok_origin().await;
     // Give the listeners a moment to be fully ready.
     tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Allowlist both the fake proxy and origin so SSRF guard lets them through.
+    // SAFETY: tests in this file rely on this env var; no other test in the
+    // ox-http crate writes OX_HTTP_PRIVATE_ALLOWLIST.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{proxy_port},127.0.0.1:{origin_port}"),
+        );
+    }
 
     let before = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
 
@@ -103,6 +115,7 @@ async fn falls_back_direct_when_proxy_returns_402() {
 }
 
 #[tokio::test]
+#[serial]
 async fn no_fallback_when_no_proxy_configured() {
     // Sanity: target returns 402 directly. With no proxy, we must NOT retry —
     // a 402 from the target itself is not a Webshare-quota signal.
@@ -126,6 +139,11 @@ async fn no_fallback_when_no_proxy_configured() {
         }
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", format!("127.0.0.1:{port}"));
+    }
 
     let before = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
 
