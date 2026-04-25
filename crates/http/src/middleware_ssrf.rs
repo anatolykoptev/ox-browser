@@ -1,4 +1,15 @@
 //! SSRF protection middleware — blocks requests to private/reserved IPs.
+//!
+//! # Allowlist override
+//!
+//! For legitimate sidecar / loopback setups (and integration tests that bind a
+//! fake server on `127.0.0.1`) the env var `OX_HTTP_PRIVATE_ALLOWLIST` may
+//! list a comma-separated set of `host:port` entries that bypass the private-IP
+//! check. The match is exact on `host:port` after URL parsing — there is no
+//! wildcard and no CIDR support, so this is a narrow escape hatch and must be
+//! set explicitly per-deployment, never globally.
+//!
+//! Example: `OX_HTTP_PRIVATE_ALLOWLIST=127.0.0.1:54321,127.0.0.1:54322`.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::sync::Arc;
@@ -47,6 +58,14 @@ pub fn validate_url(url_str: &str) -> Result<()> {
         .host_str()
         .ok_or_else(|| HttpError::InvalidUrl("missing host".into()))?;
 
+    let port = url.port_or_known_default().unwrap_or(80);
+
+    // Narrow escape hatch for sidecars / integration tests. Read fresh on
+    // every call so tests can flip it per-test.
+    if is_allowlisted(host, port) {
+        return Ok(());
+    }
+
     // Try parsing as IP directly first.
     if let Ok(ip) = host.parse::<IpAddr>() {
         if is_private_ip(&ip) {
@@ -58,7 +77,6 @@ pub fn validate_url(url_str: &str) -> Result<()> {
     }
 
     // Resolve hostname to IP addresses.
-    let port = url.port_or_known_default().unwrap_or(80);
     let addr = format!("{host}:{port}");
     if let Ok(addrs) = addr.to_socket_addrs() {
         for socket_addr in addrs {
@@ -74,6 +92,19 @@ pub fn validate_url(url_str: &str) -> Result<()> {
     // a more descriptive connection error.
 
     Ok(())
+}
+
+/// Returns `true` if `host:port` is listed in `OX_HTTP_PRIVATE_ALLOWLIST`.
+///
+/// Comma-separated, case-insensitive on host. Exact match — no wildcards.
+fn is_allowlisted(host: &str, port: u16) -> bool {
+    let Ok(list) = std::env::var("OX_HTTP_PRIVATE_ALLOWLIST") else {
+        return false;
+    };
+    let needle = format!("{}:{port}", host.to_ascii_lowercase());
+    list.split(',')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .any(|entry| entry == needle)
 }
 
 /// Returns `true` if the IP address is private, loopback, link-local, or reserved.
@@ -192,5 +223,14 @@ mod tests {
     fn validate_rejects_bad_scheme() {
         let err = validate_url("ftp://example.com").unwrap_err();
         assert!(err.to_string().contains("scheme is not allowed"));
+    }
+
+    #[test]
+    fn allowlist_unset_does_not_match() {
+        // SAFETY: single-threaded test, no other test reads the same var concurrently.
+        unsafe {
+            std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+        }
+        assert!(!is_allowlisted("127.0.0.1", 8080));
     }
 }
