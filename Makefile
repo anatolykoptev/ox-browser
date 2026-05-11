@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt check install-tools
+.PHONY: build test lint fmt check deny install-tools
 
 build:
 	cargo build --workspace
@@ -16,5 +16,8 @@ fmt:
 check: fmt lint test
 	@echo "All checks passed"
 
+deny:
+	cargo deny check
+
 install-tools:
-	cargo binstall --no-confirm cargo-nextest
+	cargo binstall --no-confirm cargo-nextest cargo-deny
