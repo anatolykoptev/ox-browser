@@ -1,11 +1,14 @@
-.PHONY: build test lint fmt check deny install-tools
+.PHONY: build test test-doc lint fmt check deny install-tools
 
 build:
 	cargo build --workspace
 
+test-doc:
+	cargo test --locked --doc --workspace
+
 test:
-	cargo nextest run --workspace
-	cargo test --doc --workspace
+	cargo nextest run --locked --all-targets --workspace
+	$(MAKE) test-doc
 
 lint:
 	cargo clippy --workspace -- -D warnings
