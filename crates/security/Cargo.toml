@@ -2,6 +2,7 @@
 name = "ox-security"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 ammonia = "4.1"

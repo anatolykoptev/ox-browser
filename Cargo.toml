@@ -32,6 +32,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 name = "ox-browser"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 ox-core = { path = "crates/core" }
