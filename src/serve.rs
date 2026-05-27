@@ -13,13 +13,22 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let provider = config::build_cookie_provider(&config);
 
     let mut http_config = config::build_http_config(&config);
-    if let Some(ref proxy) = config.proxy.url {
-        http_config.proxy_url = Some(proxy.clone());
+
+    if config::proxy_disabled() {
+        tracing::warn!("PROXY_DISABLED set — all outbound proxy disabled, fetching direct");
+        http_config.proxy_url = None;
+        http_config.residential_proxy = None;
+        http_config.proxy_pool = None;
+    } else {
+        if let Some(ref proxy) = config.proxy.url {
+            http_config.proxy_url = Some(proxy.clone());
+        }
+        // Env fallback for residential proxy (e.g. RESIDENTIAL_PROXY_URL=http://host:port).
+        if http_config.residential_proxy.is_none() {
+            http_config.residential_proxy = std::env::var("RESIDENTIAL_PROXY_URL").ok();
+        }
     }
-    // Env fallback for residential proxy (e.g. RESIDENTIAL_PROXY_URL=http://host:port).
-    if http_config.residential_proxy.is_none() {
-        http_config.residential_proxy = std::env::var("RESIDENTIAL_PROXY_URL").ok();
-    }
+
     http_config.cookie_provider = Some(Arc::clone(&provider));
     http_config.cookie_cache = Some(Arc::clone(&cache));
 
@@ -40,17 +49,20 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     }
 
     // Initialize proxy pool from Webshare API if key is available.
-    if let Ok(api_key) = std::env::var("WEBSHARE_API_KEY") {
-        if !api_key.is_empty() {
-            match ox_http::WebsharePool::new(&api_key).await {
-                Ok(pool) => {
-                    let health_cfg = config.proxy.health.to_health_config();
-                    let healthy = ox_http::HealthyPool::new(Arc::new(pool), health_cfg);
-                    http_config.proxy_pool = Some(Arc::new(healthy));
-                    tracing::info!("initialized Webshare proxy pool with health tracking");
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "failed to init Webshare pool, continuing without proxies");
+    // Skipped entirely when PROXY_DISABLED is set to avoid contacting the Webshare API.
+    if !config::proxy_disabled() {
+        if let Ok(api_key) = std::env::var("WEBSHARE_API_KEY") {
+            if !api_key.is_empty() {
+                match ox_http::WebsharePool::new(&api_key).await {
+                    Ok(pool) => {
+                        let health_cfg = config.proxy.health.to_health_config();
+                        let healthy = ox_http::HealthyPool::new(Arc::new(pool), health_cfg);
+                        http_config.proxy_pool = Some(Arc::new(healthy));
+                        tracing::info!("initialized Webshare proxy pool with health tracking");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to init Webshare pool, continuing without proxies");
+                    }
                 }
             }
         }

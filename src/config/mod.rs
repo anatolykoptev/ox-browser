@@ -110,6 +110,19 @@ impl ServerConfig {
     }
 }
 
+/// Reports whether outbound proxy is disabled via the `PROXY_DISABLED` env var.
+///
+/// Truthy values (case-insensitive, whitespace-trimmed): `"1"`, `"true"`, `"yes"`, `"on"`.
+/// Anything else (including unset) = proxy enabled.
+pub fn proxy_disabled() -> bool {
+    std::env::var("PROXY_DISABLED")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            matches!(v.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
 // --- Builder functions ---
 
 /// No-op solver used when no Byparr URL is configured.
@@ -178,6 +191,43 @@ pub fn build_http_config(config: &ServerConfig) -> HttpConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// All PROXY_DISABLED env assertions live in ONE test function to avoid
+    /// cross-test races (env vars are process-global).
+    ///
+    /// # Safety
+    /// `set_var`/`remove_var` are unsafe in edition 2024 due to thread-unsafety.
+    /// This is a single-threaded test binary path (cargo test serializes tests
+    /// in the same binary unless `--test-threads` > 1). We accept the unsafety
+    /// and run all assertions in one function to minimise the window.
+    #[test]
+    fn proxy_disabled_env_parsing() {
+        // SAFETY: single test function, no concurrent env mutation.
+        unsafe {
+            // Unset → proxy enabled (false)
+            std::env::remove_var("PROXY_DISABLED");
+            assert!(!proxy_disabled(), "unset should be false");
+
+            // Truthy values
+            for val in &["1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On"] {
+                std::env::set_var("PROXY_DISABLED", val);
+                assert!(proxy_disabled(), "PROXY_DISABLED={val} should be true");
+            }
+
+            // Falsy / unknown values
+            for val in &["0", "false", "FALSE", "no", "off", "", "garbage", "2", "enabled"] {
+                std::env::set_var("PROXY_DISABLED", val);
+                assert!(!proxy_disabled(), "PROXY_DISABLED={val} should be false");
+            }
+
+            // Whitespace around value should be ignored
+            std::env::set_var("PROXY_DISABLED", "  true  ");
+            assert!(proxy_disabled(), "PROXY_DISABLED=' true ' should be true");
+
+            // Clean up
+            std::env::remove_var("PROXY_DISABLED");
+        }
+    }
 
     #[test]
     fn defaults_match_previous_hardcoded_values() {
