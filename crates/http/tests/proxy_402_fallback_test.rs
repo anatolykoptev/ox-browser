@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ox_http::proxy_fallback::PROXY_FALLBACK_TOTAL;
-use ox_http::{HttpClient, HttpConfig};
+use ox_http::{HttpClient, HttpConfig, Request};
 use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -111,6 +111,67 @@ async fn falls_back_direct_when_proxy_returns_402() {
     assert!(
         after >= before + 1,
         "fallback counter must increment (before={before}, after={after})"
+    );
+}
+
+/// Regression test for the May-outage gap: when ONLY `residential_proxy` is
+/// configured (no `proxy_url`, no `proxy_pool`), a 402 from the residentially-
+/// proxied request must still degrade to a direct connection instead of
+/// hard-failing the read into a 502.
+///
+/// The residential middleware applies its proxy per-request (it sets
+/// `req.proxy = Some(residential_url)` on a CF retry). We reproduce that exact
+/// condition by pre-setting `req.proxy` to the fake 402 proxy and sending it
+/// through a client whose only proxy config is `residential_proxy`. Before the
+/// fix `direct_client` was `None` for this config, so no fallback existed.
+#[tokio::test]
+#[serial]
+async fn residential_only_config_falls_back_direct_on_402() {
+    let proxy_port = spawn_402_proxy().await;
+    let origin_port = spawn_ok_origin().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{proxy_port},127.0.0.1:{origin_port}"),
+        );
+    }
+
+    let before = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
+
+    // ONLY residential_proxy is set — this is the config that had no direct
+    // fallback before the fix.
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        residential_proxy: Some(format!("http://127.0.0.1:{proxy_port}")),
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    // Mirror what ResidentialHandler does on a CF retry: route THIS request
+    // through the (fake-402) residential proxy via the per-request override.
+    let target = format!("http://127.0.0.1:{origin_port}/test");
+    let req = Request {
+        method: "GET".into(),
+        url: target,
+        headers: vec![("user-agent".into(), "ox-test/1.0".into())],
+        body: None,
+        proxy: Some(format!("http://127.0.0.1:{proxy_port}")),
+    };
+    let resp = client
+        .execute(req)
+        .await
+        .expect("residential 402 must degrade to direct, not error");
+
+    assert_eq!(resp.status, 200, "should fall back to the origin's 200");
+    assert_eq!(resp.body, "direct-success", "body should come from origin");
+
+    let after = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    assert!(
+        after >= before + 1,
+        "fallback counter must increment for the residential path (before={before}, after={after})"
     );
 }
 

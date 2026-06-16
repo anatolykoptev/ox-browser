@@ -34,8 +34,16 @@ impl HttpClient {
         // A sibling client with no proxy, used as a direct-connection fallback
         // when an upstream proxy returns HTTP 402 Payment Required.
         let direct_client = Self::build_direct_wreq_client(&config)?;
-        let needs_fallback =
-            config.proxy_url.is_some() || config.proxy_pool.is_some();
+        // Whether to attach the direct (no-proxy) fallback used on Webshare 402.
+        // Must cover EVERY path that can route a request through an upstream
+        // proxy: the static `proxy_url`, the rotating `proxy_pool`, AND the
+        // residential proxy injected per-request by the residential middleware
+        // on a CF retry. Omitting `residential_proxy` was the May-outage gap:
+        // a 402 during a residential CF-retry had no direct sibling to fall back
+        // to, so it hard-failed the read into a 502 (see proxy_fallback.rs).
+        let needs_fallback = config.proxy_url.is_some()
+            || config.proxy_pool.is_some()
+            || config.residential_proxy.is_some();
         let base: Arc<dyn Handler> = if let Some(ref pool) = config.proxy_pool {
             Arc::new(
                 WreqHandler::with_proxy_pool(client, Arc::clone(pool))
