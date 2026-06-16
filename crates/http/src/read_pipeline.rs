@@ -54,6 +54,7 @@ async fn read_page_inner(
     site_handlers: &[SiteHandler],
 ) -> ReadOutput {
     let start = Instant::now();
+    crate::metrics::record_fetch();
     let format = ContentFormat::from_param(&params.format);
 
     // External site-specific handlers (injected to avoid circular deps).
@@ -123,6 +124,7 @@ async fn read_page_inner(
         }
     }
 
+    crate::metrics::record_fetch_success();
     let extracted = content::extract_content(&resp.body, &params.url, format);
     build_output(extracted, params, "direct", elapsed(start))
 }
