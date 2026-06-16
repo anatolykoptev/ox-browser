@@ -146,7 +146,25 @@ impl WreqHandler {
 #[async_trait]
 impl Handler for WreqHandler {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
+        let used_proxy = self.first_attempt_uses_proxy(&req);
+        if used_proxy {
+            crate::metrics::record_proxy_used();
+        }
+
         let primary = self.execute_with(&self.client, &req, false).await;
+
+        // Detect an upstream-proxy 402 regardless of whether a direct fallback
+        // is wired — the counter must reflect the real event so the operator
+        // can see 402s that did NOT degrade (fallback gap).
+        let is_proxy_402 = used_proxy
+            && match &primary {
+                Ok(resp) if resp.status == 402 => true,
+                Err(HttpError::Request(e)) if looks_like_proxy_402(e) => true,
+                _ => false,
+            };
+        if is_proxy_402 {
+            crate::metrics::record_proxy_402();
+        }
 
         // Decide whether to fall back. Only when:
         // 1. We actually have a direct-client sibling, AND
@@ -155,7 +173,7 @@ impl Handler for WreqHandler {
         let Some(ref direct) = self.direct_client else {
             return primary;
         };
-        if !self.first_attempt_uses_proxy(&req) {
+        if !used_proxy {
             return primary;
         }
 
