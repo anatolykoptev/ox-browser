@@ -34,6 +34,7 @@ pub mod retry_parse;
 pub mod site_reddit;
 pub mod solver_byparr;
 pub mod solver_gobrowser;
+pub mod solver_negcache;
 
 pub use client::HttpClient;
 pub use cloudflare::{ChallengeType, CloudflareChallenge, detect_cloudflare};
@@ -50,8 +51,9 @@ pub use middleware_quality::quality_check_middleware;
 pub use middleware_ratelimit::rate_limit_middleware;
 pub use middleware_residential::residential_proxy_middleware;
 pub use middleware_retry::retry_middleware;
-pub use middleware_solver::solver_middleware;
+pub use middleware_solver::{solver_middleware, solver_middleware_with_negcache};
 pub use middleware_ssrf::ssrf_middleware;
+pub use solver_negcache::{SOLVER_GIVEUP_TOTAL, SolverNegCache, record_solver_giveup};
 pub use profile::{
     BUILTIN_PROFILES, BrowserProfile, ProfileFilter, platform_matched_profile, random_profile,
 };
