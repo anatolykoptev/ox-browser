@@ -10,21 +10,36 @@ use crate::cookie_cache::CookieCache;
 use crate::cookie_provider::{CookieProvider, SolvedChallenge};
 use crate::error::HttpError;
 use crate::middleware::{Handler, MiddlewareFn, Request};
+use crate::solver_negcache::{SolverNegCache, record_solver_giveup};
 use crate::{HttpResponse, Result};
 
 /// Returns a middleware that auto-solves CF challenges via a [`CookieProvider`].
 ///
 /// On `HttpError::Cloudflare` (except `Block`), calls the provider, caches
 /// the result, injects cookies, and retries the request once.
+///
+/// A shared [`SolverNegCache`] bounds the retry storm: a domain whose solves
+/// keep failing is put on cooldown so we stop paying for doomed 15-25s solves.
 pub fn solver_middleware(
     provider: Arc<dyn CookieProvider>,
     cache: Arc<CookieCache>,
+) -> MiddlewareFn {
+    solver_middleware_with_negcache(provider, cache, Arc::new(SolverNegCache::default()))
+}
+
+/// Like [`solver_middleware`] but with an explicit (shared/testable) negative
+/// cache.
+pub fn solver_middleware_with_negcache(
+    provider: Arc<dyn CookieProvider>,
+    cache: Arc<CookieCache>,
+    negcache: Arc<SolverNegCache>,
 ) -> MiddlewareFn {
     Arc::new(move |next: Arc<dyn Handler>| -> Arc<dyn Handler> {
         Arc::new(SolverHandler {
             next,
             provider: Arc::clone(&provider),
             cache: Arc::clone(&cache),
+            negcache: Arc::clone(&negcache),
         })
     })
 }
@@ -33,6 +48,7 @@ struct SolverHandler {
     next: Arc<dyn Handler>,
     provider: Arc<dyn CookieProvider>,
     cache: Arc<CookieCache>,
+    negcache: Arc<SolverNegCache>,
 }
 
 /// Extract the domain (host) from a URL string.
@@ -82,14 +98,28 @@ impl Handler for SolverHandler {
                 Err(HttpError::Cloudflare(ChallengeType::Block, status, ray))
             }
             // Solvable CF challenge — call provider, cache, retry once.
-            Err(HttpError::Cloudflare(challenge_type, _status, _ray)) => {
+            Err(HttpError::Cloudflare(challenge_type, status, ray)) => {
+                // Retry-storm guard: if this domain is on cooldown after repeated
+                // solve failures, skip the 15-25s solver and surface the CF error
+                // immediately. A success below clears the cooldown.
+                if self.negcache.is_blocked(&domain) {
+                    record_solver_giveup(&domain);
+                    return Err(HttpError::Cloudflare(challenge_type, status, ray));
+                }
+
                 debug!(domain = %domain, challenge = %challenge_type, "solver: solving challenge");
-                let solution = self
-                    .provider
-                    .solve(&req.url, challenge_type)
-                    .await
-                    .map_err(|e| HttpError::ProxyPool(format!("solver failed: {e}")))?;
+                let solution = match self.provider.solve(&req.url, challenge_type).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        // Count the failure; once the threshold is crossed the
+                        // domain enters cooldown so the next request short-circuits.
+                        self.negcache.record_failure(&domain);
+                        return Err(HttpError::ProxyPool(format!("solver failed: {e}")));
+                    }
+                };
                 self.cache.put(&domain, solution.clone());
+                // A real solution ends any storm for this domain.
+                self.negcache.record_success(&domain);
 
                 // If solver returned the page body directly, use it (avoids IP mismatch on retry)
                 if let Some(ref body) = solution.body {
