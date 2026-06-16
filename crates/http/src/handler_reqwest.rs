@@ -9,7 +9,10 @@ use async_trait::async_trait;
 use wreq::Client;
 
 use crate::middleware::{Handler, Request};
-use crate::proxy_fallback::{looks_like_proxy_402, record_webshare_402_fallback};
+use crate::proxy_fallback::{
+    looks_like_proxy_402, looks_like_proxy_dial_failure, record_proxy_dial_fallback,
+    record_webshare_402_fallback,
+};
 use crate::proxy_pool::ProxyPool;
 use crate::{HttpError, HttpResponse, Result};
 
@@ -168,6 +171,12 @@ impl Handler for WreqHandler {
             // Webshare 402 surfaced as a wrapped wreq connect error.
             Err(HttpError::Request(ref e)) if looks_like_proxy_402(e) => {
                 record_webshare_402_fallback(&req.url);
+                self.execute_with(direct, &req, true).await
+            }
+            // Upstream proxy unreachable (dead host / unpaid / DNS / TLS).
+            // Degrade to direct so a dead proxy cannot 502 the whole request.
+            Err(HttpError::Request(ref e)) if looks_like_proxy_dial_failure(e) => {
+                record_proxy_dial_fallback(&req.url);
                 self.execute_with(direct, &req, true).await
             }
             other => other,

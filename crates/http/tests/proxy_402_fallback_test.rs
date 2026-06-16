@@ -162,6 +162,61 @@ async fn no_fallback_when_no_proxy_configured() {
     assert_eq!(after, before, "counter must NOT bump when no proxy is set");
 }
 
+/// A "dead" proxy: bind a port, then immediately drop it so connects are
+/// refused. Routing through it must trigger the proxy-dial fallback (NOT the
+/// 402 path) and still succeed against the direct origin.
+#[tokio::test]
+#[serial]
+async fn falls_back_direct_when_proxy_is_dead() {
+    use ox_http::proxy_fallback::PROXY_DIAL_FALLBACK_TOTAL;
+
+    // Reserve a port, then drop the listener so nothing accepts -> connect refused.
+    let dead_port = {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let origin_port = spawn_ok_origin().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{dead_port},127.0.0.1:{origin_port}"),
+        );
+    }
+
+    let dial_before = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    let p402_before = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
+
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        proxy_url: Some(format!("http://127.0.0.1:{dead_port}")),
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    let target = format!("http://127.0.0.1:{origin_port}/test");
+    let resp = client
+        .get(&target)
+        .await
+        .expect("dead-proxy fallback should still succeed via direct");
+
+    assert_eq!(resp.status, 200, "fallback should return target's 200");
+    assert_eq!(resp.body, "direct-success", "body should come from origin");
+
+    let dial_after = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    let p402_after = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    assert!(
+        dial_after > dial_before,
+        "dial-fallback counter must increment (before={dial_before}, after={dial_after})"
+    );
+    assert_eq!(
+        p402_after, p402_before,
+        "402 counter must NOT bump for a dead-proxy dial failure"
+    );
+}
+
 // Keep `Arc` referenced so a dead-code lint doesn't trip future maintainers.
 #[allow(dead_code)]
 fn _arc_marker() -> Arc<()> {
