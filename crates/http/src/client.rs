@@ -10,7 +10,7 @@ use crate::middleware_logging::logging_middleware;
 use crate::middleware_ratelimit::rate_limit_middleware;
 use crate::middleware_residential::residential_proxy_middleware;
 use crate::middleware_retry::retry_middleware;
-use crate::middleware_solver::solver_middleware;
+use crate::middleware_solver::{solver_middleware, solver_middleware_with_negcache};
 use crate::middleware_ssrf::ssrf_middleware;
 use crate::profile_hints::browser_headers;
 use crate::{HttpConfig, HttpError, HttpResponse, Result};
@@ -67,8 +67,18 @@ impl HttpClient {
         }
 
         // CF solver (between retry and cloudflare_detect).
+        // Use the shared negcache when available so read_pipeline can check is_blocked()
+        // and set RenderMode::GiveUp instead of retrying doomed solve attempts.
         if let (Some(provider), Some(cache)) = (&config.cookie_provider, &config.cookie_cache) {
-            middlewares.push(solver_middleware(Arc::clone(provider), Arc::clone(cache)));
+            if let Some(ref nc) = config.solver_negcache {
+                middlewares.push(solver_middleware_with_negcache(
+                    Arc::clone(provider),
+                    Arc::clone(cache),
+                    Arc::clone(nc),
+                ));
+            } else {
+                middlewares.push(solver_middleware(Arc::clone(provider), Arc::clone(cache)));
+            }
         }
 
         // Residential proxy retry (between solver and cloudflare_detect).
@@ -204,5 +214,13 @@ impl HttpClient {
         }
 
         Ok(builder.build()?)
+    }
+
+    /// Test-only constructor: inject a pre-built handler and config directly,
+    /// bypassing the wreq client setup. Lets integration tests drive
+    /// `read_page_inner` with a mock [`Handler`] without network calls.
+    #[cfg(test)]
+    pub fn with_handler(handler: Arc<dyn Handler>, config: HttpConfig) -> Self {
+        Self { handler, config }
     }
 }

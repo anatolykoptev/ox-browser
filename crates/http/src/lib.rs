@@ -8,6 +8,7 @@ pub mod cookie_provider;
 mod error;
 pub mod handler_reqwest;
 pub mod json_ld;
+pub mod metrics;
 pub mod middleware;
 pub mod middleware_cloudflare;
 pub mod middleware_hints;
@@ -34,6 +35,7 @@ pub mod retry_parse;
 pub mod site_reddit;
 pub mod solver_byparr;
 pub mod solver_gobrowser;
+pub mod solver_negcache;
 
 pub use client::HttpClient;
 pub use cloudflare::{ChallengeType, CloudflareChallenge, detect_cloudflare};
@@ -42,6 +44,7 @@ pub use cookie_cache::CookieCache;
 pub use cookie_provider::{CookieProvider, SolvedChallenge};
 pub use error::{HttpError, Result};
 pub use handler_reqwest::WreqHandler;
+pub use metrics::render as render_metrics;
 pub use middleware::{Handler, MiddlewareFn, Request, chain};
 pub use middleware_cloudflare::cloudflare_detect_middleware;
 pub use middleware_hints::client_hints_middleware;
@@ -50,7 +53,7 @@ pub use middleware_quality::quality_check_middleware;
 pub use middleware_ratelimit::rate_limit_middleware;
 pub use middleware_residential::residential_proxy_middleware;
 pub use middleware_retry::retry_middleware;
-pub use middleware_solver::solver_middleware;
+pub use middleware_solver::{solver_middleware, solver_middleware_with_negcache};
 pub use middleware_ssrf::ssrf_middleware;
 pub use profile::{
     BUILTIN_PROFILES, BrowserProfile, ProfileFilter, platform_matched_profile, random_profile,
@@ -68,4 +71,5 @@ pub use response::HttpResponse;
 pub use retry::{RetryConfig, backoff_duration, is_retryable_status, retry_do};
 pub use retry_parse::parse_retry_after;
 pub use solver_byparr::{ByparrConfig, ByparrSolver};
+pub use solver_negcache::{SOLVER_GIVEUP_TOTAL, SolverNegCache, record_solver_giveup};
 pub use wreq_util::Emulation;

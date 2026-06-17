@@ -7,6 +7,7 @@ use crate::profile::BrowserProfile;
 use crate::proxy_pool::ProxyPool;
 use crate::ratelimit_domain::DomainLimiter;
 use crate::retry::RetryConfig;
+use crate::solver_negcache::SolverNegCache;
 
 /// HTTP client configuration.
 ///
@@ -52,6 +53,10 @@ pub struct HttpConfig {
     pub chrome_render_url: Option<String>,
     /// Per-domain render mode cache (shared, thread-safe).
     pub render_cache: Option<Arc<crate::render_cache::RenderModeCache>>,
+    /// Solver negative cache — shared with the solver middleware so read_pipeline
+    /// can check `is_blocked` and set `RenderMode::GiveUp` instead of
+    /// `RenderMode::Chrome` when the domain is on cooldown.
+    pub solver_negcache: Option<Arc<SolverNegCache>>,
 }
 
 impl Default for HttpConfig {
@@ -74,6 +79,7 @@ impl Default for HttpConfig {
             quality_check: true,
             chrome_render_url: None,
             render_cache: None,
+            solver_negcache: None,
         }
     }
 }
