@@ -24,11 +24,11 @@ const JS_SHELL_MARKERS: &[&str] = &[
 
 /// Markers for SPA frameworks that rely heavily on client-side rendering.
 const SPA_FRAMEWORK_MARKERS: &[&str] = &[
-    "ng-version=",                     // Angular
-    "__NUXT__",                        // Nuxt
-    "__remixContext",                   // Remix
-    "window.__INITIAL_STATE__",        // Vue SSR shells
-    "data-reactroot",                  // React SSR (old)
+    "ng-version=",              // Angular
+    "__NUXT__",                 // Nuxt
+    "__remixContext",           // Remix
+    "window.__INITIAL_STATE__", // Vue SSR shells
+    "data-reactroot",           // React SSR (old)
 ];
 
 /// Returns true if HTML looks like a JS shell without real content.

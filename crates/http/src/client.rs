@@ -34,8 +34,7 @@ impl HttpClient {
         // A sibling client with no proxy, used as a direct-connection fallback
         // when an upstream proxy returns HTTP 402 Payment Required.
         let direct_client = Self::build_direct_wreq_client(&config)?;
-        let needs_fallback =
-            config.proxy_url.is_some() || config.proxy_pool.is_some();
+        let needs_fallback = config.proxy_url.is_some() || config.proxy_pool.is_some();
         let base: Arc<dyn Handler> = if let Some(ref pool) = config.proxy_pool {
             Arc::new(
                 WreqHandler::with_proxy_pool(client, Arc::clone(pool))

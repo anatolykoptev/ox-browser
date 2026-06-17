@@ -8,6 +8,7 @@ pub mod cookie_provider;
 mod error;
 pub mod handler_reqwest;
 pub mod json_ld;
+pub mod metrics;
 pub mod middleware;
 pub mod middleware_cloudflare;
 pub mod middleware_hints;
@@ -18,7 +19,6 @@ pub mod middleware_residential;
 pub mod middleware_retry;
 pub mod middleware_solver;
 pub mod middleware_ssrf;
-pub mod metrics;
 pub mod profile;
 pub mod profile_hints;
 pub mod proxy_fallback;
@@ -55,12 +55,13 @@ pub use middleware_residential::residential_proxy_middleware;
 pub use middleware_retry::retry_middleware;
 pub use middleware_solver::{solver_middleware, solver_middleware_with_negcache};
 pub use middleware_ssrf::ssrf_middleware;
-pub use solver_negcache::{SOLVER_GIVEUP_TOTAL, SolverNegCache, record_solver_giveup};
 pub use profile::{
     BUILTIN_PROFILES, BrowserProfile, ProfileFilter, platform_matched_profile, random_profile,
 };
 pub use profile_hints::{DEFAULT_HEADER_ORDER, browser_headers, client_hints_headers};
-pub use proxy_fallback::{PROXY_FALLBACK_TOTAL, looks_like_proxy_402, record_webshare_402_fallback};
+pub use proxy_fallback::{
+    PROXY_FALLBACK_TOTAL, looks_like_proxy_402, record_webshare_402_fallback,
+};
 pub use proxy_health::{HealthConfig, HealthyPool, ProxyHealth};
 pub use proxy_pool::{ProxyPool, StaticPool};
 pub use proxy_webshare::WebsharePool;
@@ -70,4 +71,5 @@ pub use response::HttpResponse;
 pub use retry::{RetryConfig, backoff_duration, is_retryable_status, retry_do};
 pub use retry_parse::parse_retry_after;
 pub use solver_byparr::{ByparrConfig, ByparrSolver};
+pub use solver_negcache::{SOLVER_GIVEUP_TOTAL, SolverNegCache, record_solver_giveup};
 pub use wreq_util::Emulation;
