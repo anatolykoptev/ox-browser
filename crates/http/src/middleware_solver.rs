@@ -104,15 +104,23 @@ impl Handler for SolverHandler {
                 // immediately. A success below clears the cooldown.
                 if self.negcache.is_blocked(&domain) {
                     record_solver_giveup(&domain);
-                    return Err(HttpError::Cloudflare(challenge_type, status, ray));
+                    // Return ProxyPool (not Cloudflare) — this is a solver decision,
+                    // not a fresh CF challenge. Consistent with the N failures before
+                    // cooldown trips; the GiveUp gate in read_pipeline fast-fails either way.
+                    return Err(HttpError::ProxyPool(format!(
+                        "solver negcache: domain {domain} on cooldown"
+                    )));
                 }
 
                 debug!(domain = %domain, challenge = %challenge_type, "solver: solving challenge");
                 let solution = match self.provider.solve(&req.url, challenge_type).await {
                     Ok(s) => s,
                     Err(e) => {
-                        // Count the failure; once the threshold is crossed the
-                        // domain enters cooldown so the next request short-circuits.
+                        // NOTE: we count all solver errors (including transient
+                        // 502/timeout) toward the cooldown. A go-browser blip trips
+                        // a 5-min per-domain cooldown which auto-recovers — acceptable
+                        // trade-off vs. the 20-143× retry storm that results from NOT
+                        // rate-limiting doomed solve attempts.
                         self.negcache.record_failure(&domain);
                         return Err(HttpError::ProxyPool(format!("solver failed: {e}")));
                     }

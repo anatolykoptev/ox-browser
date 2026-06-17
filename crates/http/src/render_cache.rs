@@ -11,6 +11,9 @@ pub enum RenderMode {
     Http,
     /// Needs Chrome/JS rendering (CF challenge, JS-only SPA).
     Chrome,
+    /// Solver gave up on this domain (negcache cooldown); fast-fail immediately
+    /// without paying for another doomed 15-25 s solve attempt.
+    GiveUp,
 }
 
 struct Entry {

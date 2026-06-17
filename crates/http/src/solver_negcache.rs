@@ -21,8 +21,8 @@
 //! All state is in-memory and thread-safe (mirrors `CookieCache`). No new deps.
 
 use std::collections::HashMap;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 /// Number of times the solver was skipped for a domain on cooldown (the
@@ -125,7 +125,7 @@ impl SolverNegCache {
     }
 
     /// Remove entries whose cooldown has expired and whose failure streak has
-    /// aged past the window. Keeps the map from growing unbounded.
+    /// aged past the window. Called periodically by `spawn_eviction_task`.
     pub fn evict_expired(&self) {
         let now = Instant::now();
         let mut entries = self.entries.write().expect("lock poisoned");
@@ -145,6 +145,20 @@ impl SolverNegCache {
     pub fn is_empty(&self) -> bool {
         self.entries.read().expect("lock poisoned").is_empty()
     }
+}
+
+/// Spawn a background task that periodically evicts expired entries.
+///
+/// Run with the same interval as `cooldown` (e.g. `DEFAULT_COOLDOWN`).
+/// Call once at server startup, passing the same `Arc<SolverNegCache>` that is
+/// wired into the solver middleware and `HttpConfig`.
+pub fn spawn_eviction_task(negcache: Arc<SolverNegCache>, interval: std::time::Duration) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            negcache.evict_expired();
+        }
+    });
 }
 
 impl Default for SolverNegCache {

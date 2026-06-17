@@ -32,10 +32,6 @@ pub static PROXY_USED_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// against `oxbrowser_proxy_fallback_total` to confirm every 402 degraded.
 pub static PROXY_402_TOTAL: AtomicU64 = AtomicU64::new(0);
 
-/// Times the CF solver path gave up on a URL after exhausting attempts
-/// (per-URL negative cache short-circuit). Bounds the retry storm.
-pub static SOLVER_GIVEUP_TOTAL: AtomicU64 = AtomicU64::new(0);
-
 /// Record a fetch attempt (any outcome). Call once per top-level fetch/read.
 pub fn record_fetch() {
     FETCH_TOTAL.fetch_add(1, Ordering::Relaxed);
@@ -56,11 +52,6 @@ pub fn record_proxy_402() {
     PROXY_402_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Record a solver give-up for a URL (negative-cache short-circuit fired).
-pub fn record_solver_giveup() {
-    SOLVER_GIVEUP_TOTAL.fetch_add(1, Ordering::Relaxed);
-}
-
 /// One counter row in the registry: metric name, help text, current value.
 struct Counter {
     name: &'static str,
@@ -79,7 +70,7 @@ pub fn render() -> String {
     let counters = [
         Counter {
             name: "oxbrowser_fetch_total",
-            help: "Total fetch/read attempts (any outcome).",
+            help: "Total read-path attempts entering read_page_inner (/read and MCP read).",
             value: FETCH_TOTAL.load(Ordering::Relaxed),
         },
         Counter {
@@ -104,8 +95,8 @@ pub fn render() -> String {
         },
         Counter {
             name: "oxbrowser_solver_giveup_total",
-            help: "CF-solver give-ups (per-URL negative-cache short-circuit fired).",
-            value: SOLVER_GIVEUP_TOTAL.load(Ordering::Relaxed),
+            help: "CF-solver give-ups (per-domain negative-cache short-circuit fired).",
+            value: crate::solver_negcache::SOLVER_GIVEUP_TOTAL.load(Ordering::Relaxed),
         },
     ];
 
@@ -158,9 +149,27 @@ mod tests {
         let before = FETCH_TOTAL.load(Ordering::Relaxed);
         record_fetch();
         assert_eq!(FETCH_TOTAL.load(Ordering::Relaxed), before + 1);
+    }
 
-        let before = SOLVER_GIVEUP_TOTAL.load(Ordering::Relaxed);
-        record_solver_giveup();
-        assert_eq!(SOLVER_GIVEUP_TOTAL.load(Ordering::Relaxed), before + 1);
+    /// Verify render() reads solver_negcache::SOLVER_GIVEUP_TOTAL (the live counter),
+    /// not a dead local copy. Fails RED if the render() line is reverted to a local atomic.
+    #[test]
+    fn render_giveup_reads_solver_negcache_counter() {
+        let before = crate::solver_negcache::SOLVER_GIVEUP_TOTAL.load(Ordering::Relaxed);
+        crate::solver_negcache::record_solver_giveup("test.example");
+        let after = crate::solver_negcache::SOLVER_GIVEUP_TOTAL.load(Ordering::Relaxed);
+        assert_eq!(
+            after,
+            before + 1,
+            "solver_negcache counter did not increment"
+        );
+
+        // render() must reflect the updated counter.
+        let body = render();
+        let expected_line = format!("oxbrowser_solver_giveup_total {after}");
+        assert!(
+            body.lines().any(|l| l == expected_line),
+            "render() does not reflect solver_negcache::SOLVER_GIVEUP_TOTAL; line not found: {expected_line}"
+        );
     }
 }

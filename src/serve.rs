@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use ox_http::{DomainLimiter, HttpClient};
+use ox_http::{DomainLimiter, HttpClient, solver_negcache};
 use ox_js::EndpointDefaults;
 
 use crate::config::{self, ServerConfig};
@@ -37,6 +37,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         http_config.chrome_render_url = Some(format!("{url}/api/v1/chrome/interact"));
     }
     http_config.render_cache = Some(Arc::new(ox_http::render_cache::RenderModeCache::default()));
+
+    // Solver negative cache — shared between the solver middleware and read_pipeline
+    // so both can check is_blocked() and the pipeline can set RenderMode::GiveUp.
+    let negcache = Arc::new(solver_negcache::SolverNegCache::default());
+    http_config.solver_negcache = Some(Arc::clone(&negcache));
+    solver_negcache::spawn_eviction_task(Arc::clone(&negcache), solver_negcache::DEFAULT_COOLDOWN);
 
     // Per-domain rate limits.
     let domain_configs = config.ratelimit.to_domain_configs();
