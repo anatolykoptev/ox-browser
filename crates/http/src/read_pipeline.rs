@@ -60,12 +60,18 @@ async fn read_page_inner(
     // External site-specific handlers (injected to avoid circular deps).
     for handler in site_handlers {
         if let Some(output) = handler(params.clone(), format, start).await {
+            if output.error.is_none() {
+                crate::metrics::record_fetch_success();
+            }
             return output;
         }
     }
 
     // Site-specific handlers (rewrite URL, still go through middleware chain)
     if let Some(output) = crate::site_reddit::try_reddit_json(http, params, format, start).await {
+        if output.error.is_none() {
+            crate::metrics::record_fetch_success();
+        }
         return output;
     }
 
@@ -78,15 +84,31 @@ async fn read_page_inner(
     if let (Some(cache), Some(url)) = (&render_cache, &chrome_url) {
         match cache.get(&domain) {
             Some(RenderMode::GiveUp) => {
-                // Negcache said this domain is on cooldown. Fast-fail — do NOT
-                // attempt chrome_fallback so the solver guard is actually reachable.
-                tracing::debug!(domain = %domain, "render cache hit: GiveUp — fast-failing");
-                return build_error_output(
-                    params,
-                    "direct",
-                    elapsed(start),
-                    "solver negcache: domain on cooldown (GiveUp)",
-                );
+                // BUG A fix: re-check the negcache. If the cooldown has lifted (is_blocked
+                // now returns false), remove the GiveUp entry and fall through to a normal
+                // fetch. If still blocked, fast-fail as before.
+                // This makes the 300s negcache cooldown authoritative over the 3600s
+                // RenderModeCache TTL — a domain whose solver recovers at t=300s is no
+                // longer black-holed until t=3600s.
+                let still_blocked = http
+                    .config()
+                    .solver_negcache
+                    .as_ref()
+                    .is_some_and(|nc| nc.is_blocked(&domain));
+                if still_blocked {
+                    tracing::debug!(domain = %domain, "render cache hit: GiveUp (negcache still blocked) — fast-failing");
+                    return build_error_output(
+                        params,
+                        "direct",
+                        elapsed(start),
+                        "solver negcache: domain on cooldown (GiveUp)",
+                    );
+                } else {
+                    // Cooldown lifted — remove stale GiveUp and proceed normally.
+                    tracing::info!(domain = %domain, "render cache GiveUp evicted: negcache cooldown lifted — retrying fetch");
+                    cache.remove(&domain);
+                    // Fall through to the http.get() path below.
+                }
             }
             Some(RenderMode::Chrome) => {
                 tracing::debug!(domain = %domain, "render cache hit: Chrome");
@@ -100,13 +122,23 @@ async fn read_page_inner(
         }
     } else if let Some(cache) = &render_cache {
         if cache.get(&domain) == Some(RenderMode::GiveUp) {
-            tracing::debug!(domain = %domain, "render cache hit: GiveUp (no chrome_url) — fast-failing");
-            return build_error_output(
-                params,
-                "direct",
-                elapsed(start),
-                "solver negcache: domain on cooldown (GiveUp)",
-            );
+            let still_blocked = http
+                .config()
+                .solver_negcache
+                .as_ref()
+                .is_some_and(|nc| nc.is_blocked(&domain));
+            if still_blocked {
+                tracing::debug!(domain = %domain, "render cache hit: GiveUp (no chrome_url) — fast-failing");
+                return build_error_output(
+                    params,
+                    "direct",
+                    elapsed(start),
+                    "solver negcache: domain on cooldown (GiveUp)",
+                );
+            } else {
+                tracing::info!(domain = %domain, "render cache GiveUp evicted (no chrome_url): negcache cooldown lifted");
+                cache.remove(&domain);
+            }
         }
     }
 

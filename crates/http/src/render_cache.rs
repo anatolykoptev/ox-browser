@@ -57,6 +57,16 @@ impl RenderModeCache {
             },
         );
     }
+
+    /// Remove the cached mode for a domain.
+    ///
+    /// Used when a GiveUp entry must be evicted because the negcache cooldown
+    /// has lifted: the next request should fall through to a normal fetch instead
+    /// of fast-failing on a stale GiveUp.
+    pub fn remove(&self, domain: &str) {
+        let mut entries = self.entries.write().expect("lock poisoned");
+        entries.remove(domain);
+    }
 }
 
 impl Default for RenderModeCache {
@@ -97,5 +107,22 @@ mod tests {
         cache.set("example.com", RenderMode::Http);
         cache.set("example.com", RenderMode::Chrome);
         assert_eq!(cache.get("example.com"), Some(RenderMode::Chrome));
+    }
+
+    #[test]
+    fn remove_clears_entry() {
+        let cache = RenderModeCache::new(Duration::from_secs(60));
+        cache.set("example.com", RenderMode::GiveUp);
+        assert_eq!(cache.get("example.com"), Some(RenderMode::GiveUp));
+        cache.remove("example.com");
+        assert_eq!(cache.get("example.com"), None);
+    }
+
+    #[test]
+    fn remove_nonexistent_is_noop() {
+        let cache = RenderModeCache::new(Duration::from_secs(60));
+        // Must not panic.
+        cache.remove("never.set.com");
+        assert_eq!(cache.get("never.set.com"), None);
     }
 }

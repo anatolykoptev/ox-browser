@@ -215,4 +215,12 @@ impl HttpClient {
 
         Ok(builder.build()?)
     }
+
+    /// Test-only constructor: inject a pre-built handler and config directly,
+    /// bypassing the wreq client setup. Lets integration tests drive
+    /// `read_page_inner` with a mock [`Handler`] without network calls.
+    #[cfg(test)]
+    pub fn with_handler(handler: Arc<dyn Handler>, config: HttpConfig) -> Self {
+        Self { handler, config }
+    }
 }
