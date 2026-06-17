@@ -88,6 +88,7 @@ impl AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(metrics))
         .route("/solve", post(solve::solve))
         .route("/fetch", post(fetch::fetch))
         .route("/fetch-smart", post(fetch_smart::fetch_smart))
@@ -113,6 +114,17 @@ pub fn router(state: AppState) -> Router {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Prometheus text-format metrics for the fetch/proxy/solver counters.
+async fn metrics() -> ([(axum::http::header::HeaderName, &'static str); 1], String) {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        ox_http::render_metrics(),
+    )
 }
 
 #[cfg(test)]
@@ -167,6 +179,28 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(&body[..], b"ok");
+    }
+
+    #[tokio::test]
+    async fn metrics_returns_prometheus_text() {
+        let app = router(test_state());
+        let req = axum::http::Request::builder()
+            .uri("/metrics")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        assert!(ct.starts_with("text/plain"), "content-type was {ct}");
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("# TYPE oxbrowser_fetch_total counter"));
+        assert!(body.contains("oxbrowser_proxy_fallback_total"));
     }
 
     #[tokio::test]
