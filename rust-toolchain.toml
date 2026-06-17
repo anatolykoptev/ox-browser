@@ -1,0 +1,6 @@
+# Pin to match the Dockerfile build (rust:1.93-bookworm) so `cargo fmt`/clippy
+# give identical results in CI, local, and the deploy build. Prevents the chronic
+# "red lint on main" drift from CI using a moving @stable rustfmt.
+[toolchain]
+channel = "1.93"
+components = ["rustfmt", "clippy"]

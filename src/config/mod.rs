@@ -209,13 +209,17 @@ mod tests {
             assert!(!proxy_disabled(), "unset should be false");
 
             // Truthy values
-            for val in &["1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On"] {
+            for val in &[
+                "1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On",
+            ] {
                 std::env::set_var("PROXY_DISABLED", val);
                 assert!(proxy_disabled(), "PROXY_DISABLED={val} should be true");
             }
 
             // Falsy / unknown values
-            for val in &["0", "false", "FALSE", "no", "off", "", "garbage", "2", "enabled"] {
+            for val in &[
+                "0", "false", "FALSE", "no", "off", "", "garbage", "2", "enabled",
+            ] {
                 std::env::set_var("PROXY_DISABLED", val);
                 assert!(!proxy_disabled(), "PROXY_DISABLED={val} should be false");
             }

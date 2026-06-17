@@ -12,8 +12,8 @@
 //! GET and returns the response directly. That's exactly what Webshare's
 //! 402 looks like for non-CONNECT requests.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use ox_http::proxy_fallback::PROXY_FALLBACK_TOTAL;
