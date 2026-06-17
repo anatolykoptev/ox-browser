@@ -89,7 +89,9 @@ mod tests {
     #[test]
     fn ignores_unrelated_errors() {
         assert!(!contains_402_marker("connection reset by peer"));
-        assert!(!contains_402_marker("HTTP/1.1 503 Service Unavailable via proxy"));
+        assert!(!contains_402_marker(
+            "HTTP/1.1 503 Service Unavailable via proxy"
+        ));
     }
 
     #[test]
