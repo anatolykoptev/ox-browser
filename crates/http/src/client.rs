@@ -13,6 +13,7 @@ use crate::middleware_retry::retry_middleware;
 use crate::middleware_solver::{solver_middleware, solver_middleware_with_negcache};
 use crate::middleware_ssrf::ssrf_middleware;
 use crate::profile_hints::browser_headers;
+use crate::ssrf_connect::{SsrfGuardedResolver, ssrf_redirect_policy};
 use crate::{HttpConfig, HttpError, HttpResponse, Result};
 
 /// HTTP client that routes requests through a middleware chain.
@@ -178,7 +179,14 @@ impl HttpClient {
     fn build_wreq_client(config: &HttpConfig) -> Result<Client> {
         let mut builder = Client::builder()
             .timeout(config.timeout)
-            .redirect(wreq::redirect::Policy::limited(config.max_redirects))
+            // Connect-time, rebind-resistant IP guard (see crate::ssrf_connect
+            // module doc) — filters DNS resolution results, not just the
+            // pre-resolve middleware_ssrf check.
+            .dns_resolver(SsrfGuardedResolver)
+            // Refuses a redirect hop whose target is already a blocked
+            // literal IP (the resolver above never sees those — wreq skips
+            // DNS resolution entirely for IP-literal hosts).
+            .redirect(ssrf_redirect_policy(config.max_redirects))
             .cookie_store(true);
 
         // Static proxy (proxy_pool is handled per-request in WreqHandler).
@@ -205,7 +213,8 @@ impl HttpClient {
     fn build_direct_wreq_client(config: &HttpConfig) -> Result<Client> {
         let mut builder = Client::builder()
             .timeout(config.timeout)
-            .redirect(wreq::redirect::Policy::limited(config.max_redirects))
+            .dns_resolver(SsrfGuardedResolver)
+            .redirect(ssrf_redirect_policy(config.max_redirects))
             .cookie_store(true)
             .no_proxy();
 

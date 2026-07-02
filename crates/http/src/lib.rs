@@ -36,6 +36,7 @@ pub mod site_reddit;
 pub mod solver_byparr;
 pub mod solver_gobrowser;
 pub mod solver_negcache;
+pub mod ssrf_connect;
 
 pub use client::HttpClient;
 pub use cloudflare::{ChallengeType, CloudflareChallenge, detect_cloudflare};
@@ -54,7 +55,7 @@ pub use middleware_ratelimit::rate_limit_middleware;
 pub use middleware_residential::residential_proxy_middleware;
 pub use middleware_retry::retry_middleware;
 pub use middleware_solver::{solver_middleware, solver_middleware_with_negcache};
-pub use middleware_ssrf::ssrf_middleware;
+pub use middleware_ssrf::{is_private_ip, ssrf_middleware, validate_url};
 pub use profile::{
     BUILTIN_PROFILES, BrowserProfile, ProfileFilter, platform_matched_profile, random_profile,
 };
@@ -72,4 +73,5 @@ pub use retry::{RetryConfig, backoff_duration, is_retryable_status, retry_do};
 pub use retry_parse::parse_retry_after;
 pub use solver_byparr::{ByparrConfig, ByparrSolver};
 pub use solver_negcache::{SOLVER_GIVEUP_TOTAL, SolverNegCache, record_solver_giveup};
+pub use ssrf_connect::{SsrfBlockedError, SsrfGuardedResolver, ssrf_redirect_policy};
 pub use wreq_util::Emulation;
