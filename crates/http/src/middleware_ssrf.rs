@@ -1,5 +1,21 @@
 //! SSRF protection middleware — blocks requests to private/reserved IPs.
 //!
+//! This is the PRE-RESOLVE tier: it validates a URL before it enters the
+//! middleware chain, using its own DNS lookup. It is fast-fail and catches
+//! the common case, but — like any pre-resolve check — it cannot defeat a
+//! DNS-rebind attack (a hostname that resolves to a public IP here and a
+//! private IP by the time the terminal handler actually connects). The
+//! CONNECT-TIME tier that closes that gap lives in [`crate::ssrf_connect`]
+//! (a custom `wreq::dns::Resolve` wired via `ClientBuilder::dns_resolver`,
+//! which is checked on the IP wreq is about to dial, immediately before the
+//! TCP connect — the wreq-idiomatic equivalent of a `net.Dialer.Control`
+//! hook). Both tiers share the same block predicate ([`is_private_ip`]) so
+//! there is exactly one definition of "blocked" in this crate.
+//!
+//! This block-list mirrors `go-kit/httputil.IsBlockedIP` for fleet parity —
+//! see that file's doc comment for the range rationale. Keep the two in
+//! sync when either changes.
+//!
 //! # Allowlist override
 //!
 //! For legitimate sidecar / loopback setups (and integration tests that bind a
@@ -44,6 +60,9 @@ impl Handler for SsrfGuard {
 }
 
 /// Validate that a URL does not target a private/reserved IP.
+///
+/// Pre-resolve tier — see the module doc for why this alone is not
+/// rebind-proof, and [`crate::ssrf_connect`] for the tier that is.
 pub fn validate_url(url_str: &str) -> Result<()> {
     let url = Url::parse(url_str).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
 
@@ -76,6 +95,19 @@ pub fn validate_url(url_str: &str) -> Result<()> {
         return Ok(());
     }
 
+    // Fail closed on a host that LOOKS like a non-standard numeral encoding
+    // of an IP (decimal, octal, or hex — e.g. "2130706433", "0x7f000001",
+    // "012.0.0.1") but that `host.parse::<IpAddr>()` above rejected. Some
+    // resolvers (notably glibc's getaddrinfo) still parse these forms as
+    // literal IPs; refusing outright here — rather than falling through to
+    // a same-string DNS lookup — mirrors `go-kit/httputil.CheckURL` and
+    // closes the exact bypass class that check exists to close.
+    if looks_like_alt_encoded_ip(host) {
+        return Err(HttpError::InvalidUrl(format!(
+            "SSRF blocked: host {host:?} looks like a non-standard IP encoding"
+        )));
+    }
+
     // Resolve hostname to IP addresses.
     let addr = format!("{host}:{port}");
     if let Ok(addrs) = addr.to_socket_addrs() {
@@ -97,7 +129,7 @@ pub fn validate_url(url_str: &str) -> Result<()> {
 /// Returns `true` if `host:port` is listed in `OX_HTTP_PRIVATE_ALLOWLIST`.
 ///
 /// Comma-separated, case-insensitive on host. Exact match — no wildcards.
-fn is_allowlisted(host: &str, port: u16) -> bool {
+pub fn is_allowlisted(host: &str, port: u16) -> bool {
     let Ok(list) = std::env::var("OX_HTTP_PRIVATE_ALLOWLIST") else {
         return false;
     };
@@ -108,7 +140,12 @@ fn is_allowlisted(host: &str, port: u16) -> bool {
 }
 
 /// Returns `true` if the IP address is private, loopback, link-local, or reserved.
-fn is_private_ip(ip: &IpAddr) -> bool {
+///
+/// The single, framework-owned SSRF block predicate for this crate — every
+/// other guard (the pre-resolve [`validate_url`] and the connect-time
+/// [`crate::ssrf_connect::SsrfGuardedResolver`] / redirect-hop check) is
+/// built on top of this one function. Mirrors `go-kit/httputil.IsBlockedIP`.
+pub fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_private_v4(v4),
         IpAddr::V6(v6) => is_private_v6(v6),
@@ -121,15 +158,30 @@ fn is_private_v4(ip: &Ipv4Addr) -> bool {
         || ip.is_link_local()  // 169.254.0.0/16
         || ip.is_broadcast()   // 255.255.255.255
         || ip.is_unspecified() // 0.0.0.0
+        || ip.is_multicast()   // 224.0.0.0/4
         || is_shared_v4(ip)    // 100.64.0.0/10 (CGNAT)
         || is_documentation_v4(ip) // 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
 }
 
 fn is_private_v6(ip: &Ipv6Addr) -> bool {
+    // Rust's `Ipv6Addr` predicates do NOT auto-unwrap an IPv4-mapped
+    // address (`::ffff:a.b.c.d`) the way Go's `net.IP.IsLoopback()` et al.
+    // do via their internal `To4()` call — so `::ffff:127.0.0.1` would
+    // otherwise sail past every check below (`is_loopback()` on the *v6*
+    // address checks only for the literal `::1` bit pattern). Unwrap first
+    // and re-run the v4 predicate, matching Go's implicit behavior.
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_private_v4(&v4);
+    }
+
     ip.is_loopback()           // ::1
         || ip.is_unspecified() // ::
+        || ip.is_multicast()   // ff00::/8 (covers link-local multicast too)
         || is_ula_v6(ip)       // fc00::/7 (unique local)
         || is_link_local_v6(ip) // fe80::/10
+        || is_nat64_v6(ip)     // 64:ff9b::/96 (RFC 6052)
+        || is_6to4_v6(ip)      // 2002::/16 (RFC 3056, deprecated)
+        || is_ipv4_compatible_v6(ip) // ::/96, deprecated IPv4-compatible form
 }
 
 /// CGNAT (Shared Address Space) — RFC 6598.
@@ -153,6 +205,59 @@ fn is_ula_v6(ip: &Ipv6Addr) -> bool {
 /// Link-local — fe80::/10.
 fn is_link_local_v6(ip: &Ipv6Addr) -> bool {
     (ip.segments()[0] & 0xFFC0) == 0xFE80
+}
+
+/// NAT64 well-known prefix — 64:ff9b::/96 (RFC 6052). Embeds an IPv4
+/// address in the low 32 bits; blocking the whole prefix is simpler and
+/// safer than unpacking and re-checking the embedded address (mirrors
+/// `go-kit/httputil.extraBlockedCIDRs`).
+fn is_nat64_v6(ip: &Ipv6Addr) -> bool {
+    let s = ip.segments();
+    s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0
+}
+
+/// 6to4 — 2002::/16 (RFC 3056). Encodes a full IPv4 address in bits 16-47;
+/// deprecated and rare in legitimate traffic, so blocking the entire range
+/// outright costs nothing.
+fn is_6to4_v6(ip: &Ipv6Addr) -> bool {
+    ip.segments()[0] == 0x2002
+}
+
+/// IPv4-compatible IPv6 — ::/96 (deprecated, RFC 4291 §2.5.5.1), distinct
+/// from the IPv4-MAPPED `::ffff:a.b.c.d` form handled via `to_ipv4_mapped()`
+/// above. Embeds an IPv4 address in the low 32 bits with an all-zero high
+/// 96 bits — this also matches `::` and `::1`, which are already caught by
+/// `is_unspecified()`/`is_loopback()` earlier, same as Go's `Contains`
+/// behavior on `::/96`.
+fn is_ipv4_compatible_v6(ip: &Ipv6Addr) -> bool {
+    let s = ip.segments();
+    s[0] == 0 && s[1] == 0 && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0
+}
+
+/// Returns `true` if `host` resembles an alternate-encoding numeric IP
+/// literal (hex, pure-decimal, or octal-per-component) that
+/// `host.parse::<IpAddr>()` rejects but a permissive resolver may still
+/// interpret as an IP address — a classic SSRF filter bypass technique.
+/// Ported 1:1 from `go-kit/httputil.looksLikeAltEncodedIP` for fleet parity.
+fn looks_like_alt_encoded_ip(host: &str) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+    if host.to_ascii_lowercase().contains("0x") {
+        return true;
+    }
+    if host.chars().all(|c| c.is_ascii_digit()) {
+        // Pure-decimal integer form, e.g. "2130706433" == 127.0.0.1.
+        return true;
+    }
+    for part in host.split('.') {
+        let bytes = part.as_bytes();
+        if bytes.len() >= 2 && bytes[0] == b'0' && part.chars().all(|c| c.is_ascii_digit()) {
+            // Octal-looking dotted component, e.g. "012.0.0.1".
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -181,6 +286,14 @@ mod tests {
     }
 
     #[test]
+    fn blocks_cloud_metadata() {
+        // Oracle/AWS/GCP instance-metadata address — subset of link-local,
+        // asserted explicitly so a future refactor of the link-local branch
+        // can't silently stop covering it (mirrors go-kit's explicit check).
+        assert!(is_private_ip(&"169.254.169.254".parse().unwrap()));
+    }
+
+    #[test]
     fn blocks_cgnat() {
         assert!(is_private_ip(&"100.64.0.1".parse().unwrap()));
         assert!(is_private_ip(&"100.127.255.255".parse().unwrap()));
@@ -194,11 +307,77 @@ mod tests {
     }
 
     #[test]
+    fn blocks_multicast() {
+        assert!(is_private_ip(&"224.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"239.255.255.255".parse().unwrap()));
+        assert!(is_private_ip(&"ff02::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_v6() {
+        assert!(is_private_ip(&"::ffff:127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"::ffff:10.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"::ffff:169.254.169.254".parse().unwrap()));
+        // Mapped PUBLIC v4 must still be allowed.
+        assert!(!is_private_ip(&"::ffff:8.8.8.8".parse().unwrap()));
+    }
+
+    #[test]
+    fn blocks_nat64() {
+        assert!(is_private_ip(&"64:ff9b::127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"64:ff9b::808:808".parse().unwrap()));
+    }
+
+    #[test]
+    fn blocks_6to4() {
+        assert!(is_private_ip(&"2002:c000:0204::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn blocks_ipv4_compatible_v6() {
+        assert!(is_private_ip(&"::127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"::8.8.8.8".parse().unwrap()));
+    }
+
+    #[test]
     fn allows_public_ips() {
         assert!(!is_private_ip(&"8.8.8.8".parse().unwrap()));
         assert!(!is_private_ip(&"93.184.215.14".parse().unwrap()));
         assert!(!is_private_ip(&"1.1.1.1".parse().unwrap()));
         assert!(!is_private_ip(&"2606:4700::6810:85e5".parse().unwrap()));
+    }
+
+    #[test]
+    fn alt_encoded_ip_detection() {
+        assert!(looks_like_alt_encoded_ip("2130706433")); // decimal 127.0.0.1
+        assert!(looks_like_alt_encoded_ip("0x7f000001")); // hex
+        assert!(looks_like_alt_encoded_ip("0X7F000001")); // hex, uppercase
+        assert!(looks_like_alt_encoded_ip("012.0.0.1")); // octal component
+        assert!(!looks_like_alt_encoded_ip("example.com"));
+        assert!(!looks_like_alt_encoded_ip("127.0.0.1")); // real dotted-quad, parses as IpAddr already
+        assert!(!looks_like_alt_encoded_ip(""));
+    }
+
+    #[test]
+    fn validate_blocks_alt_encoded_ip() {
+        // Whatever the `url` crate does with these forms internally, the
+        // fail-closed heuristic must catch anything that slips through as
+        // a non-IP host string.
+        for candidate in ["http://2130706433/", "http://0x7f000001/"] {
+            match validate_url(candidate) {
+                Ok(()) => {
+                    // If `url` already normalized this to a literal loopback
+                    // IP, the earlier IP-literal branch must have caught it.
+                    let parsed = Url::parse(candidate).unwrap();
+                    let host = parsed.host_str().unwrap();
+                    assert!(
+                        host.parse::<IpAddr>().is_ok_and(|ip| is_private_ip(&ip)),
+                        "{candidate} was allowed through without being recognized as a blocked literal IP"
+                    );
+                }
+                Err(e) => assert!(e.to_string().contains("SSRF blocked")),
+            }
+        }
     }
 
     #[test]

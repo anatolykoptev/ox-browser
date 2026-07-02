@@ -41,6 +41,14 @@ pub async fn download_to_file(
             .map_err(|e| MediaError::DownloadFailed(format!("create dir: {e}")))?;
     }
 
+    // Pre-resolve tier: catches a literal-IP or bad-scheme target before
+    // even constructing the client. `crate::http::build_client` layers the
+    // connect-time + redirect-hop guards on top (see its doc comment) — the
+    // two together give this download path the same coverage as
+    // `ox_http::HttpClient`'s middleware chain + wreq client combination.
+    ox_http::validate_url(url)
+        .map_err(|e| MediaError::DownloadFailed(format!("blocked target: {e}")))?;
+
     let part_path = dest.with_extension("part");
 
     let client = crate::http::build_client(proxy_url, DOWNLOAD_TIMEOUT, "download")?;
