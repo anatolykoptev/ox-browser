@@ -127,10 +127,10 @@ fn count_landmarks(doc: &Document) -> u32 {
 
     let mut count: u32 = SEMANTIC.iter().map(|t| doc.select(t).length() as u32).sum();
     for el in doc.select("[role]").iter() {
-        if let Some(role) = el.attr("role") {
-            if ARIA_ROLES.contains(&role.trim()) {
-                count += 1;
-            }
+        if let Some(role) = el.attr("role")
+            && ARIA_ROLES.contains(&role.trim())
+        {
+            count += 1;
         }
     }
     count

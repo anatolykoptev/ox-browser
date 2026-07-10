@@ -82,12 +82,11 @@ impl WreqHandler {
                 if let Ok(proxy) = wreq::Proxy::all(proxy_url) {
                     builder = builder.proxy(proxy);
                 }
-            } else if let Some(ref pool) = self.proxy_pool {
-                if let Some(proxy_url) = pool.next() {
-                    if let Ok(proxy) = wreq::Proxy::all(&proxy_url) {
-                        builder = builder.proxy(proxy);
-                    }
-                }
+            } else if let Some(ref pool) = self.proxy_pool
+                && let Some(proxy_url) = pool.next()
+                && let Ok(proxy) = wreq::Proxy::all(&proxy_url)
+            {
+                builder = builder.proxy(proxy);
             }
         }
 

@@ -71,7 +71,7 @@ pub struct ReadOutput {
 }
 
 /// Article metadata extracted from HTML meta tags and JSON-LD.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ArticleMeta {
     pub published_at: String,
     pub modified_at: String,
@@ -280,23 +280,11 @@ pub const NOISE_SELECTORS: &[&str] = &[
     "iframe",
 ];
 
-impl Default for ArticleMeta {
-    fn default() -> Self {
-        Self {
-            published_at: String::new(),
-            modified_at: String::new(),
-            section: String::new(),
-            site_name: String::new(),
-            tags: Vec::new(),
-            language: String::new(),
-        }
-    }
-}
-
 /// Extract article metadata from HTML meta tags and JSON-LD.
 ///
 /// Checks multiple sources for each field (meta tags, JSON-LD, HTML attributes)
 /// to maximize extraction success across different sites.
+#[allow(clippy::field_reassign_with_default)] // per-field assignment with source comments reads better than a giant struct literal
 fn extract_article_meta(html: &str, json_ld: &[serde_json::Value]) -> ArticleMeta {
     let mut meta = ArticleMeta::default();
 
@@ -341,24 +329,24 @@ fn extract_article_meta(html: &str, json_ld: &[serde_json::Value]) -> ArticleMet
         }
     }
     // Source: JSON-LD keywords (comma-separated string or array)
-    if tags.is_empty() {
-        if let Some(kw) = json_ld_string(json_ld, "keywords") {
-            for tag in kw.split(',') {
-                let t = tag.trim().to_string();
-                if !t.is_empty() {
-                    tags.push(t);
-                }
+    if tags.is_empty()
+        && let Some(kw) = json_ld_string(json_ld, "keywords")
+    {
+        for tag in kw.split(',') {
+            let t = tag.trim().to_string();
+            if !t.is_empty() {
+                tags.push(t);
             }
         }
     }
     // Source: <meta name="keywords">
-    if tags.is_empty() {
-        if let Some(kw) = extract_meta_content(html, "keywords") {
-            for tag in kw.split(',') {
-                let t = tag.trim().to_string();
-                if !t.is_empty() {
-                    tags.push(t);
-                }
+    if tags.is_empty()
+        && let Some(kw) = extract_meta_content(html, "keywords")
+    {
+        for tag in kw.split(',') {
+            let t = tag.trim().to_string();
+            if !t.is_empty() {
+                tags.push(t);
             }
         }
     }
@@ -382,10 +370,10 @@ fn extract_meta_content(html: &str, attr_value: &str) -> Option<String> {
         if let Some(pos) = html.find(&needle) {
             let end = html.floor_char_boundary(html.len().min(pos + 300));
             let slice = &html[pos..end];
-            if let Some(val) = extract_content_attr(slice) {
-                if !val.is_empty() {
-                    return Some(val);
-                }
+            if let Some(val) = extract_content_attr(slice)
+                && !val.is_empty()
+            {
+                return Some(val);
             }
         }
         // Also try single quotes
@@ -393,10 +381,10 @@ fn extract_meta_content(html: &str, attr_value: &str) -> Option<String> {
         if let Some(pos) = html.find(&needle_sq) {
             let end = html.floor_char_boundary(html.len().min(pos + 300));
             let slice = &html[pos..end];
-            if let Some(val) = extract_content_attr(slice) {
-                if !val.is_empty() {
-                    return Some(val);
-                }
+            if let Some(val) = extract_content_attr(slice)
+                && !val.is_empty()
+            {
+                return Some(val);
             }
         }
     }
@@ -412,10 +400,10 @@ fn extract_all_meta_content(html: &str, attr_value: &str) -> Vec<String> {
         let abs_pos = search_from + pos;
         let end = html.floor_char_boundary(html.len().min(abs_pos + 300));
         let slice = &html[abs_pos..end];
-        if let Some(val) = extract_content_attr(slice) {
-            if !val.is_empty() {
-                results.push(val);
-            }
+        if let Some(val) = extract_content_attr(slice)
+            && !val.is_empty()
+        {
+            results.push(val);
         }
         search_from = abs_pos + needle.len();
     }
@@ -475,29 +463,28 @@ fn extract_html_lang(html: &str) -> Option<String> {
 fn json_ld_string(json_ld: &[serde_json::Value], field: &str) -> Option<String> {
     for obj in json_ld {
         // Direct field
-        if let Some(val) = obj.get(field).and_then(|v| v.as_str()) {
-            if !val.is_empty() {
-                return Some(val.to_string());
-            }
+        if let Some(val) = obj.get(field).and_then(|v| v.as_str())
+            && !val.is_empty()
+        {
+            return Some(val.to_string());
         }
         // For "publisher" — may be an object with "name"
-        if field == "publisher" {
-            if let Some(pub_obj) = obj.get("publisher") {
-                if let Some(name) = pub_obj.get("name").and_then(|v| v.as_str()) {
-                    return Some(name.to_string());
-                }
-            }
+        if field == "publisher"
+            && let Some(pub_obj) = obj.get("publisher")
+            && let Some(name) = pub_obj.get("name").and_then(|v| v.as_str())
+        {
+            return Some(name.to_string());
         }
         // For "keywords" — may be an array
-        if field == "keywords" {
-            if let Some(arr) = obj.get("keywords").and_then(|v| v.as_array()) {
-                let kw: Vec<String> = arr
-                    .iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect();
-                if !kw.is_empty() {
-                    return Some(kw.join(", "));
-                }
+        if field == "keywords"
+            && let Some(arr) = obj.get("keywords").and_then(|v| v.as_array())
+        {
+            let kw: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            if !kw.is_empty() {
+                return Some(kw.join(", "));
             }
         }
     }

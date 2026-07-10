@@ -120,25 +120,25 @@ async fn read_page_inner(
             }
             _ => {}
         }
-    } else if let Some(cache) = &render_cache {
-        if cache.get(&domain) == Some(RenderMode::GiveUp) {
-            let still_blocked = http
-                .config()
-                .solver_negcache
-                .as_ref()
-                .is_some_and(|nc| nc.is_blocked(&domain));
-            if still_blocked {
-                tracing::debug!(domain = %domain, "render cache hit: GiveUp (no chrome_url) — fast-failing");
-                return build_error_output(
-                    params,
-                    "direct",
-                    elapsed(start),
-                    "solver negcache: domain on cooldown (GiveUp)",
-                );
-            } else {
-                tracing::info!(domain = %domain, "render cache GiveUp evicted (no chrome_url): negcache cooldown lifted");
-                cache.remove(&domain);
-            }
+    } else if let Some(cache) = &render_cache
+        && cache.get(&domain) == Some(RenderMode::GiveUp)
+    {
+        let still_blocked = http
+            .config()
+            .solver_negcache
+            .as_ref()
+            .is_some_and(|nc| nc.is_blocked(&domain));
+        if still_blocked {
+            tracing::debug!(domain = %domain, "render cache hit: GiveUp (no chrome_url) — fast-failing");
+            return build_error_output(
+                params,
+                "direct",
+                elapsed(start),
+                "solver negcache: domain on cooldown (GiveUp)",
+            );
+        } else {
+            tracing::info!(domain = %domain, "render cache GiveUp evicted (no chrome_url): negcache cooldown lifted");
+            cache.remove(&domain);
         }
     }
 
@@ -149,23 +149,23 @@ async fn read_page_inner(
         Err(e) => {
             // On Cloudflare error → check negcache; if domain is on cooldown set
             // GiveUp so the next request fast-fails before reaching chrome_fallback.
-            if matches!(e, crate::HttpError::Cloudflare(_, _, _)) {
-                if let (Some(cache), Some(url)) = (&render_cache, &chrome_url) {
-                    let negcache_blocked = http
-                        .config()
-                        .solver_negcache
-                        .as_ref()
-                        .is_some_and(|nc| nc.is_blocked(&domain));
-                    if negcache_blocked {
-                        tracing::info!(domain = %domain, "CF error + negcache blocked → marking GiveUp, fast-failing");
-                        cache.set(&domain, RenderMode::GiveUp);
-                    } else {
-                        tracing::info!(domain = %domain, "CF error on HTTP fetch → marking Chrome, retrying via Chrome fallback");
-                        cache.set(&domain, RenderMode::Chrome);
-                        if let Some(output) = chrome_fallback(url, params, format, start).await {
-                            crate::metrics::record_fetch_success();
-                            return output;
-                        }
+            if matches!(e, crate::HttpError::Cloudflare(_, _, _))
+                && let (Some(cache), Some(url)) = (&render_cache, &chrome_url)
+            {
+                let negcache_blocked = http
+                    .config()
+                    .solver_negcache
+                    .as_ref()
+                    .is_some_and(|nc| nc.is_blocked(&domain));
+                if negcache_blocked {
+                    tracing::info!(domain = %domain, "CF error + negcache blocked → marking GiveUp, fast-failing");
+                    cache.set(&domain, RenderMode::GiveUp);
+                } else {
+                    tracing::info!(domain = %domain, "CF error on HTTP fetch → marking Chrome, retrying via Chrome fallback");
+                    cache.set(&domain, RenderMode::Chrome);
+                    if let Some(output) = chrome_fallback(url, params, format, start).await {
+                        crate::metrics::record_fetch_success();
+                        return output;
                     }
                 }
             }
@@ -183,14 +183,14 @@ async fn read_page_inner(
     }
 
     // Detect JS-only shells after a successful HTTP fetch.
-    if crate::content_detect::needs_js_rendering(&resp.body) {
-        if let (Some(cache), Some(url)) = (&render_cache, &chrome_url) {
-            tracing::info!(domain = %domain, "JS shell detected → marking Chrome, retrying via Chrome fallback");
-            cache.set(&domain, RenderMode::Chrome);
-            if let Some(output) = chrome_fallback(url, params, format, start).await {
-                crate::metrics::record_fetch_success();
-                return output;
-            }
+    if crate::content_detect::needs_js_rendering(&resp.body)
+        && let (Some(cache), Some(url)) = (&render_cache, &chrome_url)
+    {
+        tracing::info!(domain = %domain, "JS shell detected → marking Chrome, retrying via Chrome fallback");
+        cache.set(&domain, RenderMode::Chrome);
+        if let Some(output) = chrome_fallback(url, params, format, start).await {
+            crate::metrics::record_fetch_success();
+            return output;
         }
     }
 

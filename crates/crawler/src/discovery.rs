@@ -95,24 +95,25 @@ async fn find_sitemaps(
 
     // 2. Try robots.txt
     let robots_url = format!("{origin}/robots.txt");
-    if let Ok(resp) = http.get(&robots_url).await {
-        if resp.status == 200 {
-            let urls = crate::robots::extract_sitemaps(resp.body.as_bytes());
-            if !urls.is_empty() {
-                tracing::info!(count = urls.len(), "found sitemaps in robots.txt");
-                return urls;
-            }
+    if let Ok(resp) = http.get(&robots_url).await
+        && resp.status == 200
+    {
+        let urls = crate::robots::extract_sitemaps(resp.body.as_bytes());
+        if !urls.is_empty() {
+            tracing::info!(count = urls.len(), "found sitemaps in robots.txt");
+            return urls;
         }
     }
 
     // 3. Try standard paths
     for path in ["/sitemap.xml", "/sitemap_index.xml"] {
         let url = format!("{origin}{path}");
-        if let Ok(resp) = http.get(&url).await {
-            if resp.status == 200 && resp.body.contains('<') {
-                tracing::info!(url = %url, "found sitemap at standard path");
-                return vec![url];
-            }
+        if let Ok(resp) = http.get(&url).await
+            && resp.status == 200
+            && resp.body.contains('<')
+        {
+            tracing::info!(url = %url, "found sitemap at standard path");
+            return vec![url];
         }
     }
 

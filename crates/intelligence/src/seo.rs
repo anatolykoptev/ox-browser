@@ -151,6 +151,7 @@ pub fn analyze(html: &str) -> SeoReport {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // SEO score over independent meta/OG/Twitter/hreflang signals
 fn compute_score(
     og: &OgTags,
     twitter: &TwitterCard,

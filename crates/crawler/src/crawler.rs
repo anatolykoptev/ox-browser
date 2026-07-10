@@ -93,6 +93,7 @@ impl Crawler {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // crawl entry-point wiring independent config inputs
 async fn run_crawl(
     seed: String,
     http: Arc<HttpClient>,
@@ -125,14 +126,14 @@ async fn run_crawl(
         let mut f = frontier.lock().await;
         let mut d = dedup.lock().await;
         for entry in &discovery_entries {
-            if let Some(normalized) = normalize_url(&entry.url) {
-                if d.insert(&normalized) {
-                    let priority = entry.priority.unwrap_or(0.5);
-                    let source = EntrySource::Sitemap {
-                        lastmod: entry.lastmod.clone(),
-                    };
-                    f.push_with_priority(normalized, 0, priority, source);
-                }
+            if let Some(normalized) = normalize_url(&entry.url)
+                && d.insert(&normalized)
+            {
+                let priority = entry.priority.unwrap_or(0.5);
+                let source = EntrySource::Sitemap {
+                    lastmod: entry.lastmod.clone(),
+                };
+                f.push_with_priority(normalized, 0, priority, source);
             }
         }
     }
@@ -213,10 +214,10 @@ async fn run_crawl(
             )
             .await;
 
-            if let Ok(ref r) = result {
-                if r.error.is_none() {
-                    pages_crawled.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
+            if let Ok(ref r) = result
+                && r.error.is_none()
+            {
+                pages_crawled.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
 
             if let Ok(r) = result {
@@ -255,39 +256,39 @@ async fn process_page(
     let start = Instant::now();
 
     // Check robots.txt (lazy load per host)
-    if config.respect_robots {
-        if let Ok(parsed) = Url::parse(url_str) {
-            let host = parsed.host_str().unwrap_or("").to_string();
-            let need_fetch = { !robots.lock().await.has_host(&host) };
-            if need_fetch {
-                let robots_url = format!("{}://{}/robots.txt", parsed.scheme(), host);
-                let body = match http.get(&robots_url).await {
-                    Ok(resp) if resp.status == 200 => Some(resp.body.into_bytes()),
-                    _ => None,
-                };
-                let mut r = robots.lock().await;
-                match body {
-                    Some(b) => r.insert(&host, &b),
-                    None => r.insert_unavailable(&host),
-                }
+    if config.respect_robots
+        && let Ok(parsed) = Url::parse(url_str)
+    {
+        let host = parsed.host_str().unwrap_or("").to_string();
+        let need_fetch = { !robots.lock().await.has_host(&host) };
+        if need_fetch {
+            let robots_url = format!("{}://{}/robots.txt", parsed.scheme(), host);
+            let body = match http.get(&robots_url).await {
+                Ok(resp) if resp.status == 200 => Some(resp.body.into_bytes()),
+                _ => None,
+            };
+            let mut r = robots.lock().await;
+            match body {
+                Some(b) => r.insert(&host, &b),
+                None => r.insert_unavailable(&host),
             }
-            if !robots.lock().await.is_allowed(&host, url_str) {
-                return Ok(CrawlResult {
-                    url: url_str.to_string(),
-                    status: 0,
-                    depth,
-                    title: String::new(),
-                    markdown: String::new(),
-                    content_length: 0,
-                    links_found: 0,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                    error: Some("blocked by robots.txt".into()),
-                    source: None,
-                    sitemap_lastmod: None,
-                    sitemap_priority: None,
-                    file_path: None,
-                });
-            }
+        }
+        if !robots.lock().await.is_allowed(&host, url_str) {
+            return Ok(CrawlResult {
+                url: url_str.to_string(),
+                status: 0,
+                depth,
+                title: String::new(),
+                markdown: String::new(),
+                content_length: 0,
+                links_found: 0,
+                elapsed_ms: start.elapsed().as_millis() as u64,
+                error: Some("blocked by robots.txt".into()),
+                source: None,
+                sitemap_lastmod: None,
+                sitemap_priority: None,
+                file_path: None,
+            });
         }
     }
 
@@ -345,34 +346,33 @@ async fn process_page(
     // Enqueue discovered links (depth check BEFORE dedup — katana pattern)
     if follow_links && depth < config.max_depth {
         for link in &links {
-            if let Some(resolved) = resolve_url(url_str, &link.href) {
-                if let Some(normalized) = normalize_url(&resolved) {
-                    if let Ok(candidate) = Url::parse(&normalized) {
-                        if candidate.scheme() != "http" && candidate.scheme() != "https" {
-                            continue;
-                        }
-                        if !config.scope.is_allowed(seed_url, &candidate) {
-                            continue;
-                        }
-                        if is_cycle(&normalized) {
-                            continue;
-                        }
-                        {
-                            let mut b = budget.lock().await;
-                            if !b.try_consume(candidate.path()) {
-                                continue;
-                            }
-                        }
-                        {
-                            let mut d = dedup.lock().await;
-                            if !d.insert(&normalized) {
-                                continue;
-                            }
-                        }
-                        let mut f = frontier.lock().await;
-                        f.push(normalized, depth + 1);
+            if let Some(resolved) = resolve_url(url_str, &link.href)
+                && let Some(normalized) = normalize_url(&resolved)
+                && let Ok(candidate) = Url::parse(&normalized)
+            {
+                if candidate.scheme() != "http" && candidate.scheme() != "https" {
+                    continue;
+                }
+                if !config.scope.is_allowed(seed_url, &candidate) {
+                    continue;
+                }
+                if is_cycle(&normalized) {
+                    continue;
+                }
+                {
+                    let mut b = budget.lock().await;
+                    if !b.try_consume(candidate.path()) {
+                        continue;
                     }
                 }
+                {
+                    let mut d = dedup.lock().await;
+                    if !d.insert(&normalized) {
+                        continue;
+                    }
+                }
+                let mut f = frontier.lock().await;
+                f.push(normalized, depth + 1);
             }
         }
     }

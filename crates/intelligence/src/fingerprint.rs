@@ -26,6 +26,7 @@ pub struct Detection {
 /// - `cookies`     — cookie name → value (injected as synthetic Cookie header)
 ///
 /// Returns detections sorted by confidence descending.
+#[allow(clippy::too_many_arguments)] // tech fingerprint over several independent page signals
 pub fn detect(
     url: &str,
     headers: &HashMap<String, String>,
@@ -88,12 +89,11 @@ fn build_detector() -> Result<TechDetector, rswappalyzer::RswError> {
 /// Filter out known rswappalyzer false positives.
 fn is_false_positive(t: &rswappalyzer::detector::Technology) -> bool {
     // Onsen UI triggers on wp-consent-api and similar unrelated scripts.
-    if t.name == "Onsen UI" {
-        if let Some(ref v) = t.version {
-            if v.contains('/') || v.contains("wp-") {
-                return true;
-            }
-        }
+    if t.name == "Onsen UI"
+        && let Some(ref v) = t.version
+        && (v.contains('/') || v.contains("wp-"))
+    {
+        return true;
     }
     false
 }

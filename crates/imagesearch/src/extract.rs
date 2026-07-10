@@ -103,18 +103,20 @@ pub fn extract_images(html: &str, base_url: &str) -> Vec<ImageResult> {
     // 3. <picture><source> — srcset with type preference (webp > jpeg)
     for node in doc.select("picture > source[srcset]").iter() {
         let srcset = node.attr("srcset").map(|s| s.to_string());
-        if let Some(url) = best_srcset_url(&srcset, &base) {
-            if !url.is_empty() && seen.insert(url.clone()) && !should_skip(&url) {
-                results.push(ImageResult {
-                    url,
-                    thumbnail: String::new(),
-                    source: base_url.to_string(),
-                    title: String::new(),
-                    width: 0,
-                    height: 0,
-                    engine: "extract".into(),
-                });
-            }
+        if let Some(url) = best_srcset_url(&srcset, &base)
+            && !url.is_empty()
+            && seen.insert(url.clone())
+            && !should_skip(&url)
+        {
+            results.push(ImageResult {
+                url,
+                thumbnail: String::new(),
+                source: base_url.to_string(),
+                title: String::new(),
+                width: 0,
+                height: 0,
+                engine: "extract".into(),
+            });
         }
     }
 
@@ -148,10 +150,10 @@ fn resolve_url(src: &str, base: &Option<Url>) -> String {
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
         return trimmed.to_string();
     }
-    if let Some(base) = base {
-        if let Ok(resolved) = base.join(trimmed) {
-            return resolved.to_string();
-        }
+    if let Some(base) = base
+        && let Ok(resolved) = base.join(trimmed)
+    {
+        return resolved.to_string();
     }
     String::new()
 }

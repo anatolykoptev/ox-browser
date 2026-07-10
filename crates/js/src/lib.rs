@@ -63,6 +63,7 @@ pub struct AppState {
 
 impl AppState {
     /// Build AppState with the default set of site handlers (including Twitter).
+    #[allow(clippy::too_many_arguments)] // DI ctor wiring the shared dep set
     pub fn new(
         provider: Arc<dyn CookieProvider>,
         cache: Arc<CookieCache>,

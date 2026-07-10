@@ -74,6 +74,7 @@ fn compute_score(r: &PerformanceReport) -> u8 {
     if !r.preconnect.is_empty() {
         score += 5;
     }
+    #[allow(clippy::manual_checked_ops)] // explicit >0 guard is clearer than checked_div here
     let lazy_ratio = if r.images_total > 0 {
         r.images_lazy * 100 / r.images_total
     } else {

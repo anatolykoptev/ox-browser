@@ -263,10 +263,10 @@ static PRIVATE_NETS: LazyLock<Vec<Ipv4Net>> = LazyLock::new(|| {
 /// Find the first private/reserved IPv4 address in the text.
 fn find_private_ip(text: &str) -> Option<String> {
     for m in RE_IPV4.find_iter(text) {
-        if let Ok(addr) = m.as_str().parse::<Ipv4Addr>() {
-            if PRIVATE_NETS.iter().any(|net: &Ipv4Net| net.contains(&addr)) {
-                return Some(m.as_str().to_string());
-            }
+        if let Ok(addr) = m.as_str().parse::<Ipv4Addr>()
+            && PRIVATE_NETS.iter().any(|net: &Ipv4Net| net.contains(&addr))
+        {
+            return Some(m.as_str().to_string());
         }
     }
     None

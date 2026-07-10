@@ -157,17 +157,16 @@ fn check_call(call: &oxc_ast::ast::CallExpression, findings: &mut Vec<DangerousJ
         return;
     }
     // setTimeout/setInterval with string first arg
-    if is_callee_named(&call.callee, "setTimeout") || is_callee_named(&call.callee, "setInterval") {
-        if let Some(first) = call.arguments.first() {
-            if matches!(first, Argument::StringLiteral(_)) {
-                let fn_name = callee_name(&call.callee).unwrap_or("setTimeout");
-                findings.push(DangerousJsFinding {
-                    pattern: "setTimeout-string".into(),
-                    detail: format!("{fn_name}() with string argument acts as eval"),
-                    severity: Severity::Medium,
-                });
-            }
-        }
+    if (is_callee_named(&call.callee, "setTimeout") || is_callee_named(&call.callee, "setInterval"))
+        && let Some(first) = call.arguments.first()
+        && matches!(first, Argument::StringLiteral(_))
+    {
+        let fn_name = callee_name(&call.callee).unwrap_or("setTimeout");
+        findings.push(DangerousJsFinding {
+            pattern: "setTimeout-string".into(),
+            detail: format!("{fn_name}() with string argument acts as eval"),
+            severity: Severity::Medium,
+        });
     }
 }
 
@@ -182,14 +181,14 @@ fn check_assignment(
         }
         _ => None,
     };
-    if let Some(ref name) = prop {
-        if name == "innerHTML" || name == "outerHTML" {
-            findings.push(DangerousJsFinding {
-                pattern: name.clone(),
-                detail: format!("{name} assignment can inject arbitrary HTML"),
-                severity: Severity::Medium,
-            });
-        }
+    if let Some(ref name) = prop
+        && (name == "innerHTML" || name == "outerHTML")
+    {
+        findings.push(DangerousJsFinding {
+            pattern: name.clone(),
+            detail: format!("{name} assignment can inject arbitrary HTML"),
+            severity: Severity::Medium,
+        });
     }
 }
 

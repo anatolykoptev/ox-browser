@@ -102,6 +102,7 @@ pub(crate) fn parse_key_indices(js: &str) -> Result<(usize, Vec<usize>), String>
 pub(crate) fn parse_svg_frames(html: &str) -> Result<Vec<Vec<Vec<i32>>>, String> {
     let mut frames = vec![vec![]; 4];
 
+    #[allow(clippy::needless_range_loop)] // index drives the regex pattern and the frame slot
     for i in 0..4usize {
         let svg_re = Regex::new(&format!(
             r#"(?s)<svg[^>]*id=["']loading-x-anim-{i}["'][^>]*>.*?</svg>"#

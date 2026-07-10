@@ -20,6 +20,7 @@ pub struct Rule {
     pub name: String,
     pub category: String,
     pub signals: Signals,
+    #[allow(dead_code)] // deserialized from the rules config; not yet consumed by matching
     pub severity: HashMap<String, String>,
     pub confidence_boost: HashMap<String, u8>,
 }
@@ -41,6 +42,7 @@ pub struct Signals {
     #[serde(default)]
     pub html_patterns: Vec<String>,
     #[serde(default)]
+    #[allow(dead_code)] // deserialized from the rules config; not yet consumed by matching
     pub dom_classes: Vec<String>,
     #[serde(default)]
     pub url_patterns: Vec<String>,

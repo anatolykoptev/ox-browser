@@ -1,6 +1,6 @@
 # ox-browser — Stealth HTTP Client + CF Bypass
 
-**Port**: 8901 | **Rust** 1.93 edition 2024 | Docker container
+**Port**: 8901 | **Rust** 1.97 edition 2024 | Docker container
 
 ## Crates
 

@@ -74,15 +74,16 @@ pub fn overall_score(seo: u8, perf: u8, a11y: u8, security: u8) -> u8 {
 /// Collect top issues from all categories, sorted by severity.
 pub fn top_issues(categories: &AuditCategories, max: usize) -> Vec<AuditFinding> {
     let mut all: Vec<AuditFinding> = Vec::new();
-    for cat in [
+    for c in [
         &categories.seo,
         &categories.performance,
         &categories.accessibility,
         &categories.security,
-    ] {
-        if let Some(c) = cat {
-            all.extend(c.findings.iter().cloned());
-        }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        all.extend(c.findings.iter().cloned());
     }
     all.sort_by_key(|f| match f.severity {
         "critical" => 0,

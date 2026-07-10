@@ -4,10 +4,11 @@ use regex::Regex;
 use url::Url;
 
 /// Defines which URLs are in-scope for crawling.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum CrawlScope {
     /// Allow any URL sharing the same registrable domain (e.g. sub.example.com
     /// matches example.com).
+    #[default]
     SameDomain,
     /// Allow only URLs with an exact host match.
     SameHost,
@@ -17,12 +18,6 @@ pub enum CrawlScope {
         allow: Vec<Regex>,
         block: Vec<Regex>,
     },
-}
-
-impl Default for CrawlScope {
-    fn default() -> Self {
-        Self::SameDomain
-    }
 }
 
 impl CrawlScope {

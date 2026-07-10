@@ -43,13 +43,12 @@ impl Handler for RateLimitHandler {
         let resp = self.next.handle(req.clone()).await?;
 
         // On 429, parse Retry-After and mark the domain blocked.
-        if resp.status == 429 {
-            if let Some(ra) = resp.headers.get("retry-after") {
-                if let Some(dur) = parse_retry_after(ra.to_str().unwrap_or("")) {
-                    self.limiter
-                        .mark_rate_limited(&req.url, Instant::now() + dur);
-                }
-            }
+        if resp.status == 429
+            && let Some(ra) = resp.headers.get("retry-after")
+            && let Some(dur) = parse_retry_after(ra.to_str().unwrap_or(""))
+        {
+            self.limiter
+                .mark_rate_limited(&req.url, Instant::now() + dur);
         }
 
         Ok(resp)

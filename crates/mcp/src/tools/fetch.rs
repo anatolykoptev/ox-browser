@@ -128,6 +128,7 @@ impl OxMcpServer {
         }
     }
 }
+#[allow(clippy::too_many_arguments)] // assembles an OK result from independent fields
 fn smart_ok(
     status: u16,
     body: String,

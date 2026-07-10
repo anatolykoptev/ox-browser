@@ -114,10 +114,10 @@ pub fn analyze(html: &str) -> MediaReport {
 
     // Collect image CDNs from source[src] inside picture too.
     doc.select("source[src]").iter().for_each(|node| {
-        if let Some(src) = node.attr("src") {
-            if let Some(cdn) = image_cdn(src.as_ref()) {
-                cdn_set.insert(cdn);
-            }
+        if let Some(src) = node.attr("src")
+            && let Some(cdn) = image_cdn(src.as_ref())
+        {
+            cdn_set.insert(cdn);
         }
     });
 
@@ -130,12 +130,12 @@ pub fn analyze(html: &str) -> MediaReport {
             videos.push(VideoInfo { src, platform });
         } else {
             // Check first <source> child.
-            if let Some(s) = node.select("source[src]").iter().next() {
-                if let Some(src) = s.attr("src") {
-                    let src = src.to_string();
-                    let platform = classify_video(&src).to_string();
-                    videos.push(VideoInfo { src, platform });
-                }
+            if let Some(s) = node.select("source[src]").iter().next()
+                && let Some(src) = s.attr("src")
+            {
+                let src = src.to_string();
+                let platform = classify_video(&src).to_string();
+                videos.push(VideoInfo { src, platform });
             }
         }
     });
@@ -147,12 +147,12 @@ pub fn analyze(html: &str) -> MediaReport {
             let src = src.to_string();
             let platform = classify_audio(&src).to_string();
             audio.push(AudioInfo { src, platform });
-        } else if let Some(s) = node.select("source[src]").iter().next() {
-            if let Some(src) = s.attr("src") {
-                let src = src.to_string();
-                let platform = classify_audio(&src).to_string();
-                audio.push(AudioInfo { src, platform });
-            }
+        } else if let Some(s) = node.select("source[src]").iter().next()
+            && let Some(src) = s.attr("src")
+        {
+            let src = src.to_string();
+            let platform = classify_audio(&src).to_string();
+            audio.push(AudioInfo { src, platform });
         }
     });
 

@@ -33,7 +33,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     http_config.cookie_cache = Some(Arc::clone(&cache));
 
     // Chrome fallback for JS-rendered pages
-    if let Some(url) = std::env::var("GO_BROWSER_URL").ok() {
+    if let Ok(url) = std::env::var("GO_BROWSER_URL") {
         http_config.chrome_render_url = Some(format!("{url}/api/v1/chrome/interact"));
     }
     http_config.render_cache = Some(Arc::new(ox_http::render_cache::RenderModeCache::default()));
@@ -56,20 +56,19 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     // Initialize proxy pool from Webshare API if key is available.
     // Skipped entirely when PROXY_DISABLED is set to avoid contacting the Webshare API.
-    if !config::proxy_disabled() {
-        if let Ok(api_key) = std::env::var("WEBSHARE_API_KEY") {
-            if !api_key.is_empty() {
-                match ox_http::WebsharePool::new(&api_key).await {
-                    Ok(pool) => {
-                        let health_cfg = config.proxy.health.to_health_config();
-                        let healthy = ox_http::HealthyPool::new(Arc::new(pool), health_cfg);
-                        http_config.proxy_pool = Some(Arc::new(healthy));
-                        tracing::info!("initialized Webshare proxy pool with health tracking");
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "failed to init Webshare pool, continuing without proxies");
-                    }
-                }
+    if !config::proxy_disabled()
+        && let Ok(api_key) = std::env::var("WEBSHARE_API_KEY")
+        && !api_key.is_empty()
+    {
+        match ox_http::WebsharePool::new(&api_key).await {
+            Ok(pool) => {
+                let health_cfg = config.proxy.health.to_health_config();
+                let healthy = ox_http::HealthyPool::new(Arc::new(pool), health_cfg);
+                http_config.proxy_pool = Some(Arc::new(healthy));
+                tracing::info!("initialized Webshare proxy pool with health tracking");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to init Webshare pool, continuing without proxies");
             }
         }
     }

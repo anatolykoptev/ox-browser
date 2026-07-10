@@ -5,7 +5,7 @@ use crate::types::{Tweet, UserProfile};
 pub fn format_tweet(t: &Tweet) -> String {
     let mut s = format!("@{}", t.author_screen_name);
     if !t.created_at.is_empty() {
-        s.push_str(&format!(" · {}", &t.created_at));
+        s.push_str(&format!(" · {}", t.created_at));
     }
     s.push_str(&format!("\n\n{}", t.text));
     s.push_str(&format!(

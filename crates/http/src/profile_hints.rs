@@ -74,12 +74,12 @@ pub fn client_hints_headers(ua: &str) -> Vec<(String, String)> {
 /// like `"Not_A Brand";v="8.0.0.0"`.
 fn grease_to_full_version(grease: &str) -> String {
     // Find the version value between the last pair of quotes.
-    if let Some(last_quote) = grease.rfind('"') {
-        if let Some(second_last) = grease[..last_quote].rfind('"') {
-            let ver = &grease[second_last + 1..last_quote];
-            let prefix = &grease[..second_last + 1];
-            return format!("{prefix}{ver}.0.0.0\"");
-        }
+    if let Some(last_quote) = grease.rfind('"')
+        && let Some(second_last) = grease[..last_quote].rfind('"')
+    {
+        let ver = &grease[second_last + 1..last_quote];
+        let prefix = &grease[..second_last + 1];
+        return format!("{prefix}{ver}.0.0.0\"");
     }
     grease.to_owned()
 }

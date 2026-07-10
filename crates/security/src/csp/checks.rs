@@ -48,14 +48,15 @@ pub fn has_reporting(directives: &[CspDirective]) -> bool {
 
 fn check_unsafe_inline(directives: &[CspDirective], findings: &mut Vec<CspFinding>) {
     let script_vals = get_script_src_values(directives);
-    if let Some(vals) = script_vals {
-        if has_value(vals, "'unsafe-inline'") && !has_nonce_or_hash(vals) {
-            findings.push(CspFinding {
-                directive: "script-src".into(),
-                description: "XSS bypass possible: unsafe-inline without nonce/hash".into(),
-                severity: Severity::High,
-            });
-        }
+    if let Some(vals) = script_vals
+        && has_value(vals, "'unsafe-inline'")
+        && !has_nonce_or_hash(vals)
+    {
+        findings.push(CspFinding {
+            directive: "script-src".into(),
+            description: "XSS bypass possible: unsafe-inline without nonce/hash".into(),
+            severity: Severity::High,
+        });
     }
 }
 
@@ -89,14 +90,15 @@ fn check_broad_sources(directives: &[CspDirective], findings: &mut Vec<CspFindin
 
 fn check_strict_dynamic(directives: &[CspDirective], findings: &mut Vec<CspFinding>) {
     let script_vals = get_script_src_values(directives);
-    if let Some(vals) = script_vals {
-        if has_value(vals, "'strict-dynamic'") && !has_nonce_or_hash(vals) {
-            findings.push(CspFinding {
-                directive: "script-src".into(),
-                description: "strict-dynamic without nonce/hash is misconfigured".into(),
-                severity: Severity::High,
-            });
-        }
+    if let Some(vals) = script_vals
+        && has_value(vals, "'strict-dynamic'")
+        && !has_nonce_or_hash(vals)
+    {
+        findings.push(CspFinding {
+            directive: "script-src".into(),
+            description: "strict-dynamic without nonce/hash is misconfigured".into(),
+            severity: Severity::High,
+        });
     }
 }
 
