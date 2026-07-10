@@ -98,7 +98,7 @@ impl Handler for SolverHandler {
                 Err(HttpError::Cloudflare(ChallengeType::Block, status, ray))
             }
             // Solvable CF challenge — call provider, cache, retry once.
-            Err(HttpError::Cloudflare(challenge_type, status, ray)) => {
+            Err(HttpError::Cloudflare(challenge_type, _status, _ray)) => {
                 // Retry-storm guard: if this domain is on cooldown after repeated
                 // solve failures, skip the 15-25s solver and surface the CF error
                 // immediately. A success below clears the cooldown.

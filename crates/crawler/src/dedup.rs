@@ -136,7 +136,7 @@ pub fn is_cycle(url: &str) -> bool {
 
     // Check for repeating patterns of length 1..=segments.len()/2.
     for pattern_len in 1..=segments.len() / 2 {
-        if segments.len() % pattern_len != 0 {
+        if !segments.len().is_multiple_of(pattern_len) {
             continue;
         }
         let pattern = &segments[..pattern_len];

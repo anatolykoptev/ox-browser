@@ -114,6 +114,7 @@ fn extract_domain(url: &str) -> String {
         .to_string()
 }
 
+#[allow(clippy::too_many_arguments)] // aggregates every security signal report; struct-refactor tracked (PR notes)
 fn compute_score(
     resp_headers: &HashMap<String, String>,
     headers_report: &HeadersReport,
@@ -176,6 +177,7 @@ fn compute_score(
     score.max(0)
 }
 
+#[allow(clippy::too_many_arguments)] // tallies findings across every report kind; struct-refactor tracked (PR notes)
 fn count_findings(
     headers: &HeadersReport,
     csp: &Option<CspReport>,

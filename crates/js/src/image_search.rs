@@ -53,10 +53,10 @@ pub async fn image_search(
     if use_all || req.engines.iter().any(|e| e == "openverse") {
         engines.push(Arc::new(OpenverseImages::from_env()));
     }
-    if req.engines.iter().any(|e| e == "pexels") {
-        if let Ok(key) = std::env::var("PEXELS_API_KEY") {
-            engines.push(Arc::new(PexelsImages { api_key: key }));
-        }
+    if req.engines.iter().any(|e| e == "pexels")
+        && let Ok(key) = std::env::var("PEXELS_API_KEY")
+    {
+        engines.push(Arc::new(PexelsImages { api_key: key }));
     }
     if req.engines.iter().any(|e| e == "brave") {
         engines.push(Arc::new(BraveImages));

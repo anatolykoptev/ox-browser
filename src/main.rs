@@ -83,11 +83,11 @@ async fn main() -> anyhow::Result<()> {
                 cfg.profile = Some(random_profile(&filter));
             }
 
-            if !config::proxy_disabled() {
-                if let Some(proxy_url) = proxy {
-                    let pool = StaticPool::new(vec![proxy_url]);
-                    cfg.proxy_pool = Some(Arc::new(pool));
-                }
+            if !config::proxy_disabled()
+                && let Some(proxy_url) = proxy
+            {
+                let pool = StaticPool::new(vec![proxy_url]);
+                cfg.proxy_pool = Some(Arc::new(pool));
             }
 
             cfg.debug = debug;

@@ -53,6 +53,7 @@ impl ClientTransaction {
         let time_now = time_now as u32;
 
         let mut time_bytes = [0u8; 4];
+        #[allow(clippy::needless_range_loop)] // index also drives the bit-shift
         for i in 0..4 {
             time_bytes[i] = ((time_now >> (i * 8)) & 0xFF) as u8;
         }
@@ -185,7 +186,7 @@ fn solve(value: f64, min: f64, max: f64, rounding: bool) -> f64 {
 }
 
 fn is_odd(n: usize) -> f64 {
-    if n % 2 != 0 { -1.0 } else { 0.0 }
+    if !n.is_multiple_of(2) { -1.0 } else { 0.0 }
 }
 
 fn js_round(num: f64) -> f64 {

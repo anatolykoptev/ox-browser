@@ -101,6 +101,7 @@ pub fn analyze_mixed_content(html: &str, page_url: &str) -> MixedContentReport {
     report
 }
 
+#[allow(clippy::too_many_arguments)] // one resource-type scan; params are scan inputs, not shared state
 fn find_mixed(
     html: &str,
     pattern: &str,

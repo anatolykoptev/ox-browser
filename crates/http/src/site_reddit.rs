@@ -20,7 +20,7 @@ use crate::read_pipeline::{build_output, elapsed};
 pub async fn try_reddit_json(
     http: &HttpClient,
     params: &ReadParams,
-    format: ContentFormat,
+    _format: ContentFormat,
     start: Instant,
 ) -> Option<ReadOutput> {
     let url = Url::parse(&params.url).ok()?;
@@ -50,10 +50,9 @@ pub async fn try_reddit_json(
 
     let (title, lines) = if let Some(children) = data["data"]["children"].as_array() {
         parse_listing(children)
-    } else if let Some(arr) = data.as_array() {
-        parse_post_comments(arr)
     } else {
-        return None;
+        let arr = data.as_array()?;
+        parse_post_comments(arr)
     };
 
     if lines.is_empty() {
@@ -109,10 +108,10 @@ fn parse_post_comments(arr: &[serde_json::Value]) -> (String, Vec<String>) {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        if let Some(text) = post.get("selftext").and_then(|v| v.as_str()) {
-            if !text.is_empty() {
-                lines.push(text.to_string());
-            }
+        if let Some(text) = post.get("selftext").and_then(|v| v.as_str())
+            && !text.is_empty()
+        {
+            lines.push(text.to_string());
         }
     }
     if let Some(comments) = arr.get(1).and_then(|l| l["data"]["children"].as_array()) {

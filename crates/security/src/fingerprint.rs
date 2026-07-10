@@ -77,26 +77,24 @@ impl Fingerprinter {
             // Match headers.
             for (hdr_name, hdr_pattern) in &def.headers {
                 let hdr_lower = hdr_name.to_lowercase();
-                if let Some(val) = headers.get(&hdr_lower) {
-                    if hdr_pattern.is_empty()
-                        || val.to_lowercase().contains(&hdr_pattern.to_lowercase())
-                    {
-                        confidence = confidence.saturating_add(50);
-                        break;
-                    }
+                if let Some(val) = headers.get(&hdr_lower)
+                    && (hdr_pattern.is_empty()
+                        || val.to_lowercase().contains(&hdr_pattern.to_lowercase()))
+                {
+                    confidence = confidence.saturating_add(50);
+                    break;
                 }
             }
 
             // Match meta tags.
             for (meta_name, meta_pattern) in &def.meta {
-                if let Some(content) = meta_tags.get(&meta_name.to_lowercase()) {
-                    if content
+                if let Some(content) = meta_tags.get(&meta_name.to_lowercase())
+                    && content
                         .to_lowercase()
                         .contains(&meta_pattern.to_lowercase())
-                    {
-                        confidence = confidence.saturating_add(25);
-                        break;
-                    }
+                {
+                    confidence = confidence.saturating_add(25);
+                    break;
                 }
             }
 
@@ -131,7 +129,7 @@ impl Fingerprinter {
             }
         }
 
-        results.sort_by(|a, b| b.confidence.cmp(&a.confidence));
+        results.sort_by_key(|d| std::cmp::Reverse(d.confidence));
         results
     }
 }

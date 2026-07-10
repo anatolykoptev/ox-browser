@@ -128,12 +128,11 @@ fn compute_score(
         }
     }
 
-    if has_unsafe_inline {
-        if let Some(vals) = script_vals {
-            if !has_nonce_or_hash(vals) {
-                return -20;
-            }
-        }
+    if has_unsafe_inline
+        && let Some(vals) = script_vals
+        && !has_nonce_or_hash(vals)
+    {
+        return -20;
     }
 
     if has_unsafe_eval {

@@ -73,6 +73,7 @@ pub async fn fetch_smart(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // assembles a response from independent fields
 fn make_response(
     status: u16,
     body: String,

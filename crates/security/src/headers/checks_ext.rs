@@ -221,27 +221,27 @@ pub(super) fn check_basic_auth(
     out: &mut Vec<HeaderFinding>,
 ) {
     let name = "www-authenticate";
-    if let Some(v) = get(h, name) {
-        if v.to_lowercase().contains("basic") {
-            let is_https = page_url.starts_with("https://") || page_url.starts_with("https%");
-            let severity = if is_https {
-                Severity::Medium
-            } else {
-                Severity::High
-            };
-            let desc = if is_https {
-                "Basic authentication detected (credentials sent as base64)"
-            } else {
-                "Basic authentication over HTTP (credentials sent in cleartext)"
-            };
-            out.push(HeaderFinding {
-                header: name.to_string(),
-                status: HeaderStatus::Present,
-                value: Some(v),
-                description: desc.into(),
-                severity,
-                recommendation: Some("Use token-based authentication instead of Basic auth".into()),
-            });
-        }
+    if let Some(v) = get(h, name)
+        && v.to_lowercase().contains("basic")
+    {
+        let is_https = page_url.starts_with("https://") || page_url.starts_with("https%");
+        let severity = if is_https {
+            Severity::Medium
+        } else {
+            Severity::High
+        };
+        let desc = if is_https {
+            "Basic authentication detected (credentials sent as base64)"
+        } else {
+            "Basic authentication over HTTP (credentials sent in cleartext)"
+        };
+        out.push(HeaderFinding {
+            header: name.to_string(),
+            status: HeaderStatus::Present,
+            value: Some(v),
+            description: desc.into(),
+            severity,
+            recommendation: Some("Use token-based authentication instead of Basic auth".into()),
+        });
     }
 }

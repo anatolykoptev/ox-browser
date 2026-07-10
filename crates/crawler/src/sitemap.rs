@@ -155,12 +155,11 @@ fn parse_urlset_xml(
             }
             Ok(Event::End(ref e)) => {
                 let name = e.local_name().as_ref().to_vec();
-                if name == b"url" {
-                    if let Some(entry) = current.take() {
-                        if !entry.url.is_empty() {
-                            entries.push(entry);
-                        }
-                    }
+                if name == b"url"
+                    && let Some(entry) = current.take()
+                    && !entry.url.is_empty()
+                {
+                    entries.push(entry);
                 }
                 current_tag.clear();
             }

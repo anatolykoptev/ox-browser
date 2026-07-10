@@ -110,15 +110,15 @@ pub fn analyze_info_disclosure(headers: &HashMap<String, String>) -> InfoDisclos
     }
 
     // Check server header for version disclosure.
-    if let Some(value) = headers.get("server") {
-        if server_has_version(value) {
-            findings.push(InfoDisclosureFinding {
-                header: "server".to_string(),
-                value: value.clone(),
-                description: "Server header discloses version information".to_string(),
-                severity: Severity::Medium,
-            });
-        }
+    if let Some(value) = headers.get("server")
+        && server_has_version(value)
+    {
+        findings.push(InfoDisclosureFinding {
+            header: "server".to_string(),
+            value: value.clone(),
+            description: "Server header discloses version information".to_string(),
+            severity: Severity::Medium,
+        });
     }
 
     // Check deprecated headers.

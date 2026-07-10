@@ -105,7 +105,7 @@ pub fn detect_protection(
         });
     }
 
-    detections.sort_by(|a, b| b.confidence.cmp(&a.confidence));
+    detections.sort_by_key(|d| std::cmp::Reverse(d.confidence));
 
     let summary = build_summary(&detections);
     let findings = build_findings(mode, &summary, db);
@@ -119,6 +119,7 @@ pub fn detect_protection(
 
 // ── Rule evaluation ───────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)] // threads several independent report inputs per rule
 fn evaluate_rule(
     rule: &rules::Rule,
     compiled: &rules::CompiledRule,
@@ -137,7 +138,7 @@ fn evaluate_rule(
     if let Some(&pts) = boost.get("cookies") {
         for pattern in &sig.cookies {
             let pat_lower = pattern.to_ascii_lowercase();
-            if lower_cookies.iter().any(|c| *c == pat_lower) {
+            if lower_cookies.contains(&pat_lower) {
                 confidence += u16::from(pts);
                 matched.push(format!("cookie:{pattern}"));
                 break;
@@ -173,16 +174,15 @@ fn evaluate_rule(
     if let Some(&pts) = boost.get("headers") {
         for (name, value) in &sig.headers {
             let name_lower = name.to_ascii_lowercase();
-            if let Some(hdr_val) = headers.get(&name_lower) {
-                if value.is_empty()
+            if let Some(hdr_val) = headers.get(&name_lower)
+                && (value.is_empty()
                     || hdr_val
                         .to_ascii_lowercase()
-                        .contains(&value.to_ascii_lowercase())
-                {
-                    confidence += u16::from(pts);
-                    matched.push(format!("header:{name}"));
-                    break;
-                }
+                        .contains(&value.to_ascii_lowercase()))
+            {
+                confidence += u16::from(pts);
+                matched.push(format!("header:{name}"));
+                break;
             }
         }
     }
@@ -270,34 +270,36 @@ fn build_findings(
     };
 
     // PoW challenge (bot_detection) is functionally equivalent to CAPTCHA.
-    if !summary.has_captcha && !summary.has_bot_detection {
-        if let Some(f) = login_findings.get("no_captcha") {
-            findings.push(ProtectionFinding {
-                check: "no_captcha".to_owned(),
-                detail: f.message.clone(),
-                severity: parse_severity(&f.severity),
-            });
-        }
+    if !summary.has_captcha
+        && !summary.has_bot_detection
+        && let Some(f) = login_findings.get("no_captcha")
+    {
+        findings.push(ProtectionFinding {
+            check: "no_captcha".to_owned(),
+            detail: f.message.clone(),
+            severity: parse_severity(&f.severity),
+        });
     }
 
-    if !summary.has_bot_detection && !summary.has_waf {
-        if let Some(f) = login_findings.get("no_bot_detection") {
-            findings.push(ProtectionFinding {
-                check: "no_bot_detection".to_owned(),
-                detail: f.message.clone(),
-                severity: parse_severity(&f.severity),
-            });
-        }
+    if !summary.has_bot_detection
+        && !summary.has_waf
+        && let Some(f) = login_findings.get("no_bot_detection")
+    {
+        findings.push(ProtectionFinding {
+            check: "no_bot_detection".to_owned(),
+            detail: f.message.clone(),
+            severity: parse_severity(&f.severity),
+        });
     }
 
-    if !summary.has_fingerprinting {
-        if let Some(f) = login_findings.get("no_fingerprinting") {
-            findings.push(ProtectionFinding {
-                check: "no_fingerprinting".to_owned(),
-                detail: f.message.clone(),
-                severity: parse_severity(&f.severity),
-            });
-        }
+    if !summary.has_fingerprinting
+        && let Some(f) = login_findings.get("no_fingerprinting")
+    {
+        findings.push(ProtectionFinding {
+            check: "no_fingerprinting".to_owned(),
+            detail: f.message.clone(),
+            severity: parse_severity(&f.severity),
+        });
     }
 
     findings

@@ -36,14 +36,12 @@ impl XtidManager {
             state.ct.is_none() || state.last_refresh.elapsed() > REFRESH_INTERVAL
         };
 
-        if needs_refresh {
-            if let Err(e) = self.initialize().await {
-                let has_stale = self.state.read().await.ct.is_some();
-                if has_stale {
-                    tracing::warn!("xtid: refresh failed, using stale keys: {e}");
-                } else {
-                    return Err(e);
-                }
+        if needs_refresh && let Err(e) = self.initialize().await {
+            let has_stale = self.state.read().await.ct.is_some();
+            if has_stale {
+                tracing::warn!("xtid: refresh failed, using stale keys: {e}");
+            } else {
+                return Err(e);
             }
         }
 

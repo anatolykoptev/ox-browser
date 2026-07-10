@@ -52,6 +52,7 @@ pub struct OxMcpServer {
 }
 
 impl OxMcpServer {
+    #[allow(clippy::too_many_arguments)] // DI ctor wiring the shared dep set
     pub fn new(
         provider: Arc<dyn CookieProvider>,
         cache: Arc<CookieCache>,

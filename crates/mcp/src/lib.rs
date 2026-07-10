@@ -27,6 +27,7 @@ impl ServerHandler for OxMcpServer {
 }
 
 /// Build an Axum router that serves the MCP endpoint at `/mcp`.
+#[allow(clippy::too_many_arguments)] // DI ctor wiring the shared dep set
 pub fn build_mcp_router(
     provider: Arc<dyn CookieProvider>,
     cache: Arc<CookieCache>,

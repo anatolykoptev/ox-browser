@@ -145,15 +145,15 @@ pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
         .go_browser_url
         .clone()
         .or_else(|| std::env::var("GO_BROWSER_URL").ok());
-    if let Some(ref url) = go_browser_url {
-        if !url.is_empty() {
-            let cfg = ox_http::solver_gobrowser::GoBrowserConfig {
-                base_url: url.clone(),
-                timeout: Duration::from_secs(config.solver.chromium_timeout_secs + 5),
-            };
-            tracing::info!(url, "using GoBrowserSolver");
-            return Arc::new(ox_http::solver_gobrowser::GoBrowserSolver::new(cfg));
-        }
+    if let Some(ref url) = go_browser_url
+        && !url.is_empty()
+    {
+        let cfg = ox_http::solver_gobrowser::GoBrowserConfig {
+            base_url: url.clone(),
+            timeout: Duration::from_secs(config.solver.chromium_timeout_secs + 5),
+        };
+        tracing::info!(url, "using GoBrowserSolver");
+        return Arc::new(ox_http::solver_gobrowser::GoBrowserSolver::new(cfg));
     }
 
     if let Some(ref url) = config.solver.byparr_url {
