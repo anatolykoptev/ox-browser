@@ -107,6 +107,12 @@ pub static PROXY_DISABLED: AtomicU64 = AtomicU64::new(0);
 /// solve time — is visible to Prometheus alerting (issue #29, silent_downgrade).
 pub static SOLVER_CONFIGURED: AtomicU64 = AtomicU64::new(0);
 
+/// Per-domain rate-limiter entry count at scrape time (point-in-time, can
+/// shrink). Updated after each insert and after `evict_expired` sweeps stale
+/// domains so operators can confirm bounded growth (issue #20,
+/// resource_exhaustion).
+pub static RATELIMIT_DOMAINS: AtomicU64 = AtomicU64::new(0);
+
 /// Total crawler dedup entries evicted because the bounded set hit its
 /// `max_capacity` cap. Monotonic counter — compare against
 /// `oxbrowser_crawler_dedup_entries` to detect sustained cap pressure on
@@ -201,6 +207,11 @@ pub fn render() -> String {
             name: "oxbrowser_solver_configured",
             help: "1 if a real CF solver is configured (GoBrowser/Byparr), 0 if NoOpProvider (no solver).",
             value: SOLVER_CONFIGURED.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_ratelimit_domains",
+            help: "Per-domain rate-limiter entry count at scrape time (point-in-time, can shrink).",
+            value: RATELIMIT_DOMAINS.load(Ordering::Relaxed),
         },
     ];
 

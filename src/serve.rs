@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ox_http::{DomainLimiter, HttpClient, cookie_cache, solver_negcache};
+use ox_http::{DomainLimiter, HttpClient, cookie_cache, ratelimit_domain, solver_negcache};
 use ox_js::EndpointDefaults;
 
 use crate::config::{self, ServerConfig};
@@ -58,7 +58,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     // Per-domain rate limits.
     let domain_configs = config.ratelimit.to_domain_configs();
     if !domain_configs.is_empty() {
-        http_config.rate_limiter = Some(Arc::new(DomainLimiter::new(domain_configs)));
+        let rate_limiter = Arc::new(DomainLimiter::new(domain_configs));
+        // Periodic eviction of stale per-domain entries so a long-running
+        // server doesn't accumulate them forever (issue #20,
+        // resource_exhaustion). Mirrors the negcache/cookie-cache spawns.
+        ratelimit_domain::spawn_eviction_task(Arc::clone(&rate_limiter), Duration::from_secs(60));
+        http_config.rate_limiter = Some(rate_limiter);
         tracing::info!(
             "initialized domain rate limiter with {} rules",
             config.ratelimit.rules.len()
