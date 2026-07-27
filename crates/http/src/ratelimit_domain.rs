@@ -108,6 +108,8 @@ impl DomainLimiter {
             Limiter::with_window(rule.requests_per_window, rule.window_duration)
         });
         lim.mark_rate_limited(&domain, until);
+        drop(lims);
+        self.publish_gauge();
     }
 
     /// Remove entries whose last request is older than `2 × window_duration`

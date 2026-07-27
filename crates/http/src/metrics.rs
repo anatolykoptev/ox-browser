@@ -391,4 +391,36 @@ mod tests {
         // Reset to avoid leaking state into other tests.
         set_gauge(&SOLVER_CONFIGURED, 0);
     }
+
+    /// RED test for issue #20: render() must emit
+    /// `oxbrowser_ratelimit_domains` reflecting the per-domain rate-limiter
+    /// entry count so operators can confirm bounded growth. Set after each
+    /// insert and after `evict_expired` sweeps stale domains.
+    #[test]
+    fn render_emits_ratelimit_domains_gauge() {
+        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+
+        // One domain tracked → gauge 1
+        set_gauge(&RATELIMIT_DOMAINS, 1);
+        let body = render();
+        assert!(
+            body.contains("# TYPE oxbrowser_ratelimit_domains gauge"),
+            "missing gauge TYPE line: {body}"
+        );
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_ratelimit_domains 1"),
+            "missing/incorrect gauge sample line (expected 1): {body}"
+        );
+
+        // No domains tracked → gauge 0
+        set_gauge(&RATELIMIT_DOMAINS, 0);
+        let body = render();
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_ratelimit_domains 0"),
+            "missing/incorrect gauge sample line (expected 0): {body}"
+        );
+
+        // Reset to avoid leaking state into other tests.
+        set_gauge(&RATELIMIT_DOMAINS, 0);
+    }
 }
