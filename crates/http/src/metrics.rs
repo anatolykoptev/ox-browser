@@ -101,6 +101,12 @@ pub static CRAWLER_DEDUP_ENTRIES: AtomicU64 = AtomicU64::new(0);
 /// logs (issue #27, silent_downgrade).
 pub static PROXY_DISABLED: AtomicU64 = AtomicU64::new(0);
 
+/// Whether a real CF solver is configured (1 = GoBrowser/Byparr, 0 = NoOp).
+/// Set once at startup in `config::build_cookie_provider` so a silent
+/// downgrade to the NoOpProvider — which only errors "no solver configured" at
+/// solve time — is visible to Prometheus alerting (issue #29, silent_downgrade).
+pub static SOLVER_CONFIGURED: AtomicU64 = AtomicU64::new(0);
+
 /// Total crawler dedup entries evicted because the bounded set hit its
 /// `max_capacity` cap. Monotonic counter — compare against
 /// `oxbrowser_crawler_dedup_entries` to detect sustained cap pressure on
@@ -190,6 +196,11 @@ pub fn render() -> String {
             name: "oxbrowser_proxy_disabled",
             help: "1 if outbound proxy is disabled (PROXY_DISABLED env set), 0 otherwise.",
             value: PROXY_DISABLED.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_solver_configured",
+            help: "1 if a real CF solver is configured (GoBrowser/Byparr), 0 if NoOpProvider (no solver).",
+            value: SOLVER_CONFIGURED.load(Ordering::Relaxed),
         },
     ];
 
@@ -336,5 +347,37 @@ mod tests {
 
         // Reset to avoid leaking state into other tests.
         set_gauge(&PROXY_DISABLED, 0);
+    }
+
+    /// RED test for issue #29: render() must emit `oxbrowser_solver_configured`
+    /// reflecting whether a real CF solver (GoBrowser/Byparr) is configured (1)
+    /// or the NoOpProvider fallback is in effect (0). Set by
+    /// `config::build_cookie_provider` at startup.
+    #[test]
+    fn render_emits_solver_configured_gauge() {
+        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+
+        // Real solver configured → gauge 1
+        set_gauge(&SOLVER_CONFIGURED, 1);
+        let body = render();
+        assert!(
+            body.contains("# TYPE oxbrowser_solver_configured gauge"),
+            "missing gauge TYPE line: {body}"
+        );
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_solver_configured 1"),
+            "missing/incorrect gauge sample line (expected 1): {body}"
+        );
+
+        // NoOp fallback → gauge 0
+        set_gauge(&SOLVER_CONFIGURED, 0);
+        let body = render();
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_solver_configured 0"),
+            "missing/incorrect gauge sample line (expected 0): {body}"
+        );
+
+        // Reset to avoid leaking state into other tests.
+        set_gauge(&SOLVER_CONFIGURED, 0);
     }
 }
