@@ -59,6 +59,28 @@ struct Counter {
     value: u64,
 }
 
+/// One gauge row in the registry: metric name, help text, current value.
+///
+/// Gauges differ from counters in that they can go up *or* down — they snapshot
+/// a point-in-time quantity (cache size, active-proxy count, tmpfs usage) rather
+/// than a monotonic event count. The Prometheus exposition format distinguishes
+/// them only by the `# TYPE … gauge` line, so [`render`] emits the same
+/// `# HELP` / sample shape and flips the type marker.
+struct Gauge {
+    name: &'static str,
+    help: &'static str,
+    value: u64,
+}
+
+/// Cookie-cache entry count at scrape time (point-in-time, can shrink).
+pub static COOKIE_CACHE_ENTRIES: AtomicU64 = AtomicU64::new(0);
+
+/// Set a gauge's value. Thin convenience wrapper so call sites don't have to
+/// import `Ordering` — mirrors the ergonomics of the `record_*` counter helpers.
+pub fn set_gauge(gauge: &AtomicU64, value: u64) {
+    gauge.store(value, Ordering::Relaxed);
+}
+
 /// Snapshot every counter and render it in Prometheus text exposition format.
 ///
 /// The output is a valid `text/plain; version=0.0.4` body: a `# HELP` line, a
@@ -100,7 +122,13 @@ pub fn render() -> String {
         },
     ];
 
-    let mut out = String::with_capacity(counters.len() * 160);
+    let gauges = [Gauge {
+        name: "oxbrowser_cookie_cache_entries",
+        help: "Cookie-cache entry count at scrape time (point-in-time, can shrink).",
+        value: COOKIE_CACHE_ENTRIES.load(Ordering::Relaxed),
+    }];
+
+    let mut out = String::with_capacity((counters.len() + gauges.len()) * 160);
     for c in &counters {
         out.push_str("# HELP ");
         out.push_str(c.name);
@@ -115,12 +143,43 @@ pub fn render() -> String {
         out.push_str(&c.value.to_string());
         out.push('\n');
     }
+    for g in &gauges {
+        out.push_str("# HELP ");
+        out.push_str(g.name);
+        out.push(' ');
+        out.push_str(g.help);
+        out.push('\n');
+        out.push_str("# TYPE ");
+        out.push_str(g.name);
+        out.push_str(" gauge\n");
+        out.push_str(g.name);
+        out.push(' ');
+        out.push_str(&g.value.to_string());
+        out.push('\n');
+    }
     out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_emits_gauge_series_in_prometheus_format() {
+        // Set a known gauge value and confirm render() emits the gauge TYPE
+        // marker plus a matching sample line — the RED test for gauge support.
+        set_gauge(&COOKIE_CACHE_ENTRIES, 42);
+        let body = render();
+        assert!(
+            body.contains("# TYPE oxbrowser_cookie_cache_entries gauge"),
+            "missing gauge TYPE line: {body}"
+        );
+        assert!(
+            body.lines()
+                .any(|l| l == "oxbrowser_cookie_cache_entries 42"),
+            "missing/incorrect gauge sample line: {body}"
+        );
+    }
 
     #[test]
     fn render_emits_all_series_in_prometheus_format() {
