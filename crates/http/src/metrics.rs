@@ -103,6 +103,36 @@ pub static CRAWLER_DEDUP_ENTRIES: AtomicU64 = AtomicU64::new(0);
 /// means a private/metadata IP was caught by the guard.
 pub static SSRF_ALLOWLIST_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
+/// Whether outbound proxy is disabled via `PROXY_DISABLED` (1) or not (0).
+/// Set once at startup from `config::proxy_disabled()` in `src/serve.rs` so
+/// operators scraping Prometheus can see the degraded state without grepping
+/// logs (issue #27, silent_downgrade).
+pub static PROXY_DISABLED: AtomicU64 = AtomicU64::new(0);
+
+/// Whether a real CF solver is configured (1 = GoBrowser/Byparr, 0 = NoOp).
+/// Set once at startup in `config::build_cookie_provider` so a silent
+/// downgrade to the NoOpProvider — which only errors "no solver configured" at
+/// solve time — is visible to Prometheus alerting (issue #29, silent_downgrade).
+pub static SOLVER_CONFIGURED: AtomicU64 = AtomicU64::new(0);
+
+/// Per-domain rate-limiter entry count at scrape time (point-in-time, can
+/// shrink). Updated after each insert and after `evict_expired` sweeps stale
+/// domains so operators can confirm bounded growth (issue #20,
+/// resource_exhaustion).
+pub static RATELIMIT_DOMAINS: AtomicU64 = AtomicU64::new(0);
+
+/// Proxy-health tracker entry count at scrape time (point-in-time, can
+/// shrink). Updated after each `record_success`/`record_failure` and after
+/// `evict_stale` sweeps stale deactivated proxies so operators can confirm
+/// the health map is bounded (issue #21, resource_exhaustion).
+pub static PROXY_HEALTH_ENTRIES: AtomicU64 = AtomicU64::new(0);
+
+/// Media tmpfs directory size in bytes at scrape time (point-in-time, can
+/// shrink as cleanup removes old files). Updated before each download by
+/// `ox_media::download::check_quota` so operators can see near-capacity
+/// state and alert before tmpfs exhaustion (issue #30, resource_exhaustion).
+pub static MEDIA_TMPFS_BYTES: AtomicU64 = AtomicU64::new(0);
+
 /// Total crawler dedup entries evicted because the bounded set hit its
 /// `max_capacity` cap. Monotonic counter — compare against
 /// `oxbrowser_crawler_dedup_entries` to detect sustained cap pressure on
@@ -193,6 +223,31 @@ pub fn render() -> String {
             help: "SSRF allowlist valid-entry count (set at startup; 0 = unset, startup failure = private/metadata IP caught).",
             value: SSRF_ALLOWLIST_ENTRIES.load(Ordering::Relaxed),
         },
+        Gauge {
+            name: "oxbrowser_proxy_disabled",
+            help: "1 if outbound proxy is disabled (PROXY_DISABLED env set), 0 otherwise.",
+            value: PROXY_DISABLED.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_solver_configured",
+            help: "1 if a real CF solver is configured (GoBrowser/Byparr), 0 if NoOpProvider (no solver).",
+            value: SOLVER_CONFIGURED.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_ratelimit_domains",
+            help: "Per-domain rate-limiter entry count at scrape time (point-in-time, can shrink).",
+            value: RATELIMIT_DOMAINS.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_proxy_health_entries",
+            help: "Proxy-health tracker entry count at scrape time (point-in-time, can shrink).",
+            value: PROXY_HEALTH_ENTRIES.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_media_tmpfs_bytes",
+            help: "Media tmpfs directory size in bytes at scrape time (point-in-time, can shrink).",
+            value: MEDIA_TMPFS_BYTES.load(Ordering::Relaxed),
+        },
     ];
 
     let mut out = String::with_capacity((counters.len() + gauges.len()) * 160);
@@ -230,6 +285,13 @@ pub fn render() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Gauge-publishing tests read/write the shared process-global `PROXY_DISABLED`
+    /// static. When run in parallel they race on that atomic, producing flaky
+    /// assertions. This mutex serializes them so the gauge value is deterministic
+    /// within each test — mirrors the T2 render_cache gauge test pattern.
+    static GAUGE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn render_emits_gauge_series_in_prometheus_format() {
@@ -314,5 +376,125 @@ mod tests {
             body.lines().any(|l| l == expected_line),
             "render() does not reflect solver_negcache::SOLVER_GIVEUP_TOTAL; line not found: {expected_line}"
         );
+    }
+
+    /// RED test for issue #27: render() must emit `oxbrowser_proxy_disabled`
+    /// reflecting the gauge value so operators scraping Prometheus can see the
+    /// PROXY_DISABLED degraded state. With the gauge set to 1 (proxy disabled),
+    /// render() emits `oxbrowser_proxy_disabled 1`; with 0, it emits `… 0`.
+    #[test]
+    fn render_emits_proxy_disabled_gauge() {
+        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+
+        // Proxy disabled → gauge 1 → render shows "oxbrowser_proxy_disabled 1"
+        set_gauge(&PROXY_DISABLED, 1);
+        let body = render();
+        assert!(
+            body.contains("# TYPE oxbrowser_proxy_disabled gauge"),
+            "missing gauge TYPE line: {body}"
+        );
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_proxy_disabled 1"),
+            "missing/incorrect gauge sample line (expected 1): {body}"
+        );
+
+        // Proxy enabled → gauge 0 → render shows "oxbrowser_proxy_disabled 0"
+        set_gauge(&PROXY_DISABLED, 0);
+        let body = render();
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_proxy_disabled 0"),
+            "missing/incorrect gauge sample line (expected 0): {body}"
+        );
+
+        // Reset to avoid leaking state into other tests.
+        set_gauge(&PROXY_DISABLED, 0);
+    }
+
+    /// RED test for issue #29: render() must emit `oxbrowser_solver_configured`
+    /// reflecting whether a real CF solver (GoBrowser/Byparr) is configured (1)
+    /// or the NoOpProvider fallback is in effect (0). Set by
+    /// `config::build_cookie_provider` at startup.
+    #[test]
+    fn render_emits_solver_configured_gauge() {
+        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+
+        // Real solver configured → gauge 1
+        set_gauge(&SOLVER_CONFIGURED, 1);
+        let body = render();
+        assert!(
+            body.contains("# TYPE oxbrowser_solver_configured gauge"),
+            "missing gauge TYPE line: {body}"
+        );
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_solver_configured 1"),
+            "missing/incorrect gauge sample line (expected 1): {body}"
+        );
+
+        // NoOp fallback → gauge 0
+        set_gauge(&SOLVER_CONFIGURED, 0);
+        let body = render();
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_solver_configured 0"),
+            "missing/incorrect gauge sample line (expected 0): {body}"
+        );
+
+        // Reset to avoid leaking state into other tests.
+        set_gauge(&SOLVER_CONFIGURED, 0);
+    }
+
+    /// RED test for issue #20: render() must emit
+    /// `oxbrowser_ratelimit_domains` reflecting the per-domain rate-limiter
+    /// entry count so operators can confirm bounded growth. Set after each
+    /// insert and after `evict_expired` sweeps stale domains.
+    #[test]
+    fn render_emits_ratelimit_domains_gauge() {
+        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+
+        // One domain tracked → gauge 1
+        set_gauge(&RATELIMIT_DOMAINS, 1);
+        let body = render();
+        assert!(
+            body.contains("# TYPE oxbrowser_ratelimit_domains gauge"),
+            "missing gauge TYPE line: {body}"
+        );
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_ratelimit_domains 1"),
+            "missing/incorrect gauge sample line (expected 1): {body}"
+        );
+
+        // No domains tracked → gauge 0
+        set_gauge(&RATELIMIT_DOMAINS, 0);
+        let body = render();
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_ratelimit_domains 0"),
+            "missing/incorrect gauge sample line (expected 0): {body}"
+        );
+
+        // Reset to avoid leaking state into other tests.
+        set_gauge(&RATELIMIT_DOMAINS, 0);
+    }
+
+    /// RED test for issue #30: render() must emit `oxbrowser_media_tmpfs_bytes`
+    /// reflecting the media tmpfs directory size so operators can see
+    /// near-capacity state and alert before tmpfs exhaustion. Set before each
+    /// download by `ox_media::download::check_quota`.
+    #[test]
+    fn render_emits_media_tmpfs_bytes_gauge() {
+        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+
+        set_gauge(&MEDIA_TMPFS_BYTES, 1_500_000_000);
+        let body = render();
+        assert!(
+            body.contains("# TYPE oxbrowser_media_tmpfs_bytes gauge"),
+            "missing gauge TYPE line: {body}"
+        );
+        assert!(
+            body.lines()
+                .any(|l| l == "oxbrowser_media_tmpfs_bytes 1500000000"),
+            "missing/incorrect gauge sample line: {body}"
+        );
+
+        // Reset to avoid leaking state into other tests.
+        set_gauge(&MEDIA_TMPFS_BYTES, 0);
     }
 }

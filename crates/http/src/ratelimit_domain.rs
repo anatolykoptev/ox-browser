@@ -2,12 +2,13 @@
 //! Port of go-stealth's `ratelimit.DomainLimiter`.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rand::Rng;
 use url::Url;
 
+use crate::metrics;
 use crate::ratelimit::Limiter;
 
 /// Rule binding a domain pattern to rate-limit parameters.
@@ -77,6 +78,7 @@ impl DomainLimiter {
         };
         if allowed {
             self.last_req.lock().unwrap().insert(domain, now);
+            self.publish_gauge();
         }
         allowed
     }
@@ -106,6 +108,46 @@ impl DomainLimiter {
             Limiter::with_window(rule.requests_per_window, rule.window_duration)
         });
         lim.mark_rate_limited(&domain, until);
+        drop(lims);
+        self.publish_gauge();
+    }
+
+    /// Remove entries whose last request is older than `2 × window_duration`
+    /// for their matched rule — i.e. domains that haven't been requested in
+    /// twice the window. Called periodically by [`spawn_eviction_task`].
+    /// Mirrors [`crate::solver_negcache::SolverNegCache::evict_expired`].
+    pub fn evict_expired(&self) {
+        let now = Instant::now();
+        let mut last_req = self.last_req.lock().unwrap();
+        last_req.retain(|domain, prev| {
+            let Some(rule) = self.match_rule(domain) else {
+                return false;
+            };
+            now.duration_since(*prev) <= rule.window_duration * 2
+        });
+        // Keep limiters in sync: drop any domain no longer present in last_req.
+        let mut lims = self.limiters.lock().unwrap();
+        lims.retain(|domain, _| last_req.contains_key(domain));
+        drop(lims);
+        drop(last_req);
+        self.publish_gauge();
+    }
+
+    /// Number of tracked domains (test/observability helper).
+    pub fn len(&self) -> usize {
+        self.last_req.lock().unwrap().len()
+    }
+
+    /// True if no domains are tracked.
+    pub fn is_empty(&self) -> bool {
+        self.last_req.lock().unwrap().is_empty()
+    }
+
+    /// Publish the current domain count to the `oxbrowser_ratelimit_domains`
+    /// gauge so operators can see bounded-growth health in Prometheus.
+    fn publish_gauge(&self) {
+        let n = self.last_req.lock().unwrap().len() as u64;
+        metrics::set_gauge(&metrics::RATELIMIT_DOMAINS, n);
     }
 
     fn match_rule(&self, domain: &str) -> Option<&DomainConfig> {
@@ -113,6 +155,21 @@ impl DomainLimiter {
             .iter()
             .find(|r| domain_matches(&r.domain, domain))
     }
+}
+
+/// Spawn a background task that periodically evicts stale per-domain entries
+/// so a long-running server doesn't accumulate them forever (issue #20).
+///
+/// Mirrors [`crate::solver_negcache::spawn_eviction_task`]. Call once at
+/// server startup, passing the same `Arc<DomainLimiter>` wired into
+/// `HttpConfig.rate_limiter`.
+pub fn spawn_eviction_task(limiter: Arc<DomainLimiter>, interval: Duration) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            limiter.evict_expired();
+        }
+    });
 }
 
 /// Extract the host (without port) from a URL string.
@@ -199,5 +256,71 @@ mod tests {
             Some("api.example.com".into())
         );
         assert_eq!(extract_domain("bad"), None);
+    }
+
+    #[test]
+    fn evict_expired_removes_stale_domains() {
+        // Window of 50ms → entries older than 100ms (2× window) are stale.
+        let limiter = DomainLimiter::new(vec![DomainConfig {
+            domain: "*.example.com".into(),
+            requests_per_window: 100,
+            window_duration: Duration::from_millis(50),
+            min_delay: Duration::ZERO,
+            random_delay: Duration::ZERO,
+        }]);
+
+        // Insert several domains.
+        limiter.allow("https://a.example.com/1");
+        limiter.allow("https://b.example.com/1");
+        limiter.allow("https://c.example.com/1");
+        assert_eq!(limiter.len(), 3);
+
+        // Wait past 2× window so all entries become stale.
+        std::thread::sleep(Duration::from_millis(120));
+
+        limiter.evict_expired();
+        assert_eq!(limiter.len(), 0, "stale entries should have been evicted");
+        assert!(limiter.is_empty());
+    }
+
+    #[test]
+    fn evict_expired_retains_recent_domains() {
+        let limiter = DomainLimiter::new(vec![DomainConfig {
+            domain: "*.example.com".into(),
+            requests_per_window: 100,
+            window_duration: Duration::from_secs(60),
+            min_delay: Duration::ZERO,
+            random_delay: Duration::ZERO,
+        }]);
+
+        limiter.allow("https://a.example.com/1");
+        limiter.allow("https://b.example.com/1");
+        assert_eq!(limiter.len(), 2);
+
+        // No wait — entries are well within 2× window (120s).
+        limiter.evict_expired();
+        assert_eq!(limiter.len(), 2, "recent entries should be retained");
+    }
+
+    #[test]
+    fn evict_expired_retains_some_drops_stale() {
+        // Mixed: a fresh entry and a stale entry coexist.
+        let limiter = DomainLimiter::new(vec![DomainConfig {
+            domain: "*.example.com".into(),
+            requests_per_window: 100,
+            window_duration: Duration::from_millis(50),
+            min_delay: Duration::ZERO,
+            random_delay: Duration::ZERO,
+        }]);
+
+        limiter.allow("https://stale.example.com/1");
+        // Wait past 2× window for the first entry.
+        std::thread::sleep(Duration::from_millis(120));
+        // Now insert a fresh entry.
+        limiter.allow("https://fresh.example.com/1");
+        assert_eq!(limiter.len(), 2);
+
+        limiter.evict_expired();
+        assert_eq!(limiter.len(), 1, "only the fresh entry should remain");
     }
 }

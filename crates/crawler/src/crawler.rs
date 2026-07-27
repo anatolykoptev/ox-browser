@@ -255,8 +255,67 @@ async fn run_crawl(
     }
     dedup.lock().await.clear();
     content_dedup.lock().await.clear();
+    budget.lock().await.reset();
 
     Ok(())
+}
+
+/// Maximum number of wait/retry cycles while another task fetches robots.txt
+/// for a host before giving up and fetching ourselves (safety valve). Each
+/// retry sleeps [`ROBOTS_INFLIGHT_WAIT_SLEEP`], so the total wait budget is
+/// `RETRIES * SLEEP` (~500 ms) — well within a typical crawl task lifetime and
+/// far shorter than a redundant robots.txt round-trip for most hosts.
+const ROBOTS_INFLIGHT_WAIT_RETRIES: usize = 10;
+
+/// Sleep between retries while waiting for another task's in-flight
+/// robots.txt fetch to complete.
+const ROBOTS_INFLIGHT_WAIT_SLEEP: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Resolve the robots.txt cache state for `host`, serializing concurrent
+/// fetches per host to prevent the TOCTOU double-fetch race (issue #25).
+///
+/// Returns `true` if the caller is the designated fetcher (it has registered
+/// the host as in-flight and must perform the HTTP fetch, then
+/// [`RobotsCache::insert`] / [`RobotsCache::insert_unavailable`] and finally
+/// [`RobotsCache::end_fetch`]). Returns `false` when a live entry already
+/// exists or another task's fetch completed while we waited — the caller
+/// should proceed straight to the `is_allowed` check.
+///
+/// The wait loop is bounded by [`ROBOTS_INFLIGHT_WAIT_RETRIES`]: if the
+/// in-flight fetch has not produced an entry by then, the caller falls through
+/// to the safety valve and fetches itself (with a defensive warn-log so a
+/// duplicate fetch is observable).
+async fn ensure_robots_loaded(robots: &Mutex<RobotsCache>, host: &str) -> bool {
+    for _ in 0..ROBOTS_INFLIGHT_WAIT_RETRIES {
+        let became_fetcher = {
+            let mut r = robots.lock().await;
+            if r.has_host(host) {
+                // A live entry already exists — nothing to fetch.
+                return false;
+            }
+            if r.begin_fetch(host) { true } else { false }
+        };
+        if became_fetcher {
+            return true;
+        }
+        // Another task is fetching this host — wait for it to land an entry.
+        tokio::time::sleep(ROBOTS_INFLIGHT_WAIT_SLEEP).await;
+    }
+    // Safety valve: the in-flight fetch did not produce an entry in time
+    // (e.g. the fetcher task panicked or the HTTP call hung). Fetch ourselves
+    // rather than block the crawl indefinitely. The warn-log makes a
+    // duplicate fetch observable.
+    tracing::warn!(
+        host = %host,
+        retries = ROBOTS_INFLIGHT_WAIT_RETRIES,
+        "robots.txt in-flight wait exhausted — fetching (possible duplicate)"
+    );
+    let mut r = robots.lock().await;
+    if r.has_host(host) {
+        return false;
+    }
+    r.begin_fetch(host);
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -278,13 +337,15 @@ async fn process_page(
 ) -> anyhow::Result<CrawlResult> {
     let start = Instant::now();
 
-    // Check robots.txt (lazy load per host)
+    // Check robots.txt (lazy-load per host, TOCTOU-safe under concurrency)
     if config.respect_robots
         && let Ok(parsed) = Url::parse(url_str)
     {
         let host = parsed.host_str().unwrap_or("").to_string();
-        let need_fetch = { !robots.lock().await.has_host(&host) };
-        if need_fetch {
+        // Serialize concurrent robots.txt fetches per host (issue #25). Only
+        // one task performs the HTTP fetch; others wait for the entry to
+        // appear and reuse it.
+        if ensure_robots_loaded(&robots, &host).await {
             let robots_url = format!("{}://{}/robots.txt", parsed.scheme(), host);
             let body = match http.get(&robots_url).await {
                 Ok(resp) if resp.status == 200 => Some(resp.body.into_bytes()),
@@ -295,6 +356,7 @@ async fn process_page(
                 Some(b) => r.insert(&host, &b),
                 None => r.insert_unavailable(&host),
             }
+            r.end_fetch(&host);
         }
         if !robots.lock().await.is_allowed(&host, url_str) {
             return Ok(CrawlResult {
@@ -629,5 +691,92 @@ mod tests {
             "FRONTIER_DROPPED_TOTAL must increment on drop"
         );
         assert_eq!(frontier.len(), 1, "frontier must not grow past capacity");
+    }
+
+    /// Issue #25 — TOCTOU double-fetch race. Under the old code, N concurrent
+    /// tasks for the same uncached host all saw `need_fetch=true` and each
+    /// performed an HTTP fetch + insert (wasteful double fetch, last-write-wins).
+    /// With the per-host in-flight guard, exactly one task becomes the fetcher;
+    /// the rest wait for the entry to appear and reuse it.
+    ///
+    /// This exercises the real shipped `ensure_robots_loaded` +
+    /// `RobotsCache::begin_fetch` / `end_fetch` code path. The designated
+    /// fetcher simulates the HTTP round-trip by inserting a live entry and
+    /// releasing the in-flight marker; the waiters must observe the entry and
+    /// return `false` (no fetch).
+    #[tokio::test]
+    async fn concurrent_robots_fetch_serialized_per_host() {
+        let robots = Arc::new(Mutex::new(RobotsCache::new("ox-browser")));
+        let host = "example.com".to_string();
+        let n = 16;
+
+        let mut handles = Vec::with_capacity(n);
+        for _ in 0..n {
+            let robots = Arc::clone(&robots);
+            let host = host.clone();
+            handles.push(tokio::spawn(async move {
+                if ensure_robots_loaded(&robots, &host).await {
+                    // Designated fetcher: perform the (stubbed) fetch, insert,
+                    // and release the in-flight guard — exactly as process_page
+                    // does against the real HttpClient.
+                    let mut r = robots.lock().await;
+                    r.insert(&host, b"User-agent: *\nAllow: /\n");
+                    r.end_fetch(&host);
+                    true
+                } else {
+                    false
+                }
+            }));
+        }
+
+        let mut fetchers = 0usize;
+        for h in handles {
+            if h.await.unwrap() {
+                fetchers += 1;
+            }
+        }
+
+        assert_eq!(
+            fetchers, 1,
+            "exactly one task should fetch robots.txt under concurrency (got {fetchers})"
+        );
+        // The entry must be present and live after the dust settles.
+        assert!(robots.lock().await.has_host(&host));
+    }
+
+    /// A second, distinct host must be fetched independently — the in-flight
+    /// guard serializes per host, not globally.
+    #[tokio::test]
+    async fn concurrent_robots_fetch_independent_per_host() {
+        let robots = Arc::new(Mutex::new(RobotsCache::new("ox-browser")));
+
+        let a = {
+            let robots = Arc::clone(&robots);
+            tokio::spawn(async move {
+                let fetcher = ensure_robots_loaded(&robots, "a.example").await;
+                if fetcher {
+                    let mut r = robots.lock().await;
+                    r.insert("a.example", b"User-agent: *\nAllow: /\n");
+                    r.end_fetch("a.example");
+                }
+                fetcher
+            })
+        };
+        let b = {
+            let robots = Arc::clone(&robots);
+            tokio::spawn(async move {
+                let fetcher = ensure_robots_loaded(&robots, "b.example").await;
+                if fetcher {
+                    let mut r = robots.lock().await;
+                    r.insert("b.example", b"User-agent: *\nAllow: /\n");
+                    r.end_fetch("b.example");
+                }
+                fetcher
+            })
+        };
+
+        let a = a.await.unwrap();
+        let b = b.await.unwrap();
+        assert!(a && b, "two distinct hosts must each get their own fetcher");
     }
 }

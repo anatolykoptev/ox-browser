@@ -138,6 +138,12 @@ impl CookieProvider for NoOpProvider {
 /// Build the cookie provider from config.
 ///
 /// Priority: go_browser_url → byparr_url → NoOp.
+///
+/// When no solver is configured the NoOpProvider is selected — it only errors
+/// "no solver configured" at solve time, which is a silent downgrade. To make
+/// that loud we emit a `tracing::warn!` naming NoOpProvider here and set the
+/// `oxbrowser_solver_configured` gauge to 0 (1 when a real solver is selected)
+/// so operators scraping Prometheus can alert on it (issue #29).
 pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
     // Highest priority: go-browser HTTP solver
     let go_browser_url = config
@@ -153,16 +159,23 @@ pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
             timeout: Duration::from_secs(config.solver.chromium_timeout_secs + 5),
         };
         tracing::info!(url, "using GoBrowserSolver");
+        ox_http::metrics::set_gauge(&ox_http::metrics::SOLVER_CONFIGURED, 1);
         return Arc::new(ox_http::solver_gobrowser::GoBrowserSolver::new(cfg));
     }
 
     if let Some(ref url) = config.solver.byparr_url {
+        ox_http::metrics::set_gauge(&ox_http::metrics::SOLVER_CONFIGURED, 1);
         Arc::new(ByparrSolver::new(ByparrConfig {
             base_url: url.clone(),
             timeout: Duration::from_secs(config.solver.byparr_timeout_secs),
             memory_budget_mb: config.solver.byparr_memory_mb,
         }))
     } else {
+        tracing::warn!(
+            "no solver configured (GO_BROWSER_URL unset and byparr_url empty) — \
+             falling back to NoOpProvider; CF challenges will fail at solve time"
+        );
+        ox_http::metrics::set_gauge(&ox_http::metrics::SOLVER_CONFIGURED, 0);
         Arc::new(NoOpProvider)
     }
 }

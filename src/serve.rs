@@ -6,7 +6,7 @@ use std::time::Duration;
 use ox_http::metrics::SSRF_ALLOWLIST_ENTRIES;
 use ox_http::metrics::set_gauge;
 use ox_http::validate_allowlist;
-use ox_http::{DomainLimiter, HttpClient, cookie_cache, solver_negcache};
+use ox_http::{DomainLimiter, HttpClient, cookie_cache, ratelimit_domain, solver_negcache};
 use ox_js::EndpointDefaults;
 
 use crate::config::{self, ServerConfig};
@@ -34,10 +34,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     if config::proxy_disabled() {
         tracing::warn!("PROXY_DISABLED set — all outbound proxy disabled, fetching direct");
+        ox_http::metrics::set_gauge(&ox_http::metrics::PROXY_DISABLED, 1);
         http_config.proxy_url = None;
         http_config.residential_proxy = None;
         http_config.proxy_pool = None;
     } else {
+        ox_http::metrics::set_gauge(&ox_http::metrics::PROXY_DISABLED, 0);
         if let Some(ref proxy) = config.proxy.url {
             http_config.proxy_url = Some(proxy.clone());
         }
@@ -73,7 +75,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     // Per-domain rate limits.
     let domain_configs = config.ratelimit.to_domain_configs();
     if !domain_configs.is_empty() {
-        http_config.rate_limiter = Some(Arc::new(DomainLimiter::new(domain_configs)));
+        let rate_limiter = Arc::new(DomainLimiter::new(domain_configs));
+        // Periodic eviction of stale per-domain entries so a long-running
+        // server doesn't accumulate them forever (issue #20,
+        // resource_exhaustion). Mirrors the negcache/cookie-cache spawns.
+        ratelimit_domain::spawn_eviction_task(Arc::clone(&rate_limiter), Duration::from_secs(60));
+        http_config.rate_limiter = Some(rate_limiter);
         tracing::info!(
             "initialized domain rate limiter with {} rules",
             config.ratelimit.rules.len()
@@ -89,8 +96,14 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         match ox_http::WebsharePool::new(&api_key).await {
             Ok(pool) => {
                 let health_cfg = config.proxy.health.to_health_config();
-                let healthy = ox_http::HealthyPool::new(Arc::new(pool), health_cfg);
-                http_config.proxy_pool = Some(Arc::new(healthy));
+                let cooldown = health_cfg.cooldown;
+                let healthy = Arc::new(ox_http::HealthyPool::new(Arc::new(pool), health_cfg));
+                // Periodic eviction of stale deactivated proxy entries so a
+                // long-running server doesn't accumulate rotated-out Webshare
+                // proxies forever (issue #21, resource_exhaustion). Mirrors the
+                // negcache/cookie-cache spawns.
+                ox_http::proxy_health::spawn_eviction_task(Arc::clone(&healthy), cooldown);
+                http_config.proxy_pool = Some(healthy);
                 tracing::info!("initialized Webshare proxy pool with health tracking");
             }
             Err(e) => {
