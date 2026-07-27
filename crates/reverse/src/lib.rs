@@ -53,10 +53,11 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Extracts domain from a URL, stripping `www.` prefix.
+///
+/// Delegates host extraction to [`ox_http::extract_domain`] (single source of
+/// truth for URL parsing) and applies the `www.` strip on top.
 pub fn extract_domain(page_url: &str) -> String {
-    url::Url::parse(page_url)
-        .ok()
-        .and_then(|u| u.host_str().map(String::from))
+    ox_http::extract_domain(page_url)
         .map(|h| h.strip_prefix("www.").unwrap_or(&h).to_owned())
         .unwrap_or_default()
 }

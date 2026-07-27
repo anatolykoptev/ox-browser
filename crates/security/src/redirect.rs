@@ -74,15 +74,10 @@ fn compute_modifier(is_https: bool, findings: &[RedirectFinding]) -> i32 {
 }
 
 fn extract_host(url: &str) -> String {
-    url.trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .split(':')
-        .next()
-        .unwrap_or("")
-        .to_lowercase()
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
