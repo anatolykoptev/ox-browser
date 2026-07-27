@@ -17,10 +17,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     if config::proxy_disabled() {
         tracing::warn!("PROXY_DISABLED set — all outbound proxy disabled, fetching direct");
+        ox_http::metrics::set_gauge(&ox_http::metrics::PROXY_DISABLED, 1);
         http_config.proxy_url = None;
         http_config.residential_proxy = None;
         http_config.proxy_pool = None;
     } else {
+        ox_http::metrics::set_gauge(&ox_http::metrics::PROXY_DISABLED, 0);
         if let Some(ref proxy) = config.proxy.url {
             http_config.proxy_url = Some(proxy.clone());
         }

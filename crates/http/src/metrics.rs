@@ -95,6 +95,12 @@ pub static RENDER_CACHE_ENTRIES: AtomicU64 = AtomicU64::new(0);
 /// can shrink). Sampled at crawl end by the crawler engine.
 pub static CRAWLER_DEDUP_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
+/// Whether outbound proxy is disabled via `PROXY_DISABLED` (1) or not (0).
+/// Set once at startup from `config::proxy_disabled()` in `src/serve.rs` so
+/// operators scraping Prometheus can see the degraded state without grepping
+/// logs (issue #27, silent_downgrade).
+pub static PROXY_DISABLED: AtomicU64 = AtomicU64::new(0);
+
 /// Total crawler dedup entries evicted because the bounded set hit its
 /// `max_capacity` cap. Monotonic counter — compare against
 /// `oxbrowser_crawler_dedup_entries` to detect sustained cap pressure on
@@ -180,6 +186,11 @@ pub fn render() -> String {
             help: "Crawler dedup (URL + content) entry count at scrape time (point-in-time, can shrink).",
             value: CRAWLER_DEDUP_ENTRIES.load(Ordering::Relaxed),
         },
+        Gauge {
+            name: "oxbrowser_proxy_disabled",
+            help: "1 if outbound proxy is disabled (PROXY_DISABLED env set), 0 otherwise.",
+            value: PROXY_DISABLED.load(Ordering::Relaxed),
+        },
     ];
 
     let mut out = String::with_capacity((counters.len() + gauges.len()) * 160);
@@ -217,6 +228,13 @@ pub fn render() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Gauge-publishing tests read/write the shared process-global `PROXY_DISABLED`
+    /// static. When run in parallel they race on that atomic, producing flaky
+    /// assertions. This mutex serializes them so the gauge value is deterministic
+    /// within each test — mirrors the T2 render_cache gauge test pattern.
+    static GAUGE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn render_emits_gauge_series_in_prometheus_format() {
@@ -286,5 +304,37 @@ mod tests {
             body.lines().any(|l| l == expected_line),
             "render() does not reflect solver_negcache::SOLVER_GIVEUP_TOTAL; line not found: {expected_line}"
         );
+    }
+
+    /// RED test for issue #27: render() must emit `oxbrowser_proxy_disabled`
+    /// reflecting the gauge value so operators scraping Prometheus can see the
+    /// PROXY_DISABLED degraded state. With the gauge set to 1 (proxy disabled),
+    /// render() emits `oxbrowser_proxy_disabled 1`; with 0, it emits `… 0`.
+    #[test]
+    fn render_emits_proxy_disabled_gauge() {
+        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+
+        // Proxy disabled → gauge 1 → render shows "oxbrowser_proxy_disabled 1"
+        set_gauge(&PROXY_DISABLED, 1);
+        let body = render();
+        assert!(
+            body.contains("# TYPE oxbrowser_proxy_disabled gauge"),
+            "missing gauge TYPE line: {body}"
+        );
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_proxy_disabled 1"),
+            "missing/incorrect gauge sample line (expected 1): {body}"
+        );
+
+        // Proxy enabled → gauge 0 → render shows "oxbrowser_proxy_disabled 0"
+        set_gauge(&PROXY_DISABLED, 0);
+        let body = render();
+        assert!(
+            body.lines().any(|l| l == "oxbrowser_proxy_disabled 0"),
+            "missing/incorrect gauge sample line (expected 0): {body}"
+        );
+
+        // Reset to avoid leaking state into other tests.
+        set_gauge(&PROXY_DISABLED, 0);
     }
 }
