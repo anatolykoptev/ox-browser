@@ -51,12 +51,9 @@ struct SolverHandler {
     negcache: Arc<SolverNegCache>,
 }
 
-/// Extract the domain (host) from a URL string.
+/// Extract the domain (host) from a URL string (delegates to [`crate::url_util::extract_domain`]).
 fn domain_from_url(url: &str) -> String {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(String::from))
-        .unwrap_or_default()
+    crate::url_util::extract_domain(url).unwrap_or_default()
 }
 
 /// Build a `cookie` header value from a solved challenge.

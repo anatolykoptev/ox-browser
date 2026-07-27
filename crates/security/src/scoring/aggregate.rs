@@ -103,15 +103,10 @@ pub fn analyze_security(
 }
 
 fn extract_domain(url: &str) -> String {
-    url.trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .split(':')
-        .next()
-        .unwrap_or("")
-        .to_string()
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
+        .unwrap_or_default()
 }
 
 #[allow(clippy::too_many_arguments)] // aggregates every security signal report; struct-refactor tracked (PR notes)

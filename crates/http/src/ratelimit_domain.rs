@@ -2,14 +2,25 @@
 //! Port of go-stealth's `ratelimit.DomainLimiter`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use rand::Rng;
-use url::Url;
 
 use crate::metrics;
 use crate::ratelimit::Limiter;
+use crate::url_util::extract_domain;
+
+/// Lock a Mutex, recovering from poisoning by taking the inner value.
+///
+/// A poisoned mutex means a thread panicked while holding the lock. The data
+/// may be in an inconsistent state, but for these caches (HashMaps of
+/// domain→state) the worst case is a stale or missing entry — which the
+/// caller treats as a cache miss anyway. Crashing the server is worse than
+/// serving a possibly-stale entry.
+fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Rule binding a domain pattern to rate-limit parameters.
 #[derive(Debug, Clone)]
@@ -54,7 +65,7 @@ impl DomainLimiter {
 
         // Enforce min_delay + random jitter.
         if !rule.min_delay.is_zero() || !rule.random_delay.is_zero() {
-            let last = self.last_req.lock().unwrap();
+            let last = lock_or_recover(&self.last_req);
             if let Some(&prev) = last.get(&domain) {
                 let jitter = if rule.random_delay.is_zero() {
                     Duration::ZERO
@@ -70,14 +81,14 @@ impl DomainLimiter {
         }
 
         let allowed = {
-            let mut lims = self.limiters.lock().unwrap();
+            let mut lims = lock_or_recover(&self.limiters);
             let lim = lims.entry(domain.clone()).or_insert_with(|| {
                 Limiter::with_window(rule.requests_per_window, rule.window_duration)
             });
             lim.allow(&domain)
         };
         if allowed {
-            self.last_req.lock().unwrap().insert(domain, now);
+            lock_or_recover(&self.last_req).insert(domain, now);
             self.publish_gauge();
         }
         allowed
@@ -103,7 +114,7 @@ impl DomainLimiter {
             Some(r) => r,
             None => return,
         };
-        let mut lims = self.limiters.lock().unwrap();
+        let mut lims = lock_or_recover(&self.limiters);
         let lim = lims.entry(domain.clone()).or_insert_with(|| {
             Limiter::with_window(rule.requests_per_window, rule.window_duration)
         });
@@ -118,7 +129,7 @@ impl DomainLimiter {
     /// Mirrors [`crate::solver_negcache::SolverNegCache::evict_expired`].
     pub fn evict_expired(&self) {
         let now = Instant::now();
-        let mut last_req = self.last_req.lock().unwrap();
+        let mut last_req = lock_or_recover(&self.last_req);
         last_req.retain(|domain, prev| {
             let Some(rule) = self.match_rule(domain) else {
                 return false;
@@ -126,7 +137,7 @@ impl DomainLimiter {
             now.duration_since(*prev) <= rule.window_duration * 2
         });
         // Keep limiters in sync: drop any domain no longer present in last_req.
-        let mut lims = self.limiters.lock().unwrap();
+        let mut lims = lock_or_recover(&self.limiters);
         lims.retain(|domain, _| last_req.contains_key(domain));
         drop(lims);
         drop(last_req);
@@ -135,18 +146,18 @@ impl DomainLimiter {
 
     /// Number of tracked domains (test/observability helper).
     pub fn len(&self) -> usize {
-        self.last_req.lock().unwrap().len()
+        lock_or_recover(&self.last_req).len()
     }
 
     /// True if no domains are tracked.
     pub fn is_empty(&self) -> bool {
-        self.last_req.lock().unwrap().is_empty()
+        lock_or_recover(&self.last_req).is_empty()
     }
 
     /// Publish the current domain count to the `oxbrowser_ratelimit_domains`
     /// gauge so operators can see bounded-growth health in Prometheus.
     fn publish_gauge(&self) {
-        let n = self.last_req.lock().unwrap().len() as u64;
+        let n = lock_or_recover(&self.last_req).len() as u64;
         metrics::set_gauge(&metrics::RATELIMIT_DOMAINS, n);
     }
 
@@ -170,13 +181,6 @@ pub fn spawn_eviction_task(limiter: Arc<DomainLimiter>, interval: Duration) {
             limiter.evict_expired();
         }
     });
-}
-
-/// Extract the host (without port) from a URL string.
-fn extract_domain(raw_url: &str) -> Option<String> {
-    Url::parse(raw_url)
-        .ok()
-        .and_then(|u| u.host_str().map(String::from))
 }
 
 /// Match: `""` = catch-all, `"*.x.com"` = wildcard, `"x.com"` = exact.

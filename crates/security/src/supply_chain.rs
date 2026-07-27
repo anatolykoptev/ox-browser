@@ -38,19 +38,12 @@ pub struct SupplyChainFinding {
     pub severity: Severity,
 }
 
-/// Extract domain from a URL (strips protocol, takes host before `/` or `:`).
+/// Extract domain from a URL using `url::Url` for correct parsing of
+/// userinfo, ports, IDN domains, and scheme-less URLs.
 fn extract_domain(url: &str) -> Option<String> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-        .or_else(|| url.strip_prefix("//"))?;
-    let host = rest.split('/').next().unwrap_or("");
-    let domain = host.split(':').next().unwrap_or("");
-    if domain.is_empty() {
-        None
-    } else {
-        Some(domain.to_lowercase())
-    }
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
 }
 
 /// Analyze third-party script supply chain risk from HTML.

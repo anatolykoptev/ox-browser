@@ -135,13 +135,12 @@ fn extract_domain_attr(cookie_str: &str) -> Option<String> {
         })
 }
 
-/// Extract host (no port) from a URL string.
+/// Extract host (no port) from a URL string using `url::Url` for correct
+/// parsing of userinfo, ports, IDN domains, and scheme-less URLs.
 fn extract_host(url: &str) -> Option<String> {
-    let without_scheme = url
-        .trim_start_matches("https://")
-        .trim_start_matches("http://");
-    let host = without_scheme.split('/').next()?;
-    Some(host.split(':').next().unwrap_or("").to_lowercase())
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
 }
 
 /// Check cookie domain scope using the Public Suffix List.

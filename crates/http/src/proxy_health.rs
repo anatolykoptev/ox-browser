@@ -1,9 +1,18 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::metrics::{self, set_gauge};
 use crate::proxy_pool::ProxyPool;
+
+/// Lock a Mutex, recovering from poisoning by taking the inner value.
+///
+/// See [`crate::ratelimit_domain::lock_or_recover`] for rationale — a poisoned
+/// mutex gives access to possibly-stale data, which is better than crashing
+/// the server for a health-tracking map.
+fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Configuration for health-based proxy filtering.
 pub struct HealthConfig {
@@ -97,7 +106,7 @@ impl HealthyPool {
 
     /// Records a successful request through the given proxy.
     pub fn record_success(&self, proxy: &str, latency: Duration) {
-        let mut health = self.health.lock().unwrap();
+        let mut health = lock_or_recover(&self.health);
         let entry = health
             .entry(proxy.to_string())
             .or_insert_with(ProxyHealth::new);
@@ -110,7 +119,7 @@ impl HealthyPool {
     /// Records a failed request. Deactivates the proxy if the failure
     /// rate exceeds the threshold after `min_requests`.
     pub fn record_failure(&self, proxy: &str, latency: Duration) {
-        let mut health = self.health.lock().unwrap();
+        let mut health = lock_or_recover(&self.health);
         let entry = health
             .entry(proxy.to_string())
             .or_insert_with(ProxyHealth::new);
@@ -128,12 +137,12 @@ impl HealthyPool {
 
     /// Returns a snapshot of health stats for all tracked proxies.
     pub fn stats(&self) -> HashMap<String, ProxyHealth> {
-        self.health.lock().unwrap().clone()
+        lock_or_recover(&self.health).clone()
     }
 
     /// Returns the number of currently active (non-deactivated) proxies.
     pub fn active_count(&self) -> usize {
-        let health = self.health.lock().unwrap();
+        let health = lock_or_recover(&self.health);
         let total = self.inner.len();
         let deactivated = health.values().filter(|h| !h.is_active()).count();
         total.saturating_sub(deactivated)
@@ -146,7 +155,7 @@ impl HealthyPool {
     pub fn evict_stale(&self) {
         let threshold = self.config.cooldown * 4;
         let now = Instant::now();
-        let mut health = self.health.lock().unwrap();
+        let mut health = lock_or_recover(&self.health);
         health.retain(|_, h| {
             // Active proxies are always kept — only stale deactivated ones go.
             if h.is_active() {
@@ -183,7 +192,7 @@ impl ProxyPool for HealthyPool {
         if pool_len == 0 {
             return None;
         }
-        let mut health = self.health.lock().unwrap();
+        let mut health = lock_or_recover(&self.health);
 
         // Try each proxy once, skipping deactivated ones.
         for _ in 0..pool_len {

@@ -244,12 +244,9 @@ async fn chrome_fallback(
     Some(build_output(extracted, params, "chrome", elapsed(start)))
 }
 
-/// Extract the hostname from a URL.
+/// Extract the hostname from a URL (delegates to [`crate::url_util::extract_domain`]).
 fn extract_domain(url: &str) -> String {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(String::from))
-        .unwrap_or_default()
+    crate::url_util::extract_domain(url).unwrap_or_default()
 }
 
 pub fn build_output(
