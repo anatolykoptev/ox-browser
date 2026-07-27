@@ -41,7 +41,11 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     if let Ok(url) = std::env::var("GO_BROWSER_URL") {
         http_config.chrome_render_url = Some(format!("{url}/api/v1/chrome/interact"));
     }
-    http_config.render_cache = Some(Arc::new(ox_http::render_cache::RenderModeCache::default()));
+    let render_cache = Arc::new(ox_http::render_cache::RenderModeCache::default());
+    // Render cache TTL-based eviction (issue #18): without a periodic sweep,
+    // entries accumulate per domain forever. Mirror the cookie cache spawn above.
+    ox_http::render_cache::spawn_eviction_task(Arc::clone(&render_cache), Duration::from_secs(60));
+    http_config.render_cache = Some(render_cache);
 
     // Solver negative cache — shared between the solver middleware and read_pipeline
     // so both can check is_blocked() and the pipeline can set RenderMode::GiveUp.

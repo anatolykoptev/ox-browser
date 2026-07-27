@@ -75,6 +75,9 @@ struct Gauge {
 /// Cookie-cache entry count at scrape time (point-in-time, can shrink).
 pub static COOKIE_CACHE_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
+/// Render-mode-cache entry count at scrape time (point-in-time, can shrink).
+pub static RENDER_CACHE_ENTRIES: AtomicU64 = AtomicU64::new(0);
+
 /// Set a gauge's value. Thin convenience wrapper so call sites don't have to
 /// import `Ordering` — mirrors the ergonomics of the `record_*` counter helpers.
 pub fn set_gauge(gauge: &AtomicU64, value: u64) {
@@ -122,11 +125,18 @@ pub fn render() -> String {
         },
     ];
 
-    let gauges = [Gauge {
-        name: "oxbrowser_cookie_cache_entries",
-        help: "Cookie-cache entry count at scrape time (point-in-time, can shrink).",
-        value: COOKIE_CACHE_ENTRIES.load(Ordering::Relaxed),
-    }];
+    let gauges = [
+        Gauge {
+            name: "oxbrowser_cookie_cache_entries",
+            help: "Cookie-cache entry count at scrape time (point-in-time, can shrink).",
+            value: COOKIE_CACHE_ENTRIES.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_render_cache_entries",
+            help: "Render-mode-cache entry count at scrape time (point-in-time, can shrink).",
+            value: RENDER_CACHE_ENTRIES.load(Ordering::Relaxed),
+        },
+    ];
 
     let mut out = String::with_capacity((counters.len() + gauges.len()) * 160);
     for c in &counters {
