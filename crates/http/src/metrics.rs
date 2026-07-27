@@ -52,6 +52,13 @@ pub fn record_proxy_402() {
     PROXY_402_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a crawler dedup cap eviction (URL or content dedup hit its
+/// `max_capacity` and dropped the eldest hash). Mirrors the
+/// `record_solver_giveup` pattern.
+pub fn record_crawler_dedup_evicted() {
+    CRAWLER_DEDUP_EVICTED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
 /// One counter row in the registry: metric name, help text, current value.
 struct Counter {
     name: &'static str,
@@ -77,6 +84,16 @@ pub static COOKIE_CACHE_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
 /// Render-mode-cache entry count at scrape time (point-in-time, can shrink).
 pub static RENDER_CACHE_ENTRIES: AtomicU64 = AtomicU64::new(0);
+
+/// Crawler dedup (URL + content) entry count at scrape time (point-in-time,
+/// can shrink). Sampled at crawl end by the crawler engine.
+pub static CRAWLER_DEDUP_ENTRIES: AtomicU64 = AtomicU64::new(0);
+
+/// Total crawler dedup entries evicted because the bounded set hit its
+/// `max_capacity` cap. Monotonic counter — compare against
+/// `oxbrowser_crawler_dedup_entries` to detect sustained cap pressure on
+/// large crawls (issue #19).
+pub static CRAWLER_DEDUP_EVICTED_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Set a gauge's value. Thin convenience wrapper so call sites don't have to
 /// import `Ordering` — mirrors the ergonomics of the `record_*` counter helpers.
@@ -123,6 +140,11 @@ pub fn render() -> String {
             help: "CF-solver give-ups (per-domain negative-cache short-circuit fired).",
             value: crate::solver_negcache::SOLVER_GIVEUP_TOTAL.load(Ordering::Relaxed),
         },
+        Counter {
+            name: "oxbrowser_crawler_dedup_evicted_total",
+            help: "Crawler dedup entries evicted because the bounded set hit max_capacity.",
+            value: CRAWLER_DEDUP_EVICTED_TOTAL.load(Ordering::Relaxed),
+        },
     ];
 
     let gauges = [
@@ -135,6 +157,11 @@ pub fn render() -> String {
             name: "oxbrowser_render_cache_entries",
             help: "Render-mode-cache entry count at scrape time (point-in-time, can shrink).",
             value: RENDER_CACHE_ENTRIES.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_crawler_dedup_entries",
+            help: "Crawler dedup (URL + content) entry count at scrape time (point-in-time, can shrink).",
+            value: CRAWLER_DEDUP_ENTRIES.load(Ordering::Relaxed),
         },
     ];
 
@@ -201,6 +228,7 @@ mod tests {
             "oxbrowser_proxy_402_total",
             "oxbrowser_proxy_fallback_total",
             "oxbrowser_solver_giveup_total",
+            "oxbrowser_crawler_dedup_evicted_total",
         ] {
             assert!(
                 body.contains(&format!("# TYPE {series} counter")),
