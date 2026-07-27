@@ -59,6 +59,12 @@ pub fn record_crawler_dedup_evicted() {
     CRAWLER_DEDUP_EVICTED_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a frontier capacity drop (a URL was rejected because the frontier
+/// was at `max_size`). Mirrors the `record_crawler_dedup_evicted` pattern.
+pub fn record_frontier_dropped() {
+    FRONTIER_DROPPED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
 /// One counter row in the registry: metric name, help text, current value.
 struct Counter {
     name: &'static str,
@@ -94,6 +100,12 @@ pub static CRAWLER_DEDUP_ENTRIES: AtomicU64 = AtomicU64::new(0);
 /// `oxbrowser_crawler_dedup_entries` to detect sustained cap pressure on
 /// large crawls (issue #19).
 pub static CRAWLER_DEDUP_EVICTED_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+/// Total URLs dropped because the crawl frontier was at capacity
+/// (`Frontier::push` / `push_with_priority` returned `false`). Monotonic
+/// counter — every drop is also `tracing::warn!`-logged with the
+/// `frontier_full_drop` tag so operators can correlate log + metric (issue #24).
+pub static FRONTIER_DROPPED_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Set a gauge's value. Thin convenience wrapper so call sites don't have to
 /// import `Ordering` — mirrors the ergonomics of the `record_*` counter helpers.
@@ -144,6 +156,11 @@ pub fn render() -> String {
             name: "oxbrowser_crawler_dedup_evicted_total",
             help: "Crawler dedup entries evicted because the bounded set hit max_capacity.",
             value: CRAWLER_DEDUP_EVICTED_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
+            name: "oxbrowser_frontier_dropped_total",
+            help: "URLs dropped because the crawl frontier was at capacity (push returned false).",
+            value: FRONTIER_DROPPED_TOTAL.load(Ordering::Relaxed),
         },
     ];
 
@@ -229,6 +246,7 @@ mod tests {
             "oxbrowser_proxy_fallback_total",
             "oxbrowser_solver_giveup_total",
             "oxbrowser_crawler_dedup_evicted_total",
+            "oxbrowser_frontier_dropped_total",
         ] {
             assert!(
                 body.contains(&format!("# TYPE {series} counter")),

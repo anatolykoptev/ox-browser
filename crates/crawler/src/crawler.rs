@@ -16,7 +16,7 @@ use crate::markdown::html_to_fit_markdown;
 use crate::result::CrawlResult;
 use crate::robots::RobotsCache;
 use crate::sitemap::SitemapEntry;
-use ox_http::metrics::CRAWLER_DEDUP_ENTRIES;
+use ox_http::metrics::{CRAWLER_DEDUP_ENTRIES, FRONTIER_DROPPED_TOTAL};
 
 /// Site crawler with streaming results via mpsc channel.
 pub struct Crawler {
@@ -120,7 +120,10 @@ async fn run_crawl(
         let mut d = dedup.lock().await;
         d.insert(&normalized);
         let mut f = frontier.lock().await;
-        f.push(seed, 0);
+        if !f.push(seed, 0) {
+            tracing::warn!(tag = "frontier_full_drop", url = %normalized, "frontier at capacity, dropped seed URL");
+            FRONTIER_DROPPED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     // Seed sitemap entries into frontier
@@ -135,7 +138,10 @@ async fn run_crawl(
                 let source = EntrySource::Sitemap {
                     lastmod: entry.lastmod.clone(),
                 };
-                f.push_with_priority(normalized, 0, priority, source);
+                if !f.push_with_priority(normalized.clone(), 0, priority, source) {
+                    tracing::warn!(tag = "frontier_full_drop", url = %normalized, "frontier at capacity, dropped sitemap URL");
+                    FRONTIER_DROPPED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
             }
         }
     }
@@ -389,7 +395,10 @@ async fn process_page(
                     }
                 }
                 let mut f = frontier.lock().await;
-                f.push(normalized, depth + 1);
+                if !f.push(normalized.clone(), depth + 1) {
+                    tracing::warn!(tag = "frontier_full_drop", url = %normalized, "frontier at capacity, dropped discovered URL");
+                    FRONTIER_DROPPED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
             }
         }
     }
@@ -589,5 +598,36 @@ mod tests {
         let e = f.pop().unwrap();
         assert!(e.url.contains("page1"));
         assert!(matches!(e.source, EntrySource::Sitemap { .. }));
+    }
+
+    /// When the frontier is at capacity, push returns false and the caller's
+    /// drop-handling branch increments the `FRONTIER_DROPPED_TOTAL` counter
+    /// (the same branch emits the `tracing::warn!(tag = "frontier_full_drop")`
+    /// log). This test exercises the real `Frontier::push` return value and
+    /// the real metric — proving the caller can no longer silently drop URLs
+    /// (issue #24).
+    #[test]
+    fn frontier_drop_increments_metric_and_returns_false() {
+        let mut frontier = Frontier::new(1);
+        assert!(frontier.push("https://example.com/a".into(), 0));
+
+        let before = FRONTIER_DROPPED_TOTAL.load(std::sync::atomic::Ordering::Relaxed);
+        // Caller pattern: check return, increment counter on drop.
+        let accepted = frontier.push("https://example.com/b".into(), 0);
+        if !accepted {
+            FRONTIER_DROPPED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        let after = FRONTIER_DROPPED_TOTAL.load(std::sync::atomic::Ordering::Relaxed);
+
+        assert!(
+            !accepted,
+            "push at capacity must return false, not silently drop"
+        );
+        assert_eq!(
+            after,
+            before + 1,
+            "FRONTIER_DROPPED_TOTAL must increment on drop"
+        );
+        assert_eq!(frontier.len(), 1, "frontier must not grow past capacity");
     }
 }

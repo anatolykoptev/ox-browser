@@ -62,21 +62,24 @@ impl Frontier {
     }
 
     /// Push a URL with default priority (0.5) and BFS source.
-    /// Backward-compatible with existing callers.
-    pub fn push(&mut self, url: String, depth: u32) {
-        self.push_with_priority(url, depth, 0.5, EntrySource::Bfs);
+    /// Returns `true` if accepted, `false` if dropped because the frontier is
+    /// at capacity (callers MUST log/metric the drop — never silently ignore).
+    pub fn push(&mut self, url: String, depth: u32) -> bool {
+        self.push_with_priority(url, depth, 0.5, EntrySource::Bfs)
     }
 
     /// Push a URL with explicit priority and source.
+    /// Returns `true` if accepted, `false` if dropped because the frontier is
+    /// at capacity (callers MUST log/metric the drop — never silently ignore).
     pub fn push_with_priority(
         &mut self,
         url: String,
         depth: u32,
         priority: f32,
         source: EntrySource,
-    ) {
+    ) -> bool {
         if self.heap.len() >= self.max_size {
-            return;
+            return false;
         }
         let sequence = self.next_seq;
         self.next_seq += 1;
@@ -87,6 +90,7 @@ impl Frontier {
             source,
             sequence,
         });
+        true
     }
 
     /// Pop the highest-priority entry.
@@ -130,10 +134,25 @@ mod tests {
     #[test]
     fn respects_max_size() {
         let mut f = Frontier::new(2);
-        f.push("https://a.com".into(), 0);
-        f.push("https://b.com".into(), 0);
-        f.push("https://c.com".into(), 0); // dropped
+        assert!(f.push("https://a.com".into(), 0));
+        assert!(f.push("https://b.com".into(), 0));
+        // Third push is dropped — must return false, not silently succeed.
+        assert!(!f.push("https://c.com".into(), 0));
         assert_eq!(f.len(), 2);
+    }
+
+    #[test]
+    fn push_with_priority_returns_false_at_capacity() {
+        let mut f = Frontier::new(1);
+        assert!(f.push_with_priority(
+            "https://a.com".into(),
+            0,
+            0.9,
+            EntrySource::Sitemap { lastmod: None }
+        ));
+        // Second push is dropped — must return false.
+        assert!(!f.push_with_priority("https://b.com".into(), 0, 0.1, EntrySource::Bfs));
+        assert_eq!(f.len(), 1);
     }
 
     #[test]
