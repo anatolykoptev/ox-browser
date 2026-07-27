@@ -255,6 +255,7 @@ async fn run_crawl(
     }
     dedup.lock().await.clear();
     content_dedup.lock().await.clear();
+    budget.lock().await.reset();
 
     Ok(())
 }
