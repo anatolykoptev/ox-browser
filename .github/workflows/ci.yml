@@ -23,11 +23,9 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Install cargo-nextest
-        run: |
-          ARCH=$(uname -m)
-          curl -fsSL "https://github.com/nextest-rs/nextest/releases/latest/download/cargo-nextest-${ARCH}-unknown-linux-musl.tar.gz" \
-            | tar xz -C /usr/local/bin --strip-components=1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - uses: Swatinem/rust-cache@v2
 
