@@ -14,8 +14,20 @@
 //!
 //! The cache is constructed per crawl, so no background eviction task is needed
 //! — expired entries are simply ignored on read and re-fetched by the caller.
+//!
+//! # TOCTOU fetch serialization (issue #25)
+//!
+//! The caller pattern is: lock → `has_host` check → release lock → async HTTP
+//! fetch → lock → insert. Holding the lock across the async fetch is not viable
+//! (it would serialize *all* hosts behind one fetch). Instead, an
+//! `in_flight` set lives under the same `Mutex<RobotsCache>`: the first task
+//! that finds a missing host registers it via [`RobotsCache::begin_fetch`] and
+//! performs the fetch; concurrent tasks for the same host see it in-flight and
+//! wait/retry until the entry appears, then reuse it. This guarantees a single
+//! fetch per host under normal concurrency. See
+//! [`crate::crawler::ensure_robots_loaded`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use texting_robots::Robot;
@@ -61,6 +73,11 @@ impl RobotsEntry {
 pub struct RobotsCache {
     user_agent: String,
     entries: HashMap<String, RobotsEntry>,
+    /// Hosts for which a robots.txt fetch is currently in progress. Prevents
+    /// the TOCTOU double-fetch race (issue #25): only the task that
+    /// successfully registers a host here performs the HTTP fetch; concurrent
+    /// tasks for the same host wait for the entry to appear.
+    in_flight: HashSet<String>,
     max_capacity: usize,
     ttl: Duration,
     next_seq: u64,
@@ -83,6 +100,7 @@ impl RobotsCache {
         Self {
             user_agent: user_agent.to_string(),
             entries: HashMap::new(),
+            in_flight: HashSet::new(),
             max_capacity: max_capacity.max(1),
             ttl,
             next_seq: 0,
@@ -194,6 +212,42 @@ impl RobotsCache {
             } => robot.delay.map(|d| d as f64),
             _ => None,
         }
+    }
+
+    /// Register `host` as having an in-flight robots.txt fetch, returning
+    /// `true` if this caller is the fetcher (host was *not* already
+    /// in-flight). Returns `false` if another task is already fetching this
+    /// host — the caller should wait and re-check [`RobotsCache::has_host`].
+    ///
+    /// This must be paired with [`RobotsCache::end_fetch`] once the fetch
+    /// completes (success or failure) so the host can be re-fetched later if
+    /// the entry expires. Callers should *not* hold the enclosing lock across
+    /// the async HTTP fetch.
+    pub fn begin_fetch(&mut self, host: &str) -> bool {
+        if self.in_flight.contains(host) {
+            // Defensive observability: a second caller reaching here under the
+            // lock means the wait-loop gave up (safety valve) and is about to
+            // perform a duplicate fetch.
+            tracing::warn!(
+                host = %host,
+                "robots.txt fetch already in-flight for host — duplicate fetch possible"
+            );
+            return false;
+        }
+        self.in_flight.insert(host.to_string());
+        true
+    }
+
+    /// Returns `true` if a robots.txt fetch for `host` is currently in flight.
+    pub fn is_fetching(&self, host: &str) -> bool {
+        self.in_flight.contains(host)
+    }
+
+    /// Clear the in-flight marker for `host`. Called after the fetcher has
+    /// inserted the entry (or marked it unavailable). Safe to call even if the
+    /// host was not registered (no-op).
+    pub fn end_fetch(&mut self, host: &str) {
+        self.in_flight.remove(host);
     }
 
     /// Returns the number of entries (including expired ones not yet evicted).
@@ -403,5 +457,42 @@ mod tests {
         cache.insert("example.com", b"User-agent: *\nDisallow: /private/\n");
         assert!(cache.has_host("example.com"));
         assert!(!cache.is_allowed("example.com", "https://example.com/private/x"));
+    }
+
+    // -----------------------------------------------------------------------
+    // In-flight fetch guard (issue #25 — TOCTOU double-fetch race)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn begin_fetch_registers_first_caller_only() {
+        let mut cache = RobotsCache::new(UA);
+        // First caller wins the fetcher slot.
+        assert!(cache.begin_fetch("example.com"));
+        assert!(cache.is_fetching("example.com"));
+        // A concurrent caller for the same host must not become a fetcher.
+        assert!(!cache.begin_fetch("example.com"));
+        // A different host is independent.
+        assert!(cache.begin_fetch("other.example"));
+        assert!(cache.is_fetching("other.example"));
+    }
+
+    #[test]
+    fn end_fetch_clears_in_flight_marker() {
+        let mut cache = RobotsCache::new(UA);
+        assert!(cache.begin_fetch("example.com"));
+        assert!(cache.is_fetching("example.com"));
+        cache.end_fetch("example.com");
+        assert!(!cache.is_fetching("example.com"));
+        // After release, a new caller can become the fetcher again (e.g. after
+        // TTL expiry).
+        assert!(cache.begin_fetch("example.com"));
+    }
+
+    #[test]
+    fn end_fetch_is_noop_for_unregistered_host() {
+        let mut cache = RobotsCache::new(UA);
+        // Removing a host that was never registered must not panic.
+        cache.end_fetch("never-fetched.example");
+        assert!(!cache.is_fetching("never-fetched.example"));
     }
 }
