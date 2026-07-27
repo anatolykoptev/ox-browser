@@ -109,7 +109,7 @@ async fn falls_back_direct_when_proxy_returns_402() {
 
     let after = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
     assert!(
-        after >= before + 1,
+        after > before,
         "fallback counter must increment (before={before}, after={after})"
     );
 }

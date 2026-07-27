@@ -398,7 +398,7 @@ mod tests {
 
         // Poll until the background task has run at least once.
         for _ in 0..50 {
-            if cache.len() == 0 {
+            if cache.is_empty() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;

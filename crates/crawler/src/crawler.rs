@@ -592,26 +592,26 @@ mod tests {
 
         let mut enqueued = 0;
         for link in links {
-            if let Some(normalized) = normalize_url(link) {
-                if let Ok(candidate) = Url::parse(&normalized) {
-                    if !scope.is_allowed(&seed, &candidate) {
-                        continue;
-                    }
-                    if is_cycle(&normalized) {
-                        continue;
-                    }
-                    if !budget.try_consume(candidate.path()) {
-                        continue;
-                    }
-                    if !dedup.insert(&normalized) {
-                        continue;
-                    }
-                    if !robots.is_allowed("example.com", &normalized) {
-                        continue;
-                    }
-                    frontier.push(normalized, 1);
-                    enqueued += 1;
+            if let Some(normalized) = normalize_url(link)
+                && let Ok(candidate) = Url::parse(&normalized)
+            {
+                if !scope.is_allowed(&seed, &candidate) {
+                    continue;
                 }
+                if is_cycle(&normalized) {
+                    continue;
+                }
+                if !budget.try_consume(candidate.path()) {
+                    continue;
+                }
+                if !dedup.insert(&normalized) {
+                    continue;
+                }
+                if !robots.is_allowed("example.com", &normalized) {
+                    continue;
+                }
+                frontier.push(normalized, 1);
+                enqueued += 1;
             }
         }
 
@@ -642,17 +642,17 @@ mod tests {
         }
 
         for entry in &discovery_entries {
-            if let Some(normalized) = normalize_url(&entry.url) {
-                if d.insert(&normalized) {
-                    f.push_with_priority(
-                        normalized,
-                        0,
-                        entry.priority.unwrap_or(0.5),
-                        EntrySource::Sitemap {
-                            lastmod: entry.lastmod.clone(),
-                        },
-                    );
-                }
+            if let Some(normalized) = normalize_url(&entry.url)
+                && d.insert(&normalized)
+            {
+                f.push_with_priority(
+                    normalized,
+                    0,
+                    entry.priority.unwrap_or(0.5),
+                    EntrySource::Sitemap {
+                        lastmod: entry.lastmod.clone(),
+                    },
+                );
             }
         }
 
@@ -715,7 +715,7 @@ mod tests {
             let robots = Arc::clone(&robots);
             let host = host.clone();
             handles.push(tokio::spawn(async move {
-                if ensure_robots_loaded(robots, host.as_str()).await {
+                if ensure_robots_loaded(&robots, host.as_str()).await {
                     // Designated fetcher: perform the (stubbed) fetch, insert,
                     // and release the in-flight guard — exactly as process_page
                     // does against the real HttpClient.

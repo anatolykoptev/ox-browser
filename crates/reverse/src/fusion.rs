@@ -156,7 +156,7 @@ mod tests {
         assert!(deduped.is_empty());
 
         let stock_domains: Vec<String> = Vec::new();
-        assert!(!false); // is_stock would be false
+        // is_stock would be false (no stock domains)
         assert!(stock_domains.is_empty());
     }
 

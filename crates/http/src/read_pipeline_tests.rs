@@ -28,10 +28,11 @@ fn config_with(
     render_cache: Option<Arc<RenderModeCache>>,
     negcache: Option<Arc<SolverNegCache>>,
 ) -> HttpConfig {
-    let mut cfg = HttpConfig::default();
-    cfg.render_cache = render_cache;
-    cfg.solver_negcache = negcache;
-    cfg
+    HttpConfig {
+        render_cache,
+        solver_negcache: negcache,
+        ..Default::default()
+    }
 }
 
 /// Handler that always returns HTTP 200 with dummy HTML.
@@ -274,7 +275,7 @@ async fn site_handler_success_increments_fetch_success_total() {
     // The site_handler succeeded → success counter must have incremented.
     let after = FETCH_SUCCESS_TOTAL.load(Ordering::Relaxed);
     assert!(
-        after >= before + 1,
+        after > before,
         "fetch_success_total must increment on site_handler success (before={before}, after={after})"
     );
 

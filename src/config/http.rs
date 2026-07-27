@@ -60,12 +60,16 @@ mod tests {
         let s = HttpSection::default();
         assert!(matches!(s.emulation(), Some(Emulation::Chrome136)));
 
-        let mut s2 = HttpSection::default();
-        s2.emulation = "none".into();
+        let s2 = HttpSection {
+            emulation: "none".into(),
+            ..Default::default()
+        };
         assert!(s2.emulation().is_none());
 
-        let mut s3 = HttpSection::default();
-        s3.emulation = "safari18".into();
+        let s3 = HttpSection {
+            emulation: "safari18".into(),
+            ..Default::default()
+        };
         assert!(matches!(s3.emulation(), Some(Emulation::Safari18)));
     }
 }
