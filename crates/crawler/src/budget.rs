@@ -151,6 +151,11 @@ impl Budget {
         self.counts.len()
     }
 
+    /// Returns true if no path-prefix counters are tracked.
+    pub fn is_empty(&self) -> bool {
+        self.counts.is_empty()
+    }
+
     /// Returns the configured maximum number of counters.
     pub fn max_capacity(&self) -> usize {
         self.max_capacity

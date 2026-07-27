@@ -293,7 +293,7 @@ async fn ensure_robots_loaded(robots: &Mutex<RobotsCache>, host: &str) -> bool {
                 // A live entry already exists — nothing to fetch.
                 return false;
             }
-            if r.begin_fetch(host) { true } else { false }
+            r.begin_fetch(host)
         };
         if became_fetcher {
             return true;
@@ -345,7 +345,7 @@ async fn process_page(
         // Serialize concurrent robots.txt fetches per host (issue #25). Only
         // one task performs the HTTP fetch; others wait for the entry to
         // appear and reuse it.
-        if ensure_robots_loaded(&robots, &host).await {
+        if ensure_robots_loaded(robots, host.as_str()).await {
             let robots_url = format!("{}://{}/robots.txt", parsed.scheme(), host);
             let body = match http.get(&robots_url).await {
                 Ok(resp) if resp.status == 200 => Some(resp.body.into_bytes()),
@@ -715,7 +715,7 @@ mod tests {
             let robots = Arc::clone(&robots);
             let host = host.clone();
             handles.push(tokio::spawn(async move {
-                if ensure_robots_loaded(&robots, &host).await {
+                if ensure_robots_loaded(robots, host.as_str()).await {
                     // Designated fetcher: perform the (stubbed) fetch, insert,
                     // and release the in-flight guard — exactly as process_page
                     // does against the real HttpClient.

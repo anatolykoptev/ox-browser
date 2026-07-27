@@ -123,10 +123,7 @@ impl RobotsCache {
     /// entry is stored as `Unavailable`. Refreshing an existing host bumps its
     /// LRU sequence so it is treated as recently used.
     pub fn insert(&mut self, host: &str, robots_txt_body: &[u8]) {
-        let robot = match Robot::new(&self.user_agent, robots_txt_body) {
-            Ok(robot) => Some(robot),
-            Err(_) => None,
-        };
+        let robot = Robot::new(&self.user_agent, robots_txt_body).ok();
         self.put(host, robot);
     }
 
