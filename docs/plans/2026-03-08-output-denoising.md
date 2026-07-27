@@ -120,7 +120,7 @@ The rest of the function (score_modifier, severity upgrade) stays the same.
 
 **Step 3: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-security -- --nocapture`
+Run: `cd . && cargo test -p ox-security -- --nocapture`
 
 Fix any broken tests — existing tests that check for single findings should still pass since 1 script from 1 domain = 1 finding.
 
@@ -193,7 +193,7 @@ Note: risky domain findings (lines 84-90) stay per-script — those are critical
 
 **Step 3: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-security -- --nocapture`
+Run: `cd . && cargo test -p ox-security -- --nocapture`
 
 **Step 4: Commit**
 
@@ -270,7 +270,7 @@ Note: also improved `@type` extraction to handle `@graph` arrays (common pattern
 
 **Step 3: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-intelligence -- --nocapture`
+Run: `cd . && cargo test -p ox-intelligence -- --nocapture`
 
 **Step 4: Commit**
 
@@ -338,7 +338,7 @@ The `headings.truncate(50)` is placed AFTER h1_count and heading_skip are comput
 
 **Step 3: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-intelligence -- --nocapture`
+Run: `cd . && cargo test -p ox-intelligence -- --nocapture`
 
 **Step 4: Commit**
 
@@ -394,7 +394,7 @@ At the start of the script loop body (after line 71):
 
 **Step 3: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-security -- --nocapture`
+Run: `cd . && cargo test -p ox-security -- --nocapture`
 
 **Step 4: Commit**
 
@@ -409,12 +409,12 @@ git commit -m "fix(security): deduplicate script URLs in supply chain analysis"
 
 **Step 1: Run full test suite**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test --workspace`
+Run: `cd . && cargo test --workspace`
 
 **Step 2: Build and deploy**
 
 ```bash
-cd ~/deploy/krolik-server && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
+cd <deploy> && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
 ```
 
 **Step 3: Verify SRI dedup (Stripe)**

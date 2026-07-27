@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust (ox-browser: wreq, serde, regex, dom_query, tokio), Go (go-imagefy: net/http, encoding/json)
 
-**Repos:** `~/src/ox-browser`, `~/src/go-imagefy`, `~/src/go-wp`
+**Repos:** `.`, `<go-imagefy>`, `<go-wp>`
 
 ---
 
@@ -94,7 +94,7 @@ In root `Cargo.toml`, add `"crates/imagesearch"` to `[workspace] members`.
 
 **Step 4: Verify it compiles**
 
-Run: `cd ~/src/ox-browser && cargo check -p ox-imagesearch`
+Run: `cd . && cargo check -p ox-imagesearch`
 Expected: compiles with no errors
 
 **Step 5: Commit**
@@ -151,7 +151,7 @@ mod tests {
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd ~/src/ox-browser && cargo test -p ox-imagesearch -- bing`
+Run: `cd . && cargo test -p ox-imagesearch -- bing`
 Expected: FAIL — `parse_bing_html` not found
 
 **Step 3: Implement Bing engine**
@@ -235,7 +235,7 @@ fn parse_bing_html(html: &str) -> Vec<ImageResult> {
 
 **Step 4: Run tests**
 
-Run: `cd ~/src/ox-browser && cargo test -p ox-imagesearch -- bing`
+Run: `cd . && cargo test -p ox-imagesearch -- bing`
 Expected: 3 tests PASS
 
 **Step 5: Commit**
@@ -292,7 +292,7 @@ mod tests {
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd ~/src/ox-browser && cargo test -p ox-imagesearch -- ddg`
+Run: `cd . && cargo test -p ox-imagesearch -- ddg`
 
 **Step 3: Implement DDG engine**
 
@@ -391,7 +391,7 @@ fn parse_ddg_json(body: &str) -> Vec<ImageResult> {
 
 **Step 4: Run tests**
 
-Run: `cd ~/src/ox-browser && cargo test -p ox-imagesearch -- ddg`
+Run: `cd . && cargo test -p ox-imagesearch -- ddg`
 Expected: 4 tests PASS
 
 **Step 5: Commit**
@@ -538,7 +538,7 @@ Check if `HttpClient` already derives `Clone`. If not, the fusion code needs `Ar
 
 **Step 5: Run tests**
 
-Run: `cd ~/src/ox-browser && cargo test -p ox-imagesearch -- fusion`
+Run: `cd . && cargo test -p ox-imagesearch -- fusion`
 Expected: 2 tests PASS
 
 **Step 6: Commit**
@@ -651,7 +651,7 @@ In `crates/js/src/lib.rs`:
 
 **Step 4: Verify compilation**
 
-Run: `cd ~/src/ox-browser && cargo check -p ox-js`
+Run: `cd . && cargo check -p ox-js`
 
 **Step 5: Commit**
 
@@ -767,7 +767,7 @@ async fn image_search(
 
 **Step 4: Verify compilation + test**
 
-Run: `cd ~/src/ox-browser && cargo check -p ox-mcp && cargo test -p ox-imagesearch`
+Run: `cd . && cargo check -p ox-mcp && cargo test -p ox-imagesearch`
 
 **Step 5: Commit**
 
@@ -782,17 +782,17 @@ git commit -m "feat(mcp): add image_search MCP tool (6th tool)"
 
 **Step 1: Run all tests**
 
-Run: `cd ~/src/ox-browser && cargo test`
+Run: `cd . && cargo test`
 Expected: all tests pass (existing 220+ and new ~9)
 
 **Step 2: Run clippy**
 
-Run: `cd ~/src/ox-browser && cargo clippy --workspace -- -D warnings`
+Run: `cd . && cargo clippy --workspace -- -D warnings`
 
 **Step 3: Deploy**
 
 ```bash
-cd ~/deploy/krolik-server && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
+cd <deploy> && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
 ```
 
 **Step 4: Smoke test REST endpoint**
@@ -816,8 +816,8 @@ git tag v0.4.6
 ## Task 8: go-imagefy — OxBrowserProvider
 
 **Files:**
-- Create: `~/src/go-imagefy/provider_ox.go`
-- Create: `~/src/go-imagefy/provider_ox_test.go`
+- Create: `<go-imagefy>/provider_ox.go`
+- Create: `<go-imagefy>/provider_ox_test.go`
 
 **Step 1: Write failing test**
 
@@ -897,7 +897,7 @@ func TestOxBrowserProvider_ServerDown(t *testing.T) {
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd ~/src/go-imagefy && go test -run OxBrowser -v`
+Run: `cd <go-imagefy> && go test -run OxBrowser -v`
 Expected: FAIL — `OxBrowserProvider` not defined
 
 **Step 3: Implement OxBrowserProvider**
@@ -1007,13 +1007,13 @@ func (p *OxBrowserProvider) Search(ctx context.Context, query string, _ SearchOp
 
 **Step 4: Run tests**
 
-Run: `cd ~/src/go-imagefy && go test -run OxBrowser -v`
+Run: `cd <go-imagefy> && go test -run OxBrowser -v`
 Expected: 3 tests PASS
 
 **Step 5: Commit**
 
 ```bash
-cd ~/src/go-imagefy && git add provider_ox.go provider_ox_test.go
+cd <go-imagefy> && git add provider_ox.go provider_ox_test.go
 git commit -m "feat: add OxBrowserProvider for Rust-based image search"
 ```
 
@@ -1022,7 +1022,7 @@ git commit -m "feat: add OxBrowserProvider for Rust-based image search"
 ## Task 9: go-imagefy — parallel gatherCandidates
 
 **Files:**
-- Modify: `~/src/go-imagefy/search.go:88-99` (gatherCandidates)
+- Modify: `<go-imagefy>/search.go:88-99` (gatherCandidates)
 
 **Step 1: Modify gatherCandidates**
 
@@ -1064,13 +1064,13 @@ func (cfg *Config) gatherCandidates(ctx context.Context, providers []SearchProvi
 
 **Step 2: Run existing tests**
 
-Run: `cd ~/src/go-imagefy && go test ./... -count=1`
+Run: `cd <go-imagefy> && go test ./... -count=1`
 Expected: all existing tests pass (parallel change is backward-compatible)
 
 **Step 3: Commit**
 
 ```bash
-cd ~/src/go-imagefy && git add search.go
+cd <go-imagefy> && git add search.go
 git commit -m "perf: parallelize gatherCandidates across providers"
 ```
 
@@ -1079,8 +1079,8 @@ git commit -m "perf: parallelize gatherCandidates across providers"
 ## Task 10: go-imagefy — FallbackProvider
 
 **Files:**
-- Create: `~/src/go-imagefy/orchestrator.go`
-- Create: `~/src/go-imagefy/orchestrator_test.go`
+- Create: `<go-imagefy>/orchestrator.go`
+- Create: `<go-imagefy>/orchestrator_test.go`
 
 **Step 1: Write test**
 
@@ -1153,7 +1153,7 @@ func TestFallbackProvider_AllFail(t *testing.T) {
 
 **Step 2: Run test (should fail)**
 
-Run: `cd ~/src/go-imagefy && go test -run Fallback -v`
+Run: `cd <go-imagefy> && go test -run Fallback -v`
 
 **Step 3: Implement**
 
@@ -1191,17 +1191,17 @@ func (f *FallbackProvider) Search(ctx context.Context, query string, opts Search
 
 **Step 4: Run tests**
 
-Run: `cd ~/src/go-imagefy && go test -run Fallback -v`
+Run: `cd <go-imagefy> && go test -run Fallback -v`
 Expected: 3 tests PASS
 
 **Step 5: Run full suite**
 
-Run: `cd ~/src/go-imagefy && go test ./... -count=1`
+Run: `cd <go-imagefy> && go test ./... -count=1`
 
 **Step 6: Commit + tag**
 
 ```bash
-cd ~/src/go-imagefy && git add orchestrator.go orchestrator_test.go
+cd <go-imagefy> && git add orchestrator.go orchestrator_test.go
 git commit -m "feat: add FallbackProvider orchestrator"
 ```
 
@@ -1210,8 +1210,8 @@ git commit -m "feat: add FallbackProvider orchestrator"
 ## Task 11: go-wp — update imageadapter + fix upload.go
 
 **Files:**
-- Modify: `~/src/go-wp/internal/imageadapter/adapter.go`
-- Modify: `~/src/go-wp/internal/wptools/media/upload.go` (fix http.DefaultClient)
+- Modify: `<go-wp>/internal/imageadapter/adapter.go`
+- Modify: `<go-wp>/internal/wptools/media/upload.go` (fix http.DefaultClient)
 
 **Step 1: Update imageadapter**
 
@@ -1278,7 +1278,7 @@ In `upload.go`, find where `http.DefaultClient` is used for downloading images a
 
 **Step 4: Add env vars to docker-compose**
 
-In `~/deploy/krolik-server/docker-compose.yml`, add to go-wp service:
+In `<deploy>/docker-compose.yml`, add to go-wp service:
 ```yaml
 environment:
   - OX_BROWSER_URL=http://ox-browser:8901
@@ -1287,12 +1287,12 @@ environment:
 
 **Step 5: Test compilation**
 
-Run: `cd ~/src/go-wp && go build ./...`
+Run: `cd <go-wp> && go build ./...`
 
 **Step 6: Deploy and test**
 
 ```bash
-cd ~/deploy/krolik-server && docker compose build --no-cache go-wp && docker compose up -d --no-deps --force-recreate go-wp
+cd <deploy> && docker compose build --no-cache go-wp && docker compose up -d --no-deps --force-recreate go-wp
 ```
 
 Test via MCP: `wp_image action=resolve query="кот на крыше" max_results=3`
@@ -1300,7 +1300,7 @@ Test via MCP: `wp_image action=resolve query="кот на крыше" max_result
 **Step 7: Commit**
 
 ```bash
-cd ~/src/go-wp && git add internal/imageadapter/ internal/wptools/media/
+cd <go-wp> && git add internal/imageadapter/ internal/wptools/media/
 git commit -m "feat: wire ox-browser as primary image search provider, add Pexels, fix upload proxy"
 ```
 

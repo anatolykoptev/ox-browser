@@ -67,7 +67,7 @@ impl Endpoint {
 }
 
 /// Canonical GraphQL feature flags (from go-twitter gqlFeatures()).
-/// 32 flags ported exactly from /home/krolik/src/go-twitter/endpoints.go lines 54-89.
+/// 32 flags ported exactly from go-twitter endpoints.go lines 54-89.
 pub fn features_json() -> String {
     serde_json::json!({
         "articles_preview_enabled": false,

@@ -1,4 +1,4 @@
-.PHONY: build test test-doc lint fmt check deny install-tools
+.PHONY: build test test-doc lint fmt check preflight deny install-tools
 
 build:
 	cargo build --workspace
@@ -18,6 +18,10 @@ fmt:
 
 check: fmt lint test
 	@echo "All checks passed"
+
+## CI gate — fmt check + clippy -D warnings + nextest + doctests
+preflight: fmt lint test
+	@echo "Preflight passed"
 
 deny:
 	cargo deny check

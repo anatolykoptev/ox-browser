@@ -1151,7 +1151,7 @@ Expected: All pass (~95 tests)
 **Step 4: Build and deploy Docker**
 
 ```bash
-cd ~/deploy/krolik-server
+cd <deploy>
 docker compose build --no-cache ox-browser
 docker compose up -d --no-deps --force-recreate ox-browser
 ```

@@ -86,7 +86,7 @@ Logic: in sitemap-only mode (`follow_links=false`), skip seed push IF we have si
 
 **Step 3: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler -- --nocapture`
+Run: `cd . && cargo test -p ox-crawler -- --nocapture`
 
 **Step 4: Commit**
 
@@ -180,7 +180,7 @@ If `body` is always String (no raw bytes), then gzip support only works if the H
 
 **Step 5: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler sitemap -- --nocapture`
+Run: `cd . && cargo test -p ox-crawler sitemap -- --nocapture`
 
 **Step 6: Commit**
 
@@ -256,7 +256,7 @@ MCP (`mcp/crawl.rs`):
 
 **Step 3: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test --workspace -- --nocapture`
+Run: `cd . && cargo test --workspace -- --nocapture`
 
 **Step 4: Commit**
 
@@ -319,7 +319,7 @@ REST test:
 
 **Step 4: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test --workspace -- --nocapture`
+Run: `cd . && cargo test --workspace -- --nocapture`
 
 **Step 5: Commit**
 
@@ -334,12 +334,12 @@ git commit -m "fix: validate discovery mode parameter in REST and MCP handlers"
 
 **Step 1: Run full test suite**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test --workspace`
+Run: `cd . && cargo test --workspace`
 
 **Step 2: Build and deploy**
 
 ```bash
-cd ~/deploy/krolik-server && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
+cd <deploy> && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
 ```
 
 **Step 3: Verify fix #1 — sitemap mode no longer crawls seed as BFS**

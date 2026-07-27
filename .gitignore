@@ -2,4 +2,15 @@
 **/*.rs.bk
 *.pdb
 .DS_Store
+
+# Editor / IDE
 .claude/
+.devin/
+.vscode/
+.idea/
+*.iml
+
+# Local config
+.env
+.env.*
+!.env.example

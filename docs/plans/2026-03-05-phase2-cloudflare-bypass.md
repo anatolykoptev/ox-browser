@@ -111,7 +111,7 @@ mod tests {
 **Step 2: Run test to verify it fails**
 
 ```bash
-cd ~/src/ox-browser && cargo test -p ox-http cookie_provider -v
+cd . && cargo test -p ox-http cookie_provider -v
 ```
 
 Expected: compilation error (module not declared in lib.rs)
@@ -133,7 +133,7 @@ pub use cookie_provider::{CookieProvider, SolvedChallenge};
 **Step 4: Run test to verify it passes**
 
 ```bash
-cd ~/src/ox-browser && cargo test -p ox-http cookie_provider -v
+cd . && cargo test -p ox-http cookie_provider -v
 ```
 
 Expected: 2 tests pass
@@ -301,7 +301,7 @@ mod tests {
 **Step 2: Run test to verify it fails**
 
 ```bash
-cd ~/src/ox-browser && cargo test -p ox-http cookie_cache -v
+cd . && cargo test -p ox-http cookie_cache -v
 ```
 
 Expected: compilation error (module not declared)
@@ -323,7 +323,7 @@ pub use cookie_cache::CookieCache;
 **Step 4: Run test to verify it passes**
 
 ```bash
-cd ~/src/ox-browser && cargo test -p ox-http cookie_cache -v
+cd . && cargo test -p ox-http cookie_cache -v
 ```
 
 Expected: 6 tests pass
@@ -553,7 +553,7 @@ mod tests {
 **Step 2: Run test to verify it fails**
 
 ```bash
-cd ~/src/ox-browser && cargo test -p ox-http solver_byparr -v
+cd . && cargo test -p ox-http solver_byparr -v
 ```
 
 Expected: compilation error (module not declared)
@@ -575,7 +575,7 @@ pub use solver_byparr::{ByparrConfig, ByparrSolver};
 **Step 4: Run test to verify it passes**
 
 ```bash
-cd ~/src/ox-browser && cargo test -p ox-http solver_byparr -v
+cd . && cargo test -p ox-http solver_byparr -v
 ```
 
 Expected: 5 tests pass
@@ -872,7 +872,7 @@ mod tests {
 **Step 2: Run test to verify it fails**
 
 ```bash
-cd ~/src/ox-browser && cargo test -p ox-http middleware_solver -v
+cd . && cargo test -p ox-http middleware_solver -v
 ```
 
 Expected: compilation error (module not declared)
@@ -894,7 +894,7 @@ pub use middleware_solver::solver_middleware;
 **Step 4: Run test to verify it passes**
 
 ```bash
-cd ~/src/ox-browser && cargo test -p ox-http middleware_solver -v
+cd . && cargo test -p ox-http middleware_solver -v
 ```
 
 Expected: 5 tests pass
@@ -926,7 +926,7 @@ if let (Some(ref provider), Some(ref cache)) = (&config.cookie_provider, &config
 **Step 6: Run full test suite**
 
 ```bash
-cd ~/src/ox-browser && cargo test --workspace
+cd . && cargo test --workspace
 ```
 
 Expected: all 187 + new tests pass (existing tests use default config with `cookie_provider: None`)
@@ -1219,7 +1219,7 @@ mod tests {
 **Step 3: Run tests**
 
 ```bash
-cd ~/src/ox-browser && cargo test -p ox-js -v
+cd . && cargo test -p ox-js -v
 ```
 
 Expected: 4 tests pass
@@ -1271,7 +1271,7 @@ New approach: external stealth browser solver (Byparr/Camoufox) + cookie caching
 **Step 2: Run full test suite one final time**
 
 ```bash
-cd ~/src/ox-browser && cargo test --workspace
+cd . && cargo test --workspace
 ```
 
 Expected: all tests pass (187 original + ~22 new)

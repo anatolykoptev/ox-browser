@@ -373,7 +373,7 @@ git commit -m "feat(media): generic media extractor (video + image from HTML)"
 
 **Files:**
 - Create: `crates/media/src/youtube.rs`
-- Reference: `/home/krolik/src/go-media/extract/youtube/oxbrowser.go` (port logic)
+- Reference: `<go-media>/extract/youtube/oxbrowser.go` (port logic)
 
 **Step 1: Write tests**
 
@@ -919,7 +919,7 @@ git commit -m "feat: spawn media cleanup background task on startup"
 ### Task 13: Update consumers (go-media ox-browser extractor)
 
 **Files:**
-- Modify: `/home/krolik/src/go-media/extract/youtube/oxbrowser.go`
+- Modify: `<go-media>/extract/youtube/oxbrowser.go`
 
 **Step 1: Update ox-browser extractor to call `/media/download` instead of `/fetch-smart`**
 
@@ -932,7 +932,7 @@ Parse response into `*media.Media` with file path, metadata, stats.
 
 **Step 2: Run go-media tests**
 
-Run: `cd /home/krolik/src/go-media && GOWORK=off go test ./...`
+Run: `cd <go-media> && GOWORK=off go test ./...`
 
 **Step 3: Commit in go-media repo**
 
@@ -943,7 +943,7 @@ Run: `cd /home/krolik/src/go-media && GOWORK=off go test ./...`
 **Step 1: Build and deploy ox-browser**
 
 ```bash
-cd ~/deploy/krolik-server
+cd <deploy>
 docker compose build --no-cache ox-browser
 docker compose up -d --no-deps --force-recreate ox-browser
 ```
@@ -964,21 +964,20 @@ curl -s -X POST http://127.0.0.1:8901/media/download \
   -d '{"url": "https://piter.now/some-article", "media_type": "image", "max_results": 5}'
 ```
 
-**Step 4: Deploy updated go-media + vaelor**
+**Step 4: Deploy updated go-media**
 
 ```bash
-cd ~/src/go-media && git tag v0.3.0 && git push origin v0.3.0
-cd ~/src/vaelor && go get github.com/anatolykoptev/go-media@v0.3.0 && make deploy
+cd <go-media> && git tag v0.3.0 && git push origin v0.3.0
 ```
 
-**Step 5: Test end-to-end via Telegram**
+**Step 5: Test end-to-end**
 
-Send YouTube URL to vaelor via Telegram, verify video arrives with metadata.
+Send a YouTube URL to the `/media/download` endpoint, verify video arrives with metadata.
 
 **Step 6: Commit and tag ox-browser**
 
 ```bash
-cd ~/src/ox-browser
+cd .
 git tag v0.8.0
 git push origin v0.8.0
 ```
