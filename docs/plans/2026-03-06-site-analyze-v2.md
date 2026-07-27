@@ -9,8 +9,8 @@
 **Tech Stack:** Rust (dom_query for HTML parsing, regex for patterns, serde for serialization), Go (net/http client, XML formatting for MCP output)
 
 **Repos:**
-- ox-browser: `/home/krolik/src/ox-browser/`
-- go-code: `/home/krolik/src/go-code/`
+- ox-browser: `./`
+- go-code: `<go-code>/`
 
 **File size rule:** All source files ≤ 200 lines.
 
@@ -118,7 +118,7 @@ use ox_intelligence::fingerprint::Fingerprinter;
 **Step 8: Verify build + tests**
 
 ```bash
-cd /home/krolik/src/ox-browser
+cd .
 cargo test -p ox-intelligence
 cargo test -p ox-js
 cargo build
@@ -1697,9 +1697,9 @@ git commit -m "feat(js): integrate all intelligence modules into /analyze endpoi
 Update Go types in `internal/webanalyze/client.go` to match expanded ox-browser response.
 
 **Files:**
-- Modify: `/home/krolik/src/go-code/internal/webanalyze/client.go` — add new response types
-- Create: `/home/krolik/src/go-code/internal/webanalyze/types.go` — new report types (keep client.go ≤200 lines)
-- Modify: `/home/krolik/src/go-code/internal/webanalyze/client_test.go` — update test data
+- Modify: `<go-code>/internal/webanalyze/client.go` — add new response types
+- Create: `<go-code>/internal/webanalyze/types.go` — new report types (keep client.go ≤200 lines)
+- Modify: `<go-code>/internal/webanalyze/client_test.go` — update test data
 
 **Step 1: Create types.go with new report structs**
 
@@ -1877,7 +1877,7 @@ type Technology struct {
 **Step 3: Verify**
 
 ```bash
-cd /home/krolik/src/go-code
+cd <go-code>
 go build ./...
 go test ./internal/webanalyze/...
 ```
@@ -1896,8 +1896,8 @@ git commit -m "feat(webanalyze): add types for expanded site_analyze response"
 Update `tool_site_analyze.go` to format all new sections in the XML response.
 
 **Files:**
-- Modify: `/home/krolik/src/go-code/cmd/go-code/tool_site_analyze.go`
-- Create: `/home/krolik/src/go-code/cmd/go-code/tool_site_analyze_format.go` — extract formatters (keep files ≤200 lines)
+- Modify: `<go-code>/cmd/go-code/tool_site_analyze.go`
+- Create: `<go-code>/cmd/go-code/tool_site_analyze_format.go` — extract formatters (keep files ≤200 lines)
 
 **Step 1: Create tool_site_analyze_format.go**
 
@@ -2106,7 +2106,7 @@ Remove the old `formatTechnologies` from this file (moved to format file).
 **Step 3: Verify**
 
 ```bash
-cd /home/krolik/src/go-code
+cd <go-code>
 go build ./...
 go vet ./cmd/go-code/
 ```
@@ -2129,7 +2129,7 @@ Build and deploy both services, verify end-to-end.
 **Step 1: Deploy ox-browser**
 
 ```bash
-cd /home/krolik/deploy/krolik-server
+cd <deploy>
 docker compose build --no-cache ox-browser
 docker compose up -d --no-deps --force-recreate ox-browser
 ```
@@ -2147,7 +2147,7 @@ Expected: non-null values for seo, performance, accessibility sections.
 **Step 3: Deploy go-code**
 
 ```bash
-cd /home/krolik/deploy/krolik-server
+cd <deploy>
 docker compose build --no-cache go-code
 docker compose up -d --no-deps --force-recreate go-code
 ```
@@ -2165,7 +2165,7 @@ Use `site_analyze` MCP tool on a WordPress site (e.g., piter.now) and a Next.js 
 **Step 5: Commit deployment verification**
 
 ```bash
-cd /home/krolik/src/ox-browser
+cd .
 git tag v0.2.5
 ```
 

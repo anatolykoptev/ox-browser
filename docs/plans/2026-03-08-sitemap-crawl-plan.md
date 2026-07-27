@@ -70,7 +70,7 @@ pub use sitemap::{SitemapContent, SitemapEntry};
 
 **Step 4: Verify it compiles**
 
-Run: `cd /home/krolik/src/ox-browser && cargo check -p ox-crawler`
+Run: `cd . && cargo check -p ox-crawler`
 Expected: compiles (todo!() is fine for check)
 
 **Step 5: Commit**
@@ -197,7 +197,7 @@ mod tests {
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler sitemap -- --nocapture 2>&1 | tail -5`
+Run: `cd . && cargo test -p ox-crawler sitemap -- --nocapture 2>&1 | tail -5`
 Expected: FAIL — `todo!()` panics and `filter_since` not found
 
 **Step 3: Implement parse_sitemap using quick-xml**
@@ -346,7 +346,7 @@ pub fn filter_since(entries: Vec<SitemapEntry>, since: &str) -> Vec<SitemapEntry
 
 **Step 5: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler sitemap -- --nocapture`
+Run: `cd . && cargo test -p ox-crawler sitemap -- --nocapture`
 Expected: all 5 tests PASS
 
 **Step 6: Commit**
@@ -405,7 +405,7 @@ Add to `frontier.rs` tests:
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler frontier -- --nocapture 2>&1 | tail -5`
+Run: `cd . && cargo test -p ox-crawler frontier -- --nocapture 2>&1 | tail -5`
 Expected: FAIL — `push_with_priority` and `EntrySource` not found
 
 **Step 3: Rewrite frontier.rs with BinaryHeap**
@@ -526,7 +526,7 @@ pub use frontier::{EntrySource, Frontier, FrontierEntry};
 
 **Step 5: Run all crawler tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler -- --nocapture`
+Run: `cd . && cargo test -p ox-crawler -- --nocapture`
 Expected: all tests PASS (existing tests use `push()` which is backward-compatible)
 
 **Step 6: Commit**
@@ -614,7 +614,7 @@ In `crates/crawler/src/crawler.rs`, every `CrawlResult { ... }` must include the
 
 **Step 5: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler -- --nocapture`
+Run: `cd . && cargo test -p ox-crawler -- --nocapture`
 Expected: all tests PASS
 
 **Step 6: Commit**
@@ -686,7 +686,7 @@ pub use robots::{extract_sitemaps, RobotsCache};
 
 **Step 5: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler robots -- --nocapture`
+Run: `cd . && cargo test -p ox-crawler robots -- --nocapture`
 Expected: all robot tests PASS
 
 **Step 6: Commit**
@@ -910,7 +910,7 @@ pub use discovery::DiscoveryResult;
 
 **Step 3: Verify compilation**
 
-Run: `cd /home/krolik/src/ox-browser && cargo check -p ox-crawler`
+Run: `cd . && cargo check -p ox-crawler`
 Expected: compiles
 
 **Step 4: Commit**
@@ -995,7 +995,7 @@ pub async fn crawl(&self, seed_url: &str) -> (mpsc::Receiver<CrawlResult>, Disco
 
 **Step 4: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler -- --nocapture`
+Run: `cd . && cargo test -p ox-crawler -- --nocapture`
 Expected: all tests PASS
 
 **Step 5: Commit**
@@ -1067,7 +1067,7 @@ When `file_path` is Some, set `result.file_path` and clear `result.markdown`.
 
 **Step 2: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-crawler -- --nocapture`
+Run: `cd . && cargo test -p ox-crawler -- --nocapture`
 Expected: all tests PASS
 
 **Step 3: Commit**
@@ -1168,7 +1168,7 @@ Add test for new request parameters:
 
 **Step 6: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-js -- --nocapture`
+Run: `cd . && cargo test -p ox-js -- --nocapture`
 Expected: PASS
 
 **Step 7: Commit**
@@ -1240,7 +1240,7 @@ In `mod.rs`, update the crawl tool description:
 
 **Step 5: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test --workspace -- --nocapture`
+Run: `cd . && cargo test --workspace -- --nocapture`
 Expected: all 135+ tests PASS
 
 **Step 6: Commit**
@@ -1256,16 +1256,16 @@ git commit -m "feat(mcp): add sitemap discovery params to crawl tool"
 
 **Step 1: Run full test suite**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test --workspace`
+Run: `cd . && cargo test --workspace`
 Expected: all tests PASS
 
 **Step 2: Build Docker image**
 
-Run: `cd ~/deploy/krolik-server && docker compose build --no-cache ox-browser`
+Run: `cd <deploy> && docker compose build --no-cache ox-browser`
 
 **Step 3: Deploy**
 
-Run: `cd ~/deploy/krolik-server && docker compose up -d --no-deps --force-recreate ox-browser`
+Run: `cd <deploy> && docker compose up -d --no-deps --force-recreate ox-browser`
 
 **Step 4: Health check**
 

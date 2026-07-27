@@ -5,20 +5,31 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint:
-    runs-on: ubuntu-latest
+  preflight:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@1.97
         with:
           components: clippy, rustfmt
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace
 
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97
-      - run: cargo test --workspace
+      - name: Install cargo-nextest
+        run: |
+          ARCH=$(uname -m)
+          curl -fsSL "https://github.com/nextest-rs/nextest/releases/latest/download/cargo-nextest-${ARCH}-unknown-linux-musl.tar.gz" \
+            | tar xz -C /usr/local/bin --strip-components=1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Preflight (fmt + clippy -D warnings + nextest + doctests)
+        run: make preflight

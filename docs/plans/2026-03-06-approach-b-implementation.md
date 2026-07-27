@@ -107,7 +107,7 @@ fn detects_turnstile_at_200() {
 
 **Step 3: Run tests to verify they fail**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-http cloudflare::tests`
+Run: `cd . && cargo test -p ox-http cloudflare::tests`
 Expected: FAIL — new tests reference `ManagedChallenge` variant and 200 detection
 
 **Step 4: Implement HTTP 200 detection**
@@ -220,7 +220,7 @@ fn ignores_clean_200() {
 
 **Step 6: Run tests to verify all pass**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-http cloudflare::tests`
+Run: `cd . && cargo test -p ox-http cloudflare::tests`
 Expected: all tests PASS
 
 **Step 7: Update ManagedChallenge in middleware and solver**
@@ -245,7 +245,7 @@ In `crates/http/src/error.rs`, ensure `ManagedChallenge` is retryable (it alread
 **Step 8: Commit**
 
 ```bash
-cd /home/krolik/src/ox-browser
+cd .
 git add -A
 git commit -m "feat: detect Cloudflare challenges at HTTP 200 (cf-mitigated, _cf_chl_opt, challenge-platform)"
 ```
@@ -639,13 +639,13 @@ Update tests to construct `AppState` with a mock `HttpClient`. Since `HttpClient
 
 **Step 5: Run all tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-js`
+Run: `cd . && cargo test -p ox-js`
 Expected: all tests PASS
 
 **Step 6: Commit**
 
 ```bash
-cd /home/krolik/src/ox-browser
+cd .
 git add -A
 git commit -m "feat: add POST /fetch and /fetch-smart endpoints (wreq + headless fallback)"
 ```
@@ -756,16 +756,16 @@ wreq-util = "3.0.0-rc.10"
 
 **Step 5: Build and test**
 
-Run: `cd /home/krolik/src/ox-browser && cargo build`
+Run: `cd . && cargo build`
 Expected: compiles without errors
 
-Run: `cd /home/krolik/src/ox-browser && cargo test`
+Run: `cd . && cargo test`
 Expected: all tests PASS
 
 **Step 6: Commit**
 
 ```bash
-cd /home/krolik/src/ox-browser
+cd .
 git add -A
 git commit -m "feat: add serve subcommand with /health, /solve, /fetch, /fetch-smart endpoints"
 ```
@@ -775,8 +775,8 @@ git commit -m "feat: add serve subcommand with /health, /solve, /fetch, /fetch-s
 ### Task 4: Docker Service
 
 **Files:**
-- Create: `Dockerfile` in `/home/krolik/src/ox-browser/`
-- Modify: `/home/krolik/deploy/krolik-server/docker-compose.yml` (add ox-browser service)
+- Create: `Dockerfile` in `./`
+- Modify: `<deploy>/docker-compose.yml` (add ox-browser service)
 
 **Context:**
 - No Dockerfile exists yet for ox-browser
@@ -818,12 +818,12 @@ CMD ["serve", "--port", "8901"]
 
 **Step 2: Add to docker-compose.yml**
 
-Add this service block to `/home/krolik/deploy/krolik-server/docker-compose.yml`:
+Add this service block to `<deploy>/docker-compose.yml`:
 
 ```yaml
   ox-browser:
     build:
-      context: /home/krolik/src/ox-browser
+      context: .
       dockerfile: Dockerfile
     container_name: ox-browser
     restart: unless-stopped
@@ -847,7 +847,7 @@ Add this service block to `/home/krolik/deploy/krolik-server/docker-compose.yml`
 
 **Step 3: Build and test Docker image**
 
-Run: `cd /home/krolik/deploy/krolik-server && docker compose build ox-browser`
+Run: `cd <deploy> && docker compose build ox-browser`
 Expected: builds successfully
 
 Run: `docker compose up -d ox-browser && sleep 3 && curl -s http://127.0.0.1:8901/health`
@@ -856,11 +856,11 @@ Expected: `ok`
 **Step 4: Commit**
 
 ```bash
-cd /home/krolik/src/ox-browser
+cd .
 git add Dockerfile
 git commit -m "feat: add Dockerfile for ox-browser server"
 
-cd /home/krolik/deploy/krolik-server
+cd <deploy>
 git add docker-compose.yml
 git commit -m "feat: add ox-browser service on port 8901"
 ```
@@ -870,13 +870,13 @@ git commit -m "feat: add ox-browser service on port 8901"
 ### Task 5: go-engine Integration
 
 **Files:**
-- Create: `/home/krolik/src/go-engine/fetch/oxbrowser.go`
-- Modify: `/home/krolik/src/go-engine/fetch/fetcher.go:46-54` (add oxBrowserURL field)
-- Modify: `/home/krolik/src/go-engine/fetch/fetcher.go:136-174` (add fallback step in FetchBody)
-- Modify: `/home/krolik/src/go-search/internal/engine/config.go:22-56` (add OxBrowserURL field)
-- Modify: `/home/krolik/src/go-search/internal/engine/config.go:82-106` (wire option)
-- Modify: `/home/krolik/src/go-search/config.go` (read OX_BROWSER_URL env)
-- Modify: `/home/krolik/deploy/krolik-server/docker-compose.yml` (add OX_BROWSER_URL to go-search)
+- Create: `<go-engine>/fetch/oxbrowser.go`
+- Modify: `<go-engine>/fetch/fetcher.go:46-54` (add oxBrowserURL field)
+- Modify: `<go-engine>/fetch/fetcher.go:136-174` (add fallback step in FetchBody)
+- Modify: `<go-search>/internal/engine/config.go:22-56` (add OxBrowserURL field)
+- Modify: `<go-search>/internal/engine/config.go:82-106` (wire option)
+- Modify: `<go-search>/config.go` (read OX_BROWSER_URL env)
+- Modify: `<deploy>/docker-compose.yml` (add OX_BROWSER_URL to go-search)
 
 **Context:**
 - Follow the exact same pattern as `byparr.go` / `WithByparrFallback`
@@ -885,7 +885,7 @@ git commit -m "feat: add ox-browser service on port 8901"
 
 **Step 1: Create oxbrowser.go**
 
-Create `/home/krolik/src/go-engine/fetch/oxbrowser.go`:
+Create `<go-engine>/fetch/oxbrowser.go`:
 
 ```go
 package fetch
@@ -1024,7 +1024,7 @@ In `fetcher.go`, update the fallback section (after the switch statement):
 
 **Step 4: Wire through engine config**
 
-In `/home/krolik/src/go-search/internal/engine/config.go`, add field:
+In `<go-search>/internal/engine/config.go`, add field:
 
 ```go
 OxBrowserURL     string
@@ -1038,7 +1038,7 @@ if c.OxBrowserURL != "" {
 }
 ```
 
-In `/home/krolik/src/go-search/config.go`, add to Config init:
+In `<go-search>/config.go`, add to Config init:
 
 ```go
 OxBrowserURL: env.Str("OX_BROWSER_URL", ""),
@@ -1054,24 +1054,24 @@ In go-search service environment:
 
 **Step 6: Build and verify**
 
-Run: `cd /home/krolik/src/go-engine && go build ./...`
+Run: `cd <go-engine> && go build ./...`
 Expected: compiles
 
-Run: `cd /home/krolik/src/go-search && go build ./...`
+Run: `cd <go-search> && go build ./...`
 Expected: compiles
 
 **Step 7: Commit**
 
 ```bash
-cd /home/krolik/src/go-engine
+cd <go-engine>
 git add -A
 git commit -m "feat: add ox-browser /fetch-smart fallback in fetch chain"
 
-cd /home/krolik/src/go-search
+cd <go-search>
 git add -A
 git commit -m "feat: wire OX_BROWSER_URL env for ox-browser fallback"
 
-cd /home/krolik/deploy/krolik-server
+cd <deploy>
 git add docker-compose.yml
 git commit -m "feat: add OX_BROWSER_URL to go-search environment"
 ```

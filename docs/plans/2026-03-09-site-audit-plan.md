@@ -768,7 +768,7 @@ Expected: JSON with `overall_score`, `categories`, `top_issues`
 **Step 3: Docker build + deploy**
 
 ```bash
-cd ~/deploy/krolik-server
+cd <deploy>
 docker compose build --no-cache ox-browser
 docker compose up -d --no-deps --force-recreate ox-browser
 ```

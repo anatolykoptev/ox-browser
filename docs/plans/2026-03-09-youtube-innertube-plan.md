@@ -70,7 +70,7 @@ mod tests {
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-media innertube 2>&1 | tail -5`
+Run: `cd . && cargo test -p ox-media innertube 2>&1 | tail -5`
 Expected: compile error — module not found
 
 **Step 3: Implement the module**
@@ -191,7 +191,7 @@ Add `pub mod innertube;` to `crates/media/src/lib.rs` after `pub mod extract;`.
 
 **Step 4: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-media innertube`
+Run: `cd . && cargo test -p ox-media innertube`
 Expected: 7 tests pass
 
 **Step 5: Commit**
@@ -263,7 +263,7 @@ Update imports: add `use crate::innertube;` at top, remove `find_player_response
 
 **Step 3: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-media`
+Run: `cd . && cargo test -p ox-media`
 Expected: all existing tests pass (unit tests don't hit network)
 
 **Step 4: Commit**
@@ -340,7 +340,7 @@ fn playability_status_unplayable_returns_false() {
 
 **Step 3: Run tests**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-media`
+Run: `cd . && cargo test -p ox-media`
 Expected: all pass
 
 **Step 4: Commit**
@@ -394,7 +394,7 @@ async fn innertube_returns_playable_video() {
 
 **Step 2: Run the integration test**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test -p ox-media --test youtube_integration -- --ignored --nocapture 2>&1 | tail -20`
+Run: `cd . && cargo test -p ox-media --test youtube_integration -- --ignored --nocapture 2>&1 | tail -20`
 Expected: PASS with printed title, URL, resolution
 
 **Step 3: Commit**
@@ -413,7 +413,7 @@ git commit -m "test(media): add YouTube Innertube integration test"
 **Step 1: Build and deploy ox-browser**
 
 ```bash
-cd ~/deploy/krolik-server && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
+cd <deploy> && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser
 ```
 
 **Step 2: Test YouTube download**

@@ -576,7 +576,7 @@ curl -s -X POST http://127.0.0.1:8901/security \
 **Step 2:** Create `crates/mcp/src/tools/security.rs`, register in `mod.rs`.
 **Step 3:** Run `cargo build` — ensure it compiles.
 **Step 4:** Run `cargo test` — all tests pass (existing + new security tests).
-**Step 5:** Docker build + deploy: `cd ~/deploy/krolik-server && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser`
+**Step 5:** Docker build + deploy: `cd <deploy> && docker compose build --no-cache ox-browser && docker compose up -d --no-deps --force-recreate ox-browser`
 **Step 6:** Smoke test REST `/security` endpoint.
 **Step 7:** Smoke test MCP `tools/list` shows 5 tools.
 **Step 8:** Bump version to v0.4.0 in workspace Cargo.toml.

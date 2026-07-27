@@ -47,7 +47,7 @@ ox-mcp = { path = "crates/mcp" }
 
 **Step 3: Verify it compiles**
 
-Run: `cd /home/krolik/src/ox-browser && cargo check -p ox-mcp`
+Run: `cd . && cargo check -p ox-mcp`
 Expected: compiles (empty lib.rs is fine)
 
 **Step 4: Commit**
@@ -482,7 +482,7 @@ pub use tools::OxMcpServer;
 
 **Step 3: Verify it compiles**
 
-Run: `cd /home/krolik/src/ox-browser && cargo check -p ox-mcp`
+Run: `cd . && cargo check -p ox-mcp`
 Expected: compiles successfully
 
 **Step 4: Commit**
@@ -564,7 +564,7 @@ pub fn build_mcp_router(
 
 **Step 2: Verify it compiles**
 
-Run: `cd /home/krolik/src/ox-browser && cargo check -p ox-mcp`
+Run: `cd . && cargo check -p ox-mcp`
 Expected: compiles. If rmcp API differs slightly, adjust imports.
 
 **Step 3: Commit**
@@ -603,7 +603,7 @@ Note: `state.clone()` requires `AppState` to be `Clone`, which it already is.
 
 **Step 2: Verify it compiles**
 
-Run: `cd /home/krolik/src/ox-browser && cargo check`
+Run: `cd . && cargo check`
 Expected: full binary compiles
 
 **Step 3: Commit**
@@ -624,14 +624,14 @@ Both REST (/fetch, /analyze, etc.) and MCP (/mcp) served on same port."
 
 **Step 1: Run all tests locally**
 
-Run: `cd /home/krolik/src/ox-browser && cargo test --workspace`
+Run: `cd . && cargo test --workspace`
 Expected: all existing tests pass
 
 **Step 2: Build Docker image**
 
 Run:
 ```bash
-cd /home/krolik/deploy/krolik-server
+cd <deploy>
 docker compose build --no-cache ox-browser
 ```
 Expected: builds successfully (rmcp adds ~30s to compile time)
@@ -676,7 +676,7 @@ Run: `claude mcp add -s user -t http ox-browser http://127.0.0.1:8901/mcp`
 **Step 8: Commit version bump + tag**
 
 ```bash
-cd /home/krolik/src/ox-browser
+cd .
 # Bump version in Cargo.toml workspace.package from 0.2.0 to 0.3.0
 git add -A
 git commit -m "feat: ox-browser v0.3.0 — native MCP server

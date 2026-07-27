@@ -1047,7 +1047,7 @@ Expected: no warnings
 - [ ] **Step 3: Build Docker image**
 
 ```bash
-cd ~/deploy/krolik-server
+cd <deploy>
 docker compose build --no-cache ox-browser
 ```
 
@@ -1088,7 +1088,7 @@ Verify:
 
 If all smoke tests pass, tag as v0.8.0:
 ```bash
-cd ~/src/ox-browser
+cd .
 git tag v0.8.0
 git push origin v0.8.0
 ```
