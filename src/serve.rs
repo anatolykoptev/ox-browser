@@ -3,6 +3,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ox_http::metrics::SSRF_ALLOWLIST_ENTRIES;
+use ox_http::metrics::set_gauge;
+use ox_http::validate_allowlist;
 use ox_http::{DomainLimiter, HttpClient, cookie_cache, solver_negcache};
 use ox_js::EndpointDefaults;
 
@@ -10,6 +13,20 @@ use crate::config::{self, ServerConfig};
 
 /// Start the HTTP API server with the given configuration.
 pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
+    // SSRF allowlist startup validation (issue #28): fail fast before binding
+    // any port if the operator allowlisted a private/loopback/link-local/
+    // metadata IP or an unparseable entry. A security guard that silently
+    // drops a bad entry gives a false sense of safety — refuse to start.
+    let allowlist_count = validate_allowlist()?;
+    set_gauge(&SSRF_ALLOWLIST_ENTRIES, allowlist_count as u64);
+    if allowlist_count > 0 {
+        tracing::info!(
+            entries = allowlist_count,
+            "SSRF allowlist validated: {} entries passed",
+            allowlist_count
+        );
+    }
+
     let cache = config::build_cookie_cache(&config);
     let provider = config::build_cookie_provider(&config);
 

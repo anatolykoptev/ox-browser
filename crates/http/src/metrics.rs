@@ -89,6 +89,14 @@ pub static RENDER_CACHE_ENTRIES: AtomicU64 = AtomicU64::new(0);
 /// can shrink). Sampled at crawl end by the crawler engine.
 pub static CRAWLER_DEDUP_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
+/// SSRF allowlist valid-entry count, set once at server startup by
+/// [`crate::middleware_ssrf::validate_allowlist`]. A gauge (not a counter)
+/// because it snapshots the parsed-and-validated allowlist size — it does not
+/// grow monotonically. A scrape showing `0` when the operator expected entries
+/// means the env var was unset; a startup failure (server refused to start)
+/// means a private/metadata IP was caught by the guard.
+pub static SSRF_ALLOWLIST_ENTRIES: AtomicU64 = AtomicU64::new(0);
+
 /// Total crawler dedup entries evicted because the bounded set hit its
 /// `max_capacity` cap. Monotonic counter — compare against
 /// `oxbrowser_crawler_dedup_entries` to detect sustained cap pressure on
@@ -162,6 +170,11 @@ pub fn render() -> String {
             name: "oxbrowser_crawler_dedup_entries",
             help: "Crawler dedup (URL + content) entry count at scrape time (point-in-time, can shrink).",
             value: CRAWLER_DEDUP_ENTRIES.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_ssrf_allowlist_entries",
+            help: "SSRF allowlist valid-entry count (set at startup; 0 = unset, startup failure = private/metadata IP caught).",
+            value: SSRF_ALLOWLIST_ENTRIES.load(Ordering::Relaxed),
         },
     ];
 
@@ -237,6 +250,21 @@ mod tests {
             assert!(
                 body.lines().any(|l| l.starts_with(&format!("{series} "))),
                 "missing sample line for {series}"
+            );
+        }
+        for series in [
+            "oxbrowser_cookie_cache_entries",
+            "oxbrowser_render_cache_entries",
+            "oxbrowser_crawler_dedup_entries",
+            "oxbrowser_ssrf_allowlist_entries",
+        ] {
+            assert!(
+                body.contains(&format!("# TYPE {series} gauge")),
+                "missing gauge TYPE line for {series}"
+            );
+            assert!(
+                body.lines().any(|l| l.starts_with(&format!("{series} "))),
+                "missing gauge sample line for {series}"
             );
         }
     }

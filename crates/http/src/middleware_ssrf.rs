@@ -25,9 +25,16 @@
 //! wildcard and no CIDR support, so this is a narrow escape hatch and must be
 //! set explicitly per-deployment, never globally.
 //!
-//! Example: `OX_HTTP_PRIVATE_ALLOWLIST=127.0.0.1:54321,127.0.0.1:54322`.
+//! **Startup validation** ([`validate_allowlist`]): every entry is parsed and
+//! resolved at server startup. Entries that resolve to a private/loopback/
+//! link-local/metadata IP (anything [`is_private_ip`] blocks, including
+//! `169.254.169.254`) or that are unparseable cause the server to **refuse to
+//! start**. This prevents an operator from accidentally opening an SSRF bypass
+//! to a cloud-metadata endpoint or internal service.
+//!
+//! Example: `OX_HTTP_PRIVATE_ALLOWLIST=8.8.8.8:80,1.1.1.1:80`.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -137,6 +144,101 @@ pub fn is_allowlisted(host: &str, port: u16) -> bool {
     list.split(',')
         .map(|s| s.trim().to_ascii_lowercase())
         .any(|entry| entry == needle)
+}
+
+/// Validate the `OX_HTTP_PRIVATE_ALLOWLIST` env var at startup.
+///
+/// Parses each comma-separated entry as `host:port`, resolves hostnames via
+/// DNS, and rejects any entry whose IP [`is_private_ip`] blocks — including
+/// `169.254.169.254` (cloud metadata), `127.0.0.0/8` (loopback), `10.0.0.0/8`,
+/// `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16` (link-local), `::1`,
+/// `fc00::/7`, `fe80::/10`, and IPv4-mapped IPv6 forms (`::ffff:127.0.0.1`).
+/// Unparseable or unresolvable entries are also rejected.
+///
+/// This is a **fail-fast** security guard: any rejected entry causes the server
+/// to refuse to start (the caller surfaces the error via `anyhow`). An
+/// allowlist that silently dropped a metadata endpoint would be worse than no
+/// allowlist at all — it would give a false sense of safety while leaving the
+/// SSRF bypass open.
+///
+/// Returns the count of valid entries on success (for the
+/// `oxbrowser_ssrf_allowlist_entries` gauge).
+pub fn validate_allowlist() -> Result<usize> {
+    let Ok(list) = std::env::var("OX_HTTP_PRIVATE_ALLOWLIST") else {
+        return Ok(0);
+    };
+    let entries: Vec<&str> = list
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if entries.is_empty() {
+        return Ok(0);
+    }
+
+    let mut valid = 0usize;
+    for entry in &entries {
+        // Try parsing as a literal-IP SocketAddr first (covers bare IPs and
+        // IPv6 literals like [::1]:80).
+        if let Ok(addr) = entry.parse::<SocketAddr>() {
+            if is_private_ip(&addr.ip()) {
+                tracing::error!(
+                    entry = entry,
+                    ip = %addr.ip(),
+                    "SSRF allowlist entry rejected: private/reserved address"
+                );
+                return Err(HttpError::InvalidUrl(format!(
+                    "SSRF allowlist entry {entry:?} rejected: {} is a private/reserved address",
+                    addr.ip()
+                )));
+            }
+            valid += 1;
+            continue;
+        }
+
+        // Hostname:port — resolve via DNS and check every resolved IP.
+        // A hostname that resolves to even one private IP is rejected (fail
+        // closed — mirrors the pre-resolve validate_url policy).
+        match entry.to_socket_addrs() {
+            Ok(addrs) => {
+                let resolved: Vec<SocketAddr> = addrs.collect();
+                if resolved.is_empty() {
+                    tracing::error!(
+                        entry = entry,
+                        "SSRF allowlist entry rejected: DNS resolved to no addresses"
+                    );
+                    return Err(HttpError::InvalidUrl(format!(
+                        "SSRF allowlist entry {entry:?} rejected: DNS resolved to no addresses"
+                    )));
+                }
+                for sa in &resolved {
+                    if is_private_ip(&sa.ip()) {
+                        tracing::error!(
+                            entry = entry,
+                            ip = %sa.ip(),
+                            "SSRF allowlist entry rejected: hostname resolves to private/reserved address"
+                        );
+                        return Err(HttpError::InvalidUrl(format!(
+                            "SSRF allowlist entry {entry:?} rejected: hostname resolves to private/reserved address {}",
+                            sa.ip()
+                        )));
+                    }
+                }
+                valid += 1;
+            }
+            Err(e) => {
+                tracing::error!(
+                    entry = entry,
+                    error = %e,
+                    "SSRF allowlist entry rejected: unparseable or unresolvable"
+                );
+                return Err(HttpError::InvalidUrl(format!(
+                    "SSRF allowlist entry {entry:?} rejected: unparseable or unresolvable: {e}"
+                )));
+            }
+        }
+    }
+    Ok(valid)
 }
 
 /// Returns `true` if the IP address is private, loopback, link-local, or reserved.
@@ -411,5 +513,190 @@ mod tests {
             std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
         }
         assert!(!is_allowlisted("127.0.0.1", 8080));
+    }
+
+    // --- validate_allowlist startup validation (issue #28) ---
+    //
+    // All validation tests run in a single function to avoid env-var races
+    // between parallel test threads. Each sub-case sets the var, calls
+    // validate_allowlist, and asserts the outcome before the next sub-case.
+
+    #[test]
+    fn validate_allowlist_rejects_private_loopback_linklocal_metadata() {
+        unsafe {
+            // Cloud metadata IP (169.254.169.254) — the primary finding.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "169.254.169.254:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("private/reserved"),
+                "metadata IP not rejected: {err}"
+            );
+
+            // Loopback.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "127.0.0.1:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("private/reserved"),
+                "loopback not rejected: {err}"
+            );
+
+            // Private 10.0.0.0/8.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "10.0.0.1:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("private/reserved"),
+                "10/8 not rejected: {err}"
+            );
+
+            // Private 172.16.0.0/12.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "172.16.0.1:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("private/reserved"),
+                "172.16/12 not rejected: {err}"
+            );
+
+            // Private 192.168.0.0/16.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "192.168.1.1:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("private/reserved"),
+                "192.168/16 not rejected: {err}"
+            );
+
+            // Link-local.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "169.254.1.1:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("private/reserved"),
+                "link-local not rejected: {err}"
+            );
+
+            // IPv6 loopback.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "[::1]:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("private/reserved"),
+                "::1 not rejected: {err}"
+            );
+
+            // IPv4-mapped IPv6 loopback.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "[::ffff:127.0.0.1]:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("private/reserved"),
+                "::ffff:127.0.0.1 not rejected: {err}"
+            );
+
+            // Clean up so other tests see an unset var.
+            std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+        }
+    }
+
+    #[test]
+    fn validate_allowlist_rejects_unparseable_entries() {
+        unsafe {
+            // No port — not a valid host:port.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "not-a-valid-entry");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("rejected"),
+                "unparseable entry not rejected: {err}"
+            );
+
+            // Garbage with a port.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "!!!:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("rejected"),
+                "garbage entry not rejected: {err}"
+            );
+
+            std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+        }
+    }
+
+    #[test]
+    fn validate_allowlist_accepts_valid_public_entries() {
+        unsafe {
+            // Single valid public IP.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "8.8.8.8:80");
+            let count = validate_allowlist().expect("valid public IP should pass");
+            assert_eq!(count, 1, "valid entry count mismatch");
+
+            // Multiple valid public IPs.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "8.8.8.8:80,1.1.1.1:443");
+            let count = validate_allowlist().expect("valid public IPs should pass");
+            assert_eq!(count, 2, "valid entry count mismatch for multiple");
+
+            // Whitespace is trimmed.
+            std::env::set_var(
+                "OX_HTTP_PRIVATE_ALLOWLIST",
+                "  8.8.8.8:80  ,  1.1.1.1:443  ",
+            );
+            let count = validate_allowlist().expect("trimmed valid IPs should pass");
+            assert_eq!(count, 2, "whitespace trimming broke count");
+
+            std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+        }
+    }
+
+    #[test]
+    fn validate_allowlist_unset_returns_zero() {
+        unsafe {
+            std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+        }
+        assert_eq!(validate_allowlist().unwrap(), 0);
+
+        unsafe {
+            // Empty string → zero entries.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "");
+        }
+        assert_eq!(validate_allowlist().unwrap(), 0);
+
+        unsafe {
+            // Only commas/whitespace → zero entries.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "  ,  ,  ");
+        }
+        assert_eq!(validate_allowlist().unwrap(), 0);
+
+        unsafe {
+            std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+        }
+    }
+
+    #[test]
+    fn validate_allowlist_rejects_hostname_resolving_to_private() {
+        unsafe {
+            // `localhost` resolves to 127.0.0.1 on any standard Linux host —
+            // the startup guard must reject it. If DNS is unavailable the
+            // entry is still rejected (unresolvable), so the assertion holds
+            // either way.
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "localhost:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("rejected"),
+                "localhost should be rejected: {err}"
+            );
+
+            std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+        }
+    }
+
+    #[test]
+    fn validate_allowlist_rejects_mixed_valid_and_private() {
+        unsafe {
+            // A valid public entry followed by a private one — the first
+            // valid entry is counted, but the private one must still cause
+            // a hard failure (fail fast, do not silently drop).
+            std::env::set_var("OX_HTTP_PRIVATE_ALLOWLIST", "8.8.8.8:80,127.0.0.1:80");
+            let err = validate_allowlist().unwrap_err();
+            assert!(
+                err.to_string().contains("private/reserved"),
+                "private entry in mixed list not rejected: {err}"
+            );
+
+            std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+        }
     }
 }
