@@ -3,11 +3,17 @@ use std::time::{Duration, SystemTime};
 
 use crate::download::media_dir;
 
-const MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600); // 7 days
-const CLEANUP_INTERVAL: Duration = Duration::from_secs(24 * 3600); // 24h
+/// Files older than this are removed by the cleanup sweep. Reduced from 7d
+/// to 24h so a burst of large downloads cannot fill tmpfs before stale files
+/// are reclaimed (issue #30, resource_exhaustion).
+const MAX_AGE: Duration = Duration::from_secs(24 * 3600); // 24h
 
-/// Spawn a background task that deletes media files older than 7 days.
-/// Runs every 24 hours.
+/// How often the cleanup sweep runs. Reduced from 24h to 1h so tmpfs pressure
+/// is relieved before exhaustion (issue #30, resource_exhaustion).
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(3600); // 1h
+
+/// Spawn a background task that deletes media files older than `MAX_AGE`.
+/// Runs every `CLEANUP_INTERVAL` (1h).
 pub fn spawn_cleanup_task() {
     tokio::spawn(async {
         loop {
@@ -82,5 +88,22 @@ mod tests {
     fn cleanup_handles_missing_dir() {
         // Should not panic on non-existent directory
         cleanup_old_files(Path::new("/tmp/nonexistent_ox_test_dir"), Duration::ZERO);
+    }
+
+    /// issue #30: cleanup must fire hourly (not daily) and expire files after
+    /// 24h (not 7d) so a burst of large downloads cannot fill tmpfs before
+    /// stale files are reclaimed.
+    #[test]
+    fn cleanup_interval_and_max_age_are_reduced() {
+        assert!(
+            CLEANUP_INTERVAL <= Duration::from_secs(3600),
+            "CLEANUP_INTERVAL must be <= 1h, got {:?}",
+            CLEANUP_INTERVAL
+        );
+        assert!(
+            MAX_AGE <= Duration::from_secs(24 * 3600),
+            "MAX_AGE must be <= 24h, got {:?}",
+            MAX_AGE
+        );
     }
 }

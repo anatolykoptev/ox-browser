@@ -119,6 +119,12 @@ pub static RATELIMIT_DOMAINS: AtomicU64 = AtomicU64::new(0);
 /// the health map is bounded (issue #21, resource_exhaustion).
 pub static PROXY_HEALTH_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
+/// Media tmpfs directory size in bytes at scrape time (point-in-time, can
+/// shrink as cleanup removes old files). Updated before each download by
+/// `ox_media::download::check_quota` so operators can see near-capacity
+/// state and alert before tmpfs exhaustion (issue #30, resource_exhaustion).
+pub static MEDIA_TMPFS_BYTES: AtomicU64 = AtomicU64::new(0);
+
 /// Total crawler dedup entries evicted because the bounded set hit its
 /// `max_capacity` cap. Monotonic counter — compare against
 /// `oxbrowser_crawler_dedup_entries` to detect sustained cap pressure on
@@ -223,6 +229,11 @@ pub fn render() -> String {
             name: "oxbrowser_proxy_health_entries",
             help: "Proxy-health tracker entry count at scrape time (point-in-time, can shrink).",
             value: PROXY_HEALTH_ENTRIES.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_media_tmpfs_bytes",
+            help: "Media tmpfs directory size in bytes at scrape time (point-in-time, can shrink).",
+            value: MEDIA_TMPFS_BYTES.load(Ordering::Relaxed),
         },
     ];
 
@@ -433,5 +444,29 @@ mod tests {
 
         // Reset to avoid leaking state into other tests.
         set_gauge(&RATELIMIT_DOMAINS, 0);
+    }
+
+    /// RED test for issue #30: render() must emit `oxbrowser_media_tmpfs_bytes`
+    /// reflecting the media tmpfs directory size so operators can see
+    /// near-capacity state and alert before tmpfs exhaustion. Set before each
+    /// download by `ox_media::download::check_quota`.
+    #[test]
+    fn render_emits_media_tmpfs_bytes_gauge() {
+        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+
+        set_gauge(&MEDIA_TMPFS_BYTES, 1_500_000_000);
+        let body = render();
+        assert!(
+            body.contains("# TYPE oxbrowser_media_tmpfs_bytes gauge"),
+            "missing gauge TYPE line: {body}"
+        );
+        assert!(
+            body.lines()
+                .any(|l| l == "oxbrowser_media_tmpfs_bytes 1500000000"),
+            "missing/incorrect gauge sample line: {body}"
+        );
+
+        // Reset to avoid leaking state into other tests.
+        set_gauge(&MEDIA_TMPFS_BYTES, 0);
     }
 }
