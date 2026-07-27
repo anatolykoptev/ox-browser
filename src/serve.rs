@@ -1,8 +1,9 @@
 //! HTTP API server startup logic, extracted to keep main.rs small.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use ox_http::{DomainLimiter, HttpClient, solver_negcache};
+use ox_http::{DomainLimiter, HttpClient, cookie_cache, solver_negcache};
 use ox_js::EndpointDefaults;
 
 use crate::config::{self, ServerConfig};
@@ -31,6 +32,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
 
     http_config.cookie_provider = Some(Arc::clone(&provider));
     http_config.cookie_cache = Some(Arc::clone(&cache));
+
+    // Cookie cache TTL-based eviction (issue #17): without a periodic sweep,
+    // entries accumulate per domain forever. Mirror the negcache spawn below.
+    cookie_cache::spawn_eviction_task(Arc::clone(&cache), Duration::from_secs(60));
 
     // Chrome fallback for JS-rendered pages
     if let Ok(url) = std::env::var("GO_BROWSER_URL") {
