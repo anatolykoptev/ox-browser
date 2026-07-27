@@ -79,8 +79,14 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         match ox_http::WebsharePool::new(&api_key).await {
             Ok(pool) => {
                 let health_cfg = config.proxy.health.to_health_config();
-                let healthy = ox_http::HealthyPool::new(Arc::new(pool), health_cfg);
-                http_config.proxy_pool = Some(Arc::new(healthy));
+                let cooldown = health_cfg.cooldown;
+                let healthy = Arc::new(ox_http::HealthyPool::new(Arc::new(pool), health_cfg));
+                // Periodic eviction of stale deactivated proxy entries so a
+                // long-running server doesn't accumulate rotated-out Webshare
+                // proxies forever (issue #21, resource_exhaustion). Mirrors the
+                // negcache/cookie-cache spawns.
+                ox_http::proxy_health::spawn_eviction_task(Arc::clone(&healthy), cooldown);
+                http_config.proxy_pool = Some(healthy);
                 tracing::info!("initialized Webshare proxy pool with health tracking");
             }
             Err(e) => {

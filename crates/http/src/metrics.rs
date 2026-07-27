@@ -113,6 +113,12 @@ pub static SOLVER_CONFIGURED: AtomicU64 = AtomicU64::new(0);
 /// resource_exhaustion).
 pub static RATELIMIT_DOMAINS: AtomicU64 = AtomicU64::new(0);
 
+/// Proxy-health tracker entry count at scrape time (point-in-time, can
+/// shrink). Updated after each `record_success`/`record_failure` and after
+/// `evict_stale` sweeps stale deactivated proxies so operators can confirm
+/// the health map is bounded (issue #21, resource_exhaustion).
+pub static PROXY_HEALTH_ENTRIES: AtomicU64 = AtomicU64::new(0);
+
 /// Total crawler dedup entries evicted because the bounded set hit its
 /// `max_capacity` cap. Monotonic counter — compare against
 /// `oxbrowser_crawler_dedup_entries` to detect sustained cap pressure on
@@ -212,6 +218,11 @@ pub fn render() -> String {
             name: "oxbrowser_ratelimit_domains",
             help: "Per-domain rate-limiter entry count at scrape time (point-in-time, can shrink).",
             value: RATELIMIT_DOMAINS.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_proxy_health_entries",
+            help: "Proxy-health tracker entry count at scrape time (point-in-time, can shrink).",
+            value: PROXY_HEALTH_ENTRIES.load(Ordering::Relaxed),
         },
     ];
 

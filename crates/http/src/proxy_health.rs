@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::metrics::{self, set_gauge};
 use crate::proxy_pool::ProxyPool;
 
 /// Configuration for health-based proxy filtering.
@@ -103,6 +104,7 @@ impl HealthyPool {
         entry.successes += 1;
         entry.total_latency += latency;
         entry.last_used = Instant::now();
+        set_gauge(&metrics::PROXY_HEALTH_ENTRIES, health.len() as u64);
     }
 
     /// Records a failed request. Deactivates the proxy if the failure
@@ -121,6 +123,7 @@ impl HealthyPool {
         {
             entry.deactivated_at = Some(Instant::now());
         }
+        set_gauge(&metrics::PROXY_HEALTH_ENTRIES, health.len() as u64);
     }
 
     /// Returns a snapshot of health stats for all tracked proxies.
@@ -134,6 +137,24 @@ impl HealthyPool {
         let total = self.inner.len();
         let deactivated = health.values().filter(|h| !h.is_active()).count();
         total.saturating_sub(deactivated)
+    }
+
+    /// Remove entries for deactivated proxies whose `last_used` is older than
+    /// `cooldown * 4`. Active proxies are never evicted. Bounds the `health`
+    /// map so rotated-out proxies (e.g. refreshed Webshare pools) don't
+    /// accumulate forever (issue #21, resource_exhaustion).
+    pub fn evict_stale(&self) {
+        let threshold = self.config.cooldown * 4;
+        let now = Instant::now();
+        let mut health = self.health.lock().unwrap();
+        health.retain(|_, h| {
+            // Active proxies are always kept — only stale deactivated ones go.
+            if h.is_active() {
+                return true;
+            }
+            now.duration_since(h.last_used) < threshold
+        });
+        set_gauge(&metrics::PROXY_HEALTH_ENTRIES, health.len() as u64);
     }
 
     /// Checks if a proxy should be reactivated (cooldown expired) and
@@ -180,6 +201,19 @@ impl ProxyPool for HealthyPool {
     fn len(&self) -> usize {
         self.inner.len()
     }
+}
+
+/// Spawn a background task that periodically evicts stale deactivated proxy
+/// entries from the `health` map. Mirrors `solver_negcache::spawn_eviction_task`.
+/// Call once at startup with the same `Arc<HealthyPool>` wired into
+/// `HttpConfig.proxy_pool` (issue #21, resource_exhaustion).
+pub fn spawn_eviction_task(pool: Arc<HealthyPool>, interval: Duration) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            pool.evict_stale();
+        }
+    });
 }
 
 #[cfg(test)]
