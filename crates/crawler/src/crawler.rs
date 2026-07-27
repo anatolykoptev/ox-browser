@@ -16,6 +16,7 @@ use crate::markdown::html_to_fit_markdown;
 use crate::result::CrawlResult;
 use crate::robots::RobotsCache;
 use crate::sitemap::SitemapEntry;
+use ox_http::metrics::CRAWLER_DEDUP_ENTRIES;
 
 /// Site crawler with streaming results via mpsc channel.
 pub struct Crawler {
@@ -104,9 +105,10 @@ async fn run_crawl(
     output_dir: Option<String>,
 ) -> anyhow::Result<()> {
     let seed_url = Url::parse(&seed)?;
-    let frontier = Arc::new(Mutex::new(Frontier::new(config.max_pages * 10)));
-    let dedup = Arc::new(Mutex::new(UrlDedup::new()));
-    let content_dedup = Arc::new(Mutex::new(ContentDedup::new()));
+    let frontier_cap = config.max_pages * 10;
+    let frontier = Arc::new(Mutex::new(Frontier::new(frontier_cap)));
+    let dedup = Arc::new(Mutex::new(UrlDedup::with_capacity(frontier_cap)));
+    let content_dedup = Arc::new(Mutex::new(ContentDedup::with_capacity(frontier_cap)));
     let robots = Arc::new(Mutex::new(RobotsCache::new("ox-browser")));
     let budget = Arc::new(Mutex::new(Budget::new(config.budget.clone())));
     let pages_crawled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -233,6 +235,21 @@ async fn run_crawl(
 
     // Wait for all in-flight tasks
     let _ = sem.acquire_many(config.concurrency as u32).await;
+
+    // Publish dedup entry count to the gauge (sampled at crawl end) and clear
+    // the sets so memory is released immediately (belt-and-suspenders — the
+    // Arcs drop at function exit, but explicit clear documents intent).
+    {
+        let d = dedup.lock().await;
+        let cd = content_dedup.lock().await;
+        let total = (d.len() + cd.len()) as u64;
+        ox_http::metrics::set_gauge(&CRAWLER_DEDUP_ENTRIES, total);
+        drop(d);
+        drop(cd);
+    }
+    dedup.lock().await.clear();
+    content_dedup.lock().await.clear();
+
     Ok(())
 }
 

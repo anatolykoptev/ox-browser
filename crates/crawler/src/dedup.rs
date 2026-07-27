@@ -4,36 +4,73 @@
 //! - [`ContentDedup`] tracks seen page bodies via blake3.
 //! - [`normalize_url`] canonicalizes URLs for dedup comparison.
 //! - [`is_cycle`] detects crawler traps (repeating paths, extreme length).
+//!
+//! # Unbounded-growth guard (issue #19)
+//!
+//! Both dedup sets are bounded by `max_capacity` with LRU-style eldest-first
+//! eviction (mirroring `ox_http::cookie_cache`). Without a cap, a large crawl
+//! over millions of distinct URLs/content hashes grew the sets without bound
+//! even though the frontier itself is capped at `max_pages * 10`. Eviction
+//! events bump the `oxbrowser_crawler_dedup_evicted_total` counter and emit a
+//! `tracing::warn!` so operators can alert on sustained cap pressure.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
+use ox_http::metrics::record_crawler_dedup_evicted;
 use url::Url;
 use xxhash_rust::xxh3::xxh3_64;
+
+/// Default capacity when none is specified — large enough that typical crawls
+/// never evict, but still bounded so a runaway crawl cannot OOM the process.
+pub const DEFAULT_DEDUP_CAPACITY: usize = 100_000;
 
 // ---------------------------------------------------------------------------
 // URL dedup
 // ---------------------------------------------------------------------------
 
-/// Fast URL deduplication backed by xxHash-64.
-#[derive(Debug, Default)]
+/// Fast URL deduplication backed by xxHash-64, bounded by `max_capacity` with
+/// LRU-style eldest-first eviction.
+#[derive(Debug)]
 pub struct UrlDedup {
-    seen: HashSet<u64>,
+    /// hash → monotonic insert sequence (for eldest eviction).
+    seen: HashMap<u64, u64>,
+    max_capacity: usize,
+    next_seq: u64,
 }
 
 impl UrlDedup {
     pub fn new() -> Self {
-        Self::default()
+        Self::with_capacity(DEFAULT_DEDUP_CAPACITY)
+    }
+
+    /// Create a dedup set with an explicit capacity cap.
+    pub fn with_capacity(max_capacity: usize) -> Self {
+        Self {
+            seen: HashMap::new(),
+            max_capacity: max_capacity.max(1),
+            next_seq: 0,
+        }
     }
 
     /// Insert a **normalized** URL. Returns `true` if it was new.
+    ///
+    /// If the set is at capacity and the URL is new, the eldest entry (lowest
+    /// sequence number) is evicted first.
     pub fn insert(&mut self, normalized_url: &str) -> bool {
         let hash = xxh3_64(normalized_url.as_bytes());
-        self.seen.insert(hash)
+        if self.seen.contains_key(&hash) {
+            return false;
+        }
+        self.evict_if_full();
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        self.seen.insert(hash, seq);
+        true
     }
 
     pub fn contains(&self, normalized_url: &str) -> bool {
         let hash = xxh3_64(normalized_url.as_bytes());
-        self.seen.contains(&hash)
+        self.seen.contains_key(&hash)
     }
 
     pub fn len(&self) -> usize {
@@ -43,27 +80,135 @@ impl UrlDedup {
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
     }
+
+    /// Returns the configured maximum number of entries.
+    pub fn max_capacity(&self) -> usize {
+        self.max_capacity
+    }
+
+    /// Remove all entries, resetting the set to empty.
+    pub fn clear(&mut self) {
+        self.seen.clear();
+        self.next_seq = 0;
+    }
+
+    /// Drop the eldest entry if the set is at capacity. Mirrors the
+    /// `CookieCache::put` eviction pattern.
+    fn evict_if_full(&mut self) {
+        if self.seen.len() < self.max_capacity {
+            return;
+        }
+        let eldest = self
+            .seen
+            .iter()
+            .min_by_key(|(_, seq)| **seq)
+            .map(|(k, _)| *k);
+        if let Some(key) = eldest {
+            tracing::warn!(
+                max_capacity = self.max_capacity,
+                metric = "oxbrowser_crawler_dedup_entries",
+                "url dedup at capacity — evicting eldest hash"
+            );
+            self.seen.remove(&key);
+            record_crawler_dedup_evicted();
+        }
+    }
+}
+
+impl Default for UrlDedup {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Content dedup
 // ---------------------------------------------------------------------------
 
-/// Content deduplication backed by blake3.
-#[derive(Debug, Default)]
+/// Content deduplication backed by blake3, bounded by `max_capacity` with
+/// LRU-style eldest-first eviction.
+#[derive(Debug)]
 pub struct ContentDedup {
-    seen: HashSet<[u8; 32]>,
+    /// hash → monotonic insert sequence (for eldest eviction).
+    seen: HashMap<[u8; 32], u64>,
+    max_capacity: usize,
+    next_seq: u64,
 }
 
 impl ContentDedup {
     pub fn new() -> Self {
-        Self::default()
+        Self::with_capacity(DEFAULT_DEDUP_CAPACITY)
+    }
+
+    /// Create a content dedup set with an explicit capacity cap.
+    pub fn with_capacity(max_capacity: usize) -> Self {
+        Self {
+            seen: HashMap::new(),
+            max_capacity: max_capacity.max(1),
+            next_seq: 0,
+        }
     }
 
     /// Insert content bytes. Returns `true` if the content was new.
+    ///
+    /// If the set is at capacity and the content is new, the eldest entry is
+    /// evicted first.
     pub fn insert(&mut self, content: &[u8]) -> bool {
         let hash = blake3::hash(content);
-        self.seen.insert(*hash.as_bytes())
+        let hash_bytes = *hash.as_bytes();
+        if self.seen.contains_key(&hash_bytes) {
+            return false;
+        }
+        self.evict_if_full();
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        self.seen.insert(hash_bytes, seq);
+        true
+    }
+
+    pub fn len(&self) -> usize {
+        self.seen.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
+    }
+
+    /// Returns the configured maximum number of entries.
+    pub fn max_capacity(&self) -> usize {
+        self.max_capacity
+    }
+
+    /// Remove all entries, resetting the set to empty.
+    pub fn clear(&mut self) {
+        self.seen.clear();
+        self.next_seq = 0;
+    }
+
+    fn evict_if_full(&mut self) {
+        if self.seen.len() < self.max_capacity {
+            return;
+        }
+        let eldest = self
+            .seen
+            .iter()
+            .min_by_key(|(_, seq)| **seq)
+            .map(|(k, _)| *k);
+        if let Some(key) = eldest {
+            tracing::warn!(
+                max_capacity = self.max_capacity,
+                metric = "oxbrowser_crawler_dedup_entries",
+                "content dedup at capacity — evicting eldest hash"
+            );
+            self.seen.remove(&key);
+            record_crawler_dedup_evicted();
+        }
+    }
+}
+
+impl Default for ContentDedup {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -204,5 +349,108 @@ mod tests {
     fn cycle_detects_long_urls() {
         let long = format!("https://example.com/{}", "a".repeat(2100));
         assert!(is_cycle(&long));
+    }
+
+    // -----------------------------------------------------------------------
+    // Bounded LRU tests (issue #19)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn url_dedup_caps_at_max_capacity_and_evicts_eldest() {
+        let cap = 8;
+        let mut d = UrlDedup::with_capacity(cap);
+
+        // Fill to capacity.
+        for i in 0..cap {
+            let url = format!("https://example.com/p{i}");
+            assert!(d.insert(&url), "insert {i} should be new");
+        }
+        assert_eq!(d.len(), cap);
+
+        // The first URL inserted is the eldest — it must be evicted next.
+        let eldest = "https://example.com/p0";
+        assert!(d.contains(eldest));
+
+        // Insert one beyond capacity.
+        let overflow = "https://example.com/p99";
+        assert!(d.insert(overflow));
+
+        assert_eq!(
+            d.len(),
+            cap,
+            "len must stay bounded at max_capacity after overflow insert"
+        );
+        assert!(
+            !d.contains(eldest),
+            "eldest entry (p0) should have been evicted"
+        );
+        assert!(d.contains(overflow));
+    }
+
+    #[test]
+    fn url_dedup_clear_resets_state() {
+        let mut d = UrlDedup::with_capacity(4);
+        d.insert("https://example.com/a");
+        d.insert("https://example.com/b");
+        assert_eq!(d.len(), 2);
+        assert!(!d.is_empty());
+
+        d.clear();
+        assert_eq!(d.len(), 0);
+        assert!(d.is_empty());
+
+        // After clear, previously-seen URLs are new again.
+        assert!(d.insert("https://example.com/a"));
+        assert_eq!(d.len(), 1);
+    }
+
+    #[test]
+    fn content_dedup_caps_at_max_capacity_and_evicts_eldest() {
+        let cap = 4;
+        let mut d = ContentDedup::with_capacity(cap);
+
+        for i in 0..cap {
+            let body = format!("body-{i}");
+            assert!(d.insert(body.as_bytes()));
+        }
+        assert_eq!(d.len(), cap);
+
+        // Insert beyond capacity — eldest (body-0) evicted.
+        assert!(d.insert(b"body-99"));
+        assert_eq!(d.len(), cap);
+        // body-0 was evicted so it's new again.
+        assert!(d.insert(b"body-0"));
+        assert_eq!(d.len(), cap);
+    }
+
+    #[test]
+    fn content_dedup_clear_resets_state() {
+        let mut d = ContentDedup::with_capacity(4);
+        d.insert(b"alpha");
+        d.insert(b"beta");
+        assert_eq!(d.len(), 2);
+
+        d.clear();
+        assert_eq!(d.len(), 0);
+        assert!(d.is_empty());
+
+        assert!(d.insert(b"alpha"), "after clear, alpha should be new");
+    }
+
+    #[test]
+    fn url_dedup_eviction_increments_counter() {
+        use ox_http::metrics::CRAWLER_DEDUP_EVICTED_TOTAL;
+        let before = CRAWLER_DEDUP_EVICTED_TOTAL.load(std::sync::atomic::Ordering::Relaxed);
+        let mut d = UrlDedup::with_capacity(2);
+        d.insert("https://example.com/a");
+        d.insert("https://example.com/b");
+        // Third insert evicts eldest.
+        d.insert("https://example.com/c");
+        let after = CRAWLER_DEDUP_EVICTED_TOTAL.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            after,
+            before + 1,
+            "eviction counter must increment on cap eviction"
+        );
     }
 }
