@@ -16,3 +16,10 @@ fn read_params_with_markdown() {
     assert_eq!(p.format, "markdown");
     assert_eq!(p.max_length, 1000);
 }
+
+#[test]
+fn read_params_with_llm_format() {
+    let json = r#"{"url": "https://x.com", "format": "llm"}"#;
+    let p: ReadParams = serde_json::from_str(json).unwrap();
+    assert_eq!(p.format, "llm");
+}

@@ -255,7 +255,36 @@ pub fn build_output(
     method: &str,
     ms: u64,
 ) -> ReadOutput {
+    let format = content::ContentFormat::from_param(&params.format);
     let mut c = ext.content;
+
+    // LLM format: post-process the markdown through the LLM cleanup pipeline.
+    // This strips images/emphasis/CSS/JS noise, moves links to a footer, and
+    // gates JSON-LD — producing token-optimized text for LLM consumption.
+    if format == content::ContentFormat::Llm {
+        let raw_output = ReadOutput {
+            title: ext.title.clone(),
+            content: std::mem::take(&mut c),
+            author: ext.author.clone(),
+            excerpt: ext.excerpt.clone(),
+            url: params.url.clone(),
+            format: params.format.clone(),
+            length: 0,
+            method: method.into(),
+            elapsed_ms: ms,
+            json_ld: ext.json_ld.clone(),
+            og_image: ext.og_image.clone(),
+            published_at: ext.meta.published_at.clone(),
+            modified_at: ext.meta.modified_at.clone(),
+            section: ext.meta.section.clone(),
+            site_name: ext.meta.site_name.clone(),
+            tags: ext.meta.tags.clone(),
+            language: ext.meta.language.clone(),
+            error: None,
+        };
+        c = crate::llm::to_llm_text(&raw_output);
+    }
+
     if params.max_length > 0 {
         c = content::truncate_utf8(&c, params.max_length);
     }

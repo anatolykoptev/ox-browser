@@ -16,7 +16,9 @@ use super::OxMcpServer;
 pub struct ReadInput {
     /// URL to read content from.
     pub url: String,
-    /// Output format: "text" (default), "markdown", or "html".
+    /// Output format: "text" (default), "markdown", "html", or "llm".
+    /// "llm" produces token-optimized text: strips images/emphasis/CSS/JS
+    /// noise, moves links to a deduplicated footer, gates JSON-LD.
     #[serde(default = "default_format")]
     pub format: String,
     /// Max content length in chars. 0 = unlimited.

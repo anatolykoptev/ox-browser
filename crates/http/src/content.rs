@@ -12,6 +12,10 @@ pub enum ContentFormat {
     Text,
     Markdown,
     Html,
+    /// Token-optimized text for LLM consumption: strips images, emphasis,
+    /// CSS/JS noise; moves links to a deduplicated footer; gates JSON-LD.
+    /// See [`crate::llm::to_llm_text`].
+    Llm,
 }
 
 impl ContentFormat {
@@ -19,6 +23,7 @@ impl ContentFormat {
         match s {
             "markdown" | "md" => Self::Markdown,
             "html" => Self::Html,
+            "llm" => Self::Llm,
             _ => Self::Text,
         }
     }
@@ -129,7 +134,10 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
                         tc
                     }
                 }
-                _ => convert_format(&raw, format),
+                ContentFormat::Llm | ContentFormat::Markdown => {
+                    convert_format(&raw, ContentFormat::Markdown)
+                }
+                ContentFormat::Html => convert_format(&raw, format),
             };
             let length = content.len();
             let title = a.title.unwrap_or_else(|| extract_title_from_html(html));
@@ -145,7 +153,12 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
             }
         }
         None => {
-            let content = convert_format(html, format);
+            let content = match format {
+                ContentFormat::Llm | ContentFormat::Markdown => {
+                    convert_format(html, ContentFormat::Markdown)
+                }
+                _ => convert_format(html, format),
+            };
             let length = content.len();
             let title = extract_title_from_html(html);
             ExtractedContent {
@@ -192,7 +205,7 @@ fn extract_og_image(html: &str) -> String {
 fn convert_format(html: &str, format: ContentFormat) -> String {
     match format {
         ContentFormat::Text => html_to_plain(html),
-        ContentFormat::Markdown => html_to_fit_markdown(html),
+        ContentFormat::Markdown | ContentFormat::Llm => html_to_fit_markdown(html),
         ContentFormat::Html => html.to_string(),
     }
 }
@@ -237,6 +250,10 @@ pub fn html_to_fit_markdown(html: &str) -> String {
     for sel in NOISE_SELECTORS {
         doc.select(sel).remove();
     }
+    // Second pass: DOM-level noise filter catches what CSS selectors can't
+    // (partial class matches, ID prefixes, ARIA roles on non-standard elements,
+    // hidden elements). Tailwind-safe: animation utilities are not noise.
+    crate::noise::remove_noise(&doc);
     htmd::convert(&doc.html()).unwrap_or_default()
 }
 

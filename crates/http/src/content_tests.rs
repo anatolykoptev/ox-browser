@@ -9,6 +9,7 @@ fn format_from_param() {
     );
     assert_eq!(ContentFormat::from_param("md"), ContentFormat::Markdown);
     assert_eq!(ContentFormat::from_param("html"), ContentFormat::Html);
+    assert_eq!(ContentFormat::from_param("llm"), ContentFormat::Llm);
     assert_eq!(ContentFormat::from_param("unknown"), ContentFormat::Text);
 }
 
