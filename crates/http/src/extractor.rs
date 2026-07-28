@@ -155,16 +155,29 @@ fn collect_sibling_sections(best: &NodeRef<'_>) -> Vec<String> {
                 continue;
             }
 
+            // React Suspense boundaries: <div hidden id="S:N"> hold
+            // server-rendered content that streams in after hydration.
+            // These are content containers, not noise — include them
+            // regardless of word count (the noise filter runs later on
+            // the converted markdown to strip inner nav/footer/etc.).
+            let is_suspense = tag == "div"
+                && child.attr("hidden").is_some()
+                && child
+                    .attr("id")
+                    .map(|id| id.starts_with("S:"))
+                    .unwrap_or(false);
+
             // Only include elements with substantial text
             let text = child.text().to_string();
             let text_len = text.split_whitespace().count();
-            if text_len < 50 {
+            if text_len < 50 && !is_suspense {
                 continue;
             }
 
-            // For <div> siblings, require even more text to avoid picking up
+            // For <div> siblings, require more text to avoid picking up
             // navigation bars or small UI elements disguised as divs.
-            if tag == "div" && text_len < 100 {
+            // Suspense boundaries are exempt (they're always content).
+            if tag == "div" && text_len < 100 && !is_suspense {
                 continue;
             }
 
@@ -308,16 +321,25 @@ fn score_node(node: &NodeRef<'_>) -> f64 {
 /// The best content node often excludes the page's primary H1 (e.g., in a
 /// hero/banner section). If the document has an H1 and its text isn't in the
 /// content HTML, return it so the caller can prepend it.
-fn recover_h1(doc: &Document, content_html: &str) -> String {
+///
+/// NOTE: we check `content_html` (raw HTML before noise filtering) to decide
+/// whether the H1 is already captured. But the H1 may be inside a `<header>`
+/// tag that gets stripped during markdown conversion. The caller
+/// (`recover_content`) re-checks `markdown.contains(recovered_h1)` after
+/// conversion — if the H1 was stripped, it gets prepended; if it survived,
+/// it's not duplicated.
+fn recover_h1(doc: &Document, _content_html: &str) -> String {
     let h1_sel = doc.select(H1_SELECTOR);
     // Skip h1 elements that are visually hidden (sr-only, aria-hidden, etc.)
     // — these are accessibility chrome, not visible page headings. GitHub's
     // search dialog has <h1 class="sr-only">Search code...</h1> which is not
     // a visible heading and should not become the page title.
+    // Also skip h1 inside dialog/modal containers (aria-modal, role="dialog")
+    // — GitHub's "Provide feedback" h1 is a dialog title, not the page heading.
     let h1 = h1_sel
         .nodes()
         .iter()
-        .find(|h1| !crate::noise::is_noise(h1));
+        .find(|h1| !crate::noise::is_noise(h1) && !is_inside_dialog(h1));
 
     let Some(h1) = h1 else {
         return String::new();
@@ -330,10 +352,14 @@ fn recover_h1(doc: &Document, content_html: &str) -> String {
         .trim()
         .to_string();
 
-    if h1_text.is_empty() || content_html.contains(&h1_text) {
+    if h1_text.is_empty() {
         return String::new();
     }
 
+    // Always return the H1 text — the caller checks markdown.contains()
+    // after noise filtering to avoid duplication. Checking content_html
+    // here is wrong because the H1 may be stripped during markdown
+    // conversion (e.g., H1 inside <header> that NOISE_SELECTORS removes).
     h1_text
 }
 
@@ -750,7 +776,24 @@ fn is_inside_image_syntax(markdown: &str, pos: usize) -> bool {
     false
 }
 
-/// Check if an element is inside a structural noise tag (nav, aside, footer, header).
+/// Check if an element is inside a dialog/modal container.
+/// Detects `aria-modal="true"` and `role="dialog"` on any ancestor.
+fn is_inside_dialog(el: &NodeRef<'_>) -> bool {
+    for ancestor in el.ancestors(None) {
+        if let Some(role) = ancestor.attr("role")
+            && role.as_ref() == "dialog"
+        {
+            return true;
+        }
+        if let Some(modal) = ancestor.attr("aria-modal")
+            && modal.as_ref() == "true"
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_inside_structural_noise(el: &NodeRef<'_>) -> bool {
     for ancestor in el.ancestors(None) {
         if let Some(tag) = ancestor.node_name().map(|n| n.to_lowercase()) {
@@ -853,7 +896,7 @@ mod tests {
     }
 
     #[test]
-    fn h1_inside_content_not_recovered() {
+    fn h1_inside_content_not_duplicated() {
         let html = r##"
         <html><body>
             <article>
@@ -864,7 +907,13 @@ mod tests {
         </body></html>"##;
         let doc = parse(html);
         let result = extract_content_html(&doc, None);
-        assert!(result.recovered_h1.is_empty());
+        // recover_h1 always returns the H1 text; the caller (recover_content)
+        // checks markdown.contains() to avoid duplication. Verify the H1 text
+        // is returned but would not be duplicated when content already has it.
+        assert_eq!(result.recovered_h1, "Article Title");
+        // The content HTML should contain the H1 — recover_content would
+        // see it in the markdown and skip prepending.
+        assert!(result.html.contains("Article Title"));
     }
 
     #[test]
