@@ -5,8 +5,12 @@ pub mod content;
 pub mod content_detect;
 pub mod cookie_cache;
 pub mod cookie_provider;
+#[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
+pub mod data_island;
 mod error;
 pub mod handler_reqwest;
+#[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
+pub mod js_eval;
 pub mod json_ld;
 pub mod llm;
 pub mod metrics;

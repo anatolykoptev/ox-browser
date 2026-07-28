@@ -125,7 +125,7 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
     match article {
         Some(a) => {
             let raw = a.content.unwrap_or_default();
-            let content = match format {
+            let mut content = match format {
                 ContentFormat::Text => {
                     let tc = collapse_whitespace(&a.text_content.unwrap_or_default());
                     if tc.is_empty() {
@@ -139,6 +139,17 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
                 }
                 ContentFormat::Html => convert_format(&raw, format),
             };
+
+            // SPA content recovery: if DOM extraction is sparse, try data islands
+            // and JS eval to recover content embedded in <script> tags.
+            // Only applies to text/markdown/llm formats — HTML format is raw.
+            if matches!(
+                format,
+                ContentFormat::Text | ContentFormat::Markdown | ContentFormat::Llm
+            ) {
+                recover_spa_content(html, &mut content);
+            }
+
             let length = content.len();
             let title = a.title.unwrap_or_else(|| extract_title_from_html(html));
             ExtractedContent {
@@ -153,12 +164,21 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
             }
         }
         None => {
-            let content = match format {
+            let mut content = match format {
                 ContentFormat::Llm | ContentFormat::Markdown => {
                     convert_format(html, ContentFormat::Markdown)
                 }
                 _ => convert_format(html, format),
             };
+
+            // SPA content recovery for the no-readability branch too.
+            if matches!(
+                format,
+                ContentFormat::Text | ContentFormat::Markdown | ContentFormat::Llm
+            ) {
+                recover_spa_content(html, &mut content);
+            }
+
             let length = content.len();
             let title = extract_title_from_html(html);
             ExtractedContent {
@@ -174,6 +194,47 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
         }
     }
 }
+
+/// Recover content from SPA data islands and inline JS when DOM extraction is sparse.
+///
+/// Runs only when the `quickjs` feature is enabled (default). Two passes:
+/// 1. `data_island::try_extract` — static JSON in `<script type="application/json">`
+/// 2. `js_eval::extract_js_data` — QuickJS sandbox executes inline `<script>` tags
+///    to capture `window.__*` data blobs (Next.js `self.__next_f`, React state, etc.)
+///
+/// Both passes gate on a sparse threshold (word count < 500) and deduplicate
+/// against the existing markdown to avoid adding content already in the DOM.
+#[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
+fn recover_spa_content(html: &str, content: &mut String) {
+    let dom_word_count: usize = content.split_whitespace().count();
+
+    // Pass 1: static JSON data islands
+    let doc = dom_query::Document::from(html);
+    if let Some(island_md) = crate::data_island::try_extract(&doc, dom_word_count, content) {
+        if !content.is_empty() {
+            content.push_str("\n\n");
+        }
+        content.push_str(&island_md);
+    }
+
+    // Pass 2: QuickJS eval of inline scripts (only if markers are present)
+    if crate::js_eval::has_js_candidate_data(html) {
+        let blobs = crate::js_eval::extract_js_data_from_doc(&doc);
+        if !blobs.is_empty() {
+            let js_text = crate::js_eval::extract_readable_text(&blobs);
+            if !js_text.is_empty() {
+                if !content.is_empty() {
+                    content.push_str("\n\n");
+                }
+                content.push_str(&js_text);
+            }
+        }
+    }
+}
+
+/// No-op stub when the `quickjs` feature is disabled.
+#[cfg(not(all(feature = "quickjs", not(target_arch = "wasm32"))))]
+fn recover_spa_content(_html: &str, _content: &mut String) {}
 
 /// Extract og:image URL from HTML meta tags.
 fn extract_og_image(html: &str) -> String {
