@@ -1,5 +1,5 @@
 use rand::seq::SliceRandom;
-use wreq_util::{Emulation, Profile};
+use wreq_util::{Emulation, Platform, Profile};
 
 /// Browser identity with user-agent and metadata for filtering.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,7 +221,15 @@ pub fn profile_to_emulation(profile: &BrowserProfile) -> Option<Emulation> {
         "edge" => edge_profile(major),
         _ => return None,
     };
-    Some(Emulation::builder().profile(p).build())
+    let platform = match profile.os {
+        "windows" => Platform::Windows,
+        "macos" => Platform::MacOS,
+        "linux" => Platform::Linux,
+        "android" => Platform::Android,
+        "ios" => Platform::IOS,
+        _ => Platform::Linux,
+    };
+    Some(Emulation::builder().profile(p).platform(platform).build())
 }
 
 /// Extract the major browser version from a User-Agent string.
