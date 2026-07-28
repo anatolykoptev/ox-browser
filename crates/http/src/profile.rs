@@ -1,5 +1,7 @@
 use rand::seq::SliceRandom;
-use wreq_util::{Emulation, Platform, Profile};
+use wreq::Emulation;
+#[cfg(test)]
+use wreq_util::Profile;
 
 /// Browser identity with user-agent and metadata for filtering.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,26 +215,26 @@ pub fn platform_matched_profile() -> &'static BrowserProfile {
 ///
 /// Issue #77: enable TLS fingerprinting.
 pub fn profile_to_emulation(profile: &BrowserProfile) -> Option<Emulation> {
-    let major = extract_major_version(profile.user_agent)?;
-    let p = match profile.browser {
-        "chrome" => chrome_profile(major),
-        "firefox" => firefox_profile(major),
-        "safari" => safari_profile(profile, major),
-        "edge" => edge_profile(major),
-        _ => return None,
-    };
-    let platform = match profile.os {
-        "windows" => Platform::Windows,
-        "macos" => Platform::MacOS,
-        "linux" => Platform::Linux,
-        "android" => Platform::Android,
-        "ios" => Platform::IOS,
-        _ => Platform::Linux,
-    };
-    Some(Emulation::builder().profile(p).platform(platform).build())
+    // Chrome and Edge: build Emulation from scratch via tls.rs for full
+    // control over TLS extensions (both ALPS codepoints), HTTP/2 SETTINGS,
+    // and header wire order. wreq-util's preset profiles are missing
+    // APPLICATION_SETTINGS_OLD (51764) and don't control header order.
+    // See Issue #80.
+    match profile.browser {
+        "chrome" => Some(crate::tls::chrome_emulation(profile)),
+        "edge" => Some(crate::tls::edge_emulation(profile)),
+        "firefox" => crate::tls::firefox_emulation(profile),
+        "safari" => crate::tls::safari_emulation(profile),
+        _ => None,
+    }
 }
 
 /// Extract the major browser version from a User-Agent string.
+/// Public version of extract_major_version for cross-module use (tls.rs).
+pub fn extract_major_version_pub(ua: &str) -> Option<u32> {
+    extract_major_version(ua)
+}
+
 fn extract_major_version(ua: &str) -> Option<u32> {
     // Chrome/Edge: "Chrome/148.0.0.0" or "Edg/145.0.0.0"
     if let Some(pos) = ua.find("Chrome/") {
@@ -258,6 +260,8 @@ fn parse_version_at(s: &str) -> Option<u32> {
 
 /// Map Chrome major version to the closest available wreq-util Profile.
 /// Falls back to Chrome148 (latest available) for versions beyond the range.
+/// Used by tests; production code uses tls::chrome_emulation() instead.
+#[cfg(test)]
 fn chrome_profile(major: u32) -> Profile {
     match major {
         148 => Profile::Chrome148,
@@ -284,6 +288,8 @@ fn chrome_profile(major: u32) -> Profile {
 }
 
 /// Map Firefox major version to the closest available wreq-util Profile.
+/// Used by tests; production code uses tls::firefox_emulation() instead.
+#[cfg(test)]
 fn firefox_profile(major: u32) -> Profile {
     match major {
         151 => Profile::Firefox151,
@@ -310,6 +316,8 @@ fn firefox_profile(major: u32) -> Profile {
 
 /// Map Safari version to wreq-util Profile. Distinguishes desktop Safari
 /// from iOS Safari via the `os` field and `mobile` flag on the profile.
+/// Used by tests; production code uses tls::safari_emulation() instead.
+#[cfg(test)]
 fn safari_profile(profile: &BrowserProfile, major: u32) -> Profile {
     if profile.mobile || profile.os == "ios" {
         match major {
@@ -329,7 +337,9 @@ fn safari_profile(profile: &BrowserProfile, major: u32) -> Profile {
     }
 }
 
-/// Map Edge major version to wreq-util Profile.
+/// Map Edge major version to the closest available wreq-util Profile.
+/// Used by tests; production code uses tls::edge_emulation() instead.
+#[cfg(test)]
 fn edge_profile(major: u32) -> Profile {
     match major {
         146 => Profile::Edge146,

@@ -1,7 +1,8 @@
 //! HTTP client configuration: timeouts, redirects, TLS emulation.
 
 use serde::Deserialize;
-use wreq_util::{Emulation, Profile};
+use wreq::IntoEmulation;
+use wreq_util::Profile;
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -24,7 +25,7 @@ impl Default for HttpSection {
 impl HttpSection {
     /// Parse the emulation string into wreq Emulation.
     /// Returns None for "none" or empty string (TLS fingerprinting disabled).
-    pub fn emulation(&self) -> Option<Emulation> {
+    pub fn emulation(&self) -> Option<wreq::Emulation> {
         let profile = match self.emulation.as_str() {
             "chrome148" => Profile::Chrome148,
             "chrome145" => Profile::Chrome145,
@@ -45,7 +46,7 @@ impl HttpSection {
                 Profile::Chrome148
             }
         };
-        Some(Emulation::builder().profile(profile).build())
+        Some(profile.into_emulation())
     }
 }
 

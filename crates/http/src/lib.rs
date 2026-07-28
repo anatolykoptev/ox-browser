@@ -44,6 +44,7 @@ pub mod solver_byparr;
 pub mod solver_gobrowser;
 pub mod solver_negcache;
 pub mod ssrf_connect;
+pub mod tls;
 pub mod url_util;
 
 pub use client::HttpClient;
@@ -84,4 +85,4 @@ pub use solver_byparr::{ByparrConfig, ByparrSolver};
 pub use solver_negcache::{SOLVER_GIVEUP_TOTAL, SolverNegCache, record_solver_giveup};
 pub use ssrf_connect::{SsrfBlockedError, SsrfGuardedResolver, ssrf_redirect_policy};
 pub use url_util::{extract_domain, extract_host};
-pub use wreq_util::Emulation;
+pub use wreq::Emulation;

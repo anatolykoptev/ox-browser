@@ -44,7 +44,8 @@ ox-mcp = { path = "crates/mcp" }
 ox-twitter = { path = "crates/twitter" }
 axum = "0.8"
 async-trait = "0.1"
-wreq-util = "3.0.0-rc.10"
+wreq-util = "3.0.0-rc.12"
+wreq = { version = "6.0.0-rc.29", default-features = false }
 clap = { version = "4", features = ["derive", "env"] }
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -54,7 +55,6 @@ tracing-subscriber.workspace = true
 anyhow.workspace = true
 
 [dev-dependencies]
-wreq = { version = "6.0.0-rc.28", default-features = false }
 
 [profile.release]
 opt-level = 3

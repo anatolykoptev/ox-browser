@@ -13,13 +13,27 @@ const GREASE_BRANDS: &[&str] = &[
 
 /// Chrome-like default header order for anti-fingerprint consistency.
 /// Used by HttpClient (Task 6) to reorder outgoing headers.
+///
+/// Matches the wire order real Chrome emits (verified via the fingerprint
+/// oracle against Chrome 148). The old order was wrong — it put accept
+/// before sec-ch-ua and omitted sec-fetch-* and upgrade-insecure-requests.
+/// See Issue #80.
 pub static DEFAULT_HEADER_ORDER: &[&str] = &[
-    "accept",
+    "sec-ch-ua",
+    "sec-ch-ua-mobile",
+    "sec-ch-ua-platform",
     "accept-language",
+    "upgrade-insecure-requests",
+    "user-agent",
+    "accept",
+    "sec-fetch-site",
+    "sec-fetch-mode",
+    "sec-fetch-user",
+    "sec-fetch-dest",
     "accept-encoding",
+    "priority",
     "referer",
     "cookie",
-    "user-agent",
 ];
 
 /// Returns `sec-ch-ua-*` client hint headers for Chromium-based user agents.
@@ -86,24 +100,34 @@ fn grease_to_full_version(grease: &str) -> String {
 
 /// Builds common browser headers from a profile (UA + client hints).
 /// Accept header varies by browser to match real fingerprints.
+///
+/// For Chrome and Edge, delegates to `tls::chrome_headers()` / `tls::edge_headers()`
+/// which return the exact wire-order header set real Chrome emits (including
+/// sec-fetch-*, upgrade-insecure-requests, priority, correct accept q-values,
+/// and accept-encoding with deflate+zstd). The old generic set was missing
+/// these headers and had wrong q-values — the fingerprint oracle caught this.
+/// See Issue #80.
 pub fn browser_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
-    let accept = match profile.browser {
-        "chrome" | "edge" => {
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+    match profile.browser {
+        "chrome" => crate::tls::chrome_headers(profile),
+        "edge" => crate::tls::edge_headers(profile),
+        _ => {
+            let accept = match profile.browser {
+                "firefox" => {
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8"
+                }
+                _ => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", // Safari
+            };
+            let mut headers = vec![
+                ("user-agent".to_owned(), profile.user_agent.to_owned()),
+                ("accept".to_owned(), accept.to_owned()),
+                ("accept-language".to_owned(), "en-US,en;q=0.9".to_owned()),
+                ("accept-encoding".to_owned(), "gzip, deflate, br".to_owned()),
+            ];
+            headers.extend(client_hints_headers(profile.user_agent));
+            headers
         }
-        "firefox" => {
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8"
-        }
-        _ => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", // Safari
-    };
-    let mut headers = vec![
-        ("user-agent".to_owned(), profile.user_agent.to_owned()),
-        ("accept".to_owned(), accept.to_owned()),
-        ("accept-language".to_owned(), "en-US,en;q=0.9".to_owned()),
-        ("accept-encoding".to_owned(), "gzip, deflate, br".to_owned()),
-    ];
-    headers.extend(client_hints_headers(profile.user_agent));
-    headers
+    }
 }
 
 /// Extracts the major Chrome version number from a user-agent string.

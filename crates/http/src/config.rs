@@ -36,7 +36,10 @@ pub struct HttpConfig {
     /// Enable debug logging middleware.
     pub debug: bool,
     /// Browser emulation for TLS/HTTP2 fingerprinting (wreq BoringSSL).
-    pub emulation: Option<wreq_util::Emulation>,
+    /// Uses wreq::Emulation (the struct) not wreq_util::Emulation (the enum)
+    /// so we can build custom emulations from scratch (tls.rs) for Chrome/Edge
+    /// while still using wreq-util presets for Firefox/Safari.
+    pub emulation: Option<wreq::Emulation>,
     /// External CF challenge solver. When set with `cloudflare_detect`, solver middleware auto-solves challenges.
     pub cookie_provider: Option<Arc<dyn CookieProvider>>,
     /// Cookie cache for solved CF challenges. Shared across sessions.

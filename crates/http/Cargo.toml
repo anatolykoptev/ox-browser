@@ -16,7 +16,7 @@ quickjs = ["rquickjs"]
 fingerprint = []
 
 [dependencies]
-wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli"] }
+wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli", "zstd"] }
 wreq-util = "3.0.0-rc.12"
 cookie_store = "0.21"
 url = "2"
