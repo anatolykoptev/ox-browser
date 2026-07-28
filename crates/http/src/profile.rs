@@ -216,10 +216,12 @@ pub fn platform_matched_profile() -> &'static BrowserProfile {
 /// Issue #77: enable TLS fingerprinting.
 pub fn profile_to_emulation(profile: &BrowserProfile) -> Option<Emulation> {
     // Chrome and Edge: build Emulation from scratch via tls.rs for full
-    // control over TLS extensions (both ALPS codepoints), HTTP/2 SETTINGS,
-    // and header wire order. wreq-util's preset profiles are missing
-    // APPLICATION_SETTINGS_OLD (51764) and don't control header order.
-    // See Issue #80.
+    // control over TLS extensions (ALPS codepoint 17613 — the only one real
+    // Chrome 148 sends; 17513 / APPLICATION_SETTINGS_OLD is NOT sent),
+    // HTTP/2 SETTINGS, and header wire order. wreq-util's preset profiles
+    // are missing `trust_anchors` (0xca34 = 51764,
+    // draft-ietf-tls-trust-anchor-ids — see issue #81) and don't control
+    // header order. See Issue #80.
     match profile.browser {
         "chrome" => Some(crate::tls::chrome_emulation(profile)),
         "edge" => Some(crate::tls::edge_emulation(profile)),

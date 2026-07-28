@@ -1,10 +1,13 @@
-//! Fingerprint oracle — verifies ox-browser's emitted TLS/HTTP2/header
-//! fingerprint matches a real browser's, using the same dual-service
-//! architecture as go-stealth's oracle.
+//! Fingerprint oracle — LIVE network tests.
 //!
-//! Build-tagged behind `#[cfg(feature = "fingerprint")]` so it NEVER runs in
-//! `make preflight` (which uses default features). Run explicitly:
+//! These tests hit real echo endpoints (tls.peet.ws, tls.browserleaks.com)
+//! and require `--features fingerprint`. They are gated per-test (not
+//! file-level) so that future offline tests added to this file are NOT
+//! silently swallowed by a `#![cfg(feature = "fingerprint")]` gate — that
+//! class of silent swallow is precisely why findings A and B survived a
+//! full review round.
 //!
+//! Run explicitly:
 //!     cargo test -p ox-http --features fingerprint --test fingerprint_oracle_test
 //!
 //! # Architecture (ported from go-stealth)
@@ -41,159 +44,30 @@
 //! — a skip looks identical to a pass, which is the exact failure class this
 //! repo keeps hitting.
 
-#![cfg(feature = "fingerprint")]
+// All tests in this file are #[cfg(feature = "fingerprint")]. Every helper
+// below is used ONLY by those gated tests. Cfg-gating the helpers alongside
+// the tests (rather than a file-level #![allow(dead_code)]) ensures that
+// `cargo clippy --all-targets` WITHOUT --features fingerprint compiles this
+// target as an empty shell — zero warnings, zero blindness. The
+// `--features fingerprint` check in `make preflight` type-checks the gated
+// code so a signature change on any API it consumes is caught in CI.
+#[cfg(feature = "fingerprint")]
+mod common;
 
+#[cfg(feature = "fingerprint")]
 use std::time::Duration;
 
+#[cfg(feature = "fingerprint")]
+use common::*;
+#[cfg(feature = "fingerprint")]
 use ox_http::{BUILTIN_PROFILES, BrowserProfile, HttpClient, HttpConfig, profile_to_emulation};
-use serde::{Deserialize, Serialize};
 
 // ── Echo service endpoints ─────────────────────────────────────────────
 
+#[cfg(feature = "fingerprint")]
 const PEET_ENDPOINT: &str = "https://tls.peet.ws/api/all";
+#[cfg(feature = "fingerprint")]
 const BROWSERLEAKS_ENDPOINT: &str = "https://tls.browserleaks.com/json";
-
-const SERVICE_PEET: &str = "peet";
-const SERVICE_BROWSERLEAKS: &str = "browserleaks";
-
-// ── Reference (captured real-browser fingerprint) ──────────────────────
-
-/// A captured browser fingerprint used as the oracle's ground truth.
-/// A reference without provenance is unfalsifiable later.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Reference {
-    browser: String,
-    browser_version: String,
-    major: String,
-    capture_time: String,
-    endpoint: String,
-    mode: String,
-    arch: String,
-    browser_source: String,
-
-    /// Per-metric source services. A reference and a measurement for the same
-    /// metric MUST come from the same service.
-    #[serde(default)]
-    sources: Sources,
-
-    tls: TlsFingerprint,
-    http2_akamai_fingerprint: String,
-
-    #[serde(default)]
-    header_order: Vec<String>,
-    #[serde(default)]
-    sec_ch_ua: String,
-    #[serde(default)]
-    sec_ch_ua_mobile: String,
-    #[serde(default)]
-    sec_ch_ua_platform: String,
-    #[serde(default)]
-    accept: String,
-    #[serde(default)]
-    accept_language: String,
-    #[serde(default)]
-    accept_encoding: String,
-    #[serde(default)]
-    user_agent: String,
-
-    /// Caveats that make a field non-comparable (e.g. headless mode excludes
-    /// UA/sec-ch-ua). The oracle reads Notes to skip fields with a reason.
-    #[serde(default)]
-    notes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct Sources {
-    #[serde(default)]
-    ja3: String,
-    #[serde(default)]
-    ja3n: String,
-    #[serde(default)]
-    ja4: String,
-    #[serde(default)]
-    ja4_o: String,
-    #[serde(default)]
-    peetprint: String,
-    #[serde(default)]
-    http2: String,
-    #[serde(default)]
-    headers: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct TlsFingerprint {
-    #[serde(default)]
-    ja3: String,
-    #[serde(default)]
-    ja3_hash: String,
-    #[serde(default)]
-    ja3n_hash: String,
-    #[serde(default)]
-    ja4: String,
-    #[serde(default)]
-    ja4_o: String,
-    #[serde(default)]
-    peetprint: String,
-    #[serde(default)]
-    peetprint_hash: String,
-}
-
-// ── Observed (live measurement from echo services) ─────────────────────
-
-/// The fingerprint extracted from echo-service responses for a single request.
-/// Mirrors the comparable subset of Reference. Built by merging a peet
-/// extraction and a browserleaks extraction.
-#[derive(Debug, Default)]
-struct Observed {
-    sources: Sources,
-    tls: TlsFingerprint,
-    http2_akamai_fingerprint: String,
-    header_order: Vec<String>,
-    sec_ch_ua: String,
-    sec_ch_ua_mobile: String,
-    sec_ch_ua_platform: String,
-    accept: String,
-    accept_language: String,
-    accept_encoding: String,
-    user_agent: String,
-}
-
-// ── Field diff ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-struct FieldDiff {
-    field: String,
-    expected: String,
-    observed: String,
-}
-
-// ── Reference loading ──────────────────────────────────────────────────
-
-fn fixture_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-}
-
-fn reference_path(major: &str) -> std::path::PathBuf {
-    fixture_dir().join(format!("reference_chrome_{}.json", major))
-}
-
-fn load_reference(major: &str) -> Reference {
-    let path = reference_path(major);
-    let data = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!(
-            "no reference for Chrome major {} at {} (this is an ERROR, not a skip): {e}\n\
-             Run go-stealth's capture tool to create one:\n\
-             cd ~/src/go-stealth && go run ./cmd/fingerprint-capture -major {}",
-            major,
-            path.display(),
-            major,
-        )
-    });
-    serde_json::from_str(&data)
-        .unwrap_or_else(|e| panic!("parse reference {}: {e}", path.display()))
-}
 
 // ── Peet response parsing ──────────────────────────────────────────────
 //
@@ -202,6 +76,7 @@ fn load_reference(major: &str) -> Reference {
 // `sent_frames` (an array of HEADERS frames with `headers` arrays of
 // "name: value" strings).
 
+#[cfg(feature = "fingerprint")]
 fn extract_peet(raw: &serde_json::Value) -> Observed {
     let mut o = Observed::default();
 
@@ -259,21 +134,12 @@ fn extract_peet(raw: &serde_json::Value) -> Observed {
     o
 }
 
-fn split_header(h: &str) -> (String, String) {
-    if let Some(idx) = h.find(':') {
-        let name = h[..idx].trim().to_lowercase();
-        let val = h[idx + 1..].trim().to_string();
-        (name, val)
-    } else {
-        (h.trim().to_string(), String::new())
-    }
-}
-
 // ── Browserleaks response parsing ──────────────────────────────────────
 //
 // tls.browserleaks.com/json returns a flat JSON object with ja3_hash, ja3n_hash,
 // ja4, ja4_o, akamai_text (HTTP/2 Akamai fingerprint), and user_agent.
 
+#[cfg(feature = "fingerprint")]
 fn extract_browserleaks(raw: &serde_json::Value) -> Observed {
     let mut o = Observed::default();
 
@@ -300,6 +166,7 @@ fn extract_browserleaks(raw: &serde_json::Value) -> Observed {
 /// browserleaks takes precedence for JA4, JA3n, JA4_o (FoxIO-faithful);
 /// peet takes precedence for peetprint, header order, sec-ch-ua (browserleaks
 /// does not expose them). JA3 hash and HTTP/2 Akamai come from browserleaks.
+#[cfg(feature = "fingerprint")]
 fn merge_observed(peet: Observed, bl: Observed) -> Observed {
     let mut merged = peet; // start with peet (peetprint, headers, sec-ch-ua, accept*)
 
@@ -322,242 +189,12 @@ fn merge_observed(peet: Observed, bl: Observed) -> Observed {
     merged
 }
 
-// ── Compare observed vs reference ──────────────────────────────────────
-
-/// Report per-field differences between an Observed (ox-browser client) and a
-/// Reference (real browser). Fields the reference excludes (listed in Notes)
-/// are skipped with a reason returned in `skipped`.
-///
-/// For each metric, checks that the reference and observed Sources agree before
-/// comparing values. If they disagree, the metric is reported as a
-/// source-violation FieldDiff (field name prefixed "source:") and the values
-/// are NOT compared — a cross-service comparison reports a tooling artefact as
-/// a fingerprint defect.
-fn compare(o: &Observed, r: &Reference) -> (Vec<FieldDiff>, Vec<String>) {
-    let mut diffs = Vec::new();
-    let mut skipped = Vec::new();
-
-    let skip_ua = r.note_excludes("user-agent");
-    let skip_sec_ch_ua = r.note_excludes("sec-ch-ua");
-
-    // --- JA3 (hash) ---
-    if let Some(d) = check_source("ja3", &r.sources.ja3, &o.sources.ja3) {
-        diffs.push(d);
-    } else if o.tls.ja3_hash != r.tls.ja3_hash {
-        diffs.push(FieldDiff {
-            field: "ja3_hash".into(),
-            expected: r.tls.ja3_hash.clone(),
-            observed: o.tls.ja3_hash.clone(),
-        });
-    }
-
-    // --- JA3n (order-insensitive, browserleaks) ---
-    if !r.tls.ja3n_hash.is_empty() || !r.sources.ja3n.is_empty() {
-        if let Some(d) = check_source("ja3n", &r.sources.ja3n, &o.sources.ja3n) {
-            diffs.push(d);
-        } else if o.tls.ja3n_hash != r.tls.ja3n_hash {
-            diffs.push(FieldDiff {
-                field: "ja3n_hash".into(),
-                expected: r.tls.ja3n_hash.clone(),
-                observed: o.tls.ja3n_hash.clone(),
-            });
-        }
-    }
-
-    // --- JA4 (browserleaks, FoxIO-faithful) ---
-    if let Some(d) = check_source("ja4", &r.sources.ja4, &o.sources.ja4) {
-        diffs.push(d);
-    } else if o.tls.ja4 != r.tls.ja4 {
-        diffs.push(FieldDiff {
-            field: "ja4".into(),
-            expected: r.tls.ja4.clone(),
-            observed: o.tls.ja4.clone(),
-        });
-    }
-
-    // --- JA4_o (original order, browserleaks) ---
-    if !r.tls.ja4_o.is_empty() || !r.sources.ja4_o.is_empty() {
-        if let Some(d) = check_source("ja4_o", &r.sources.ja4_o, &o.sources.ja4_o) {
-            diffs.push(d);
-        } else if o.tls.ja4_o != r.tls.ja4_o {
-            diffs.push(FieldDiff {
-                field: "ja4_o".into(),
-                expected: r.tls.ja4_o.clone(),
-                observed: o.tls.ja4_o.clone(),
-            });
-        }
-    }
-
-    // --- peetprint (peet only) ---
-    if !r.tls.peetprint_hash.is_empty() || !r.sources.peetprint.is_empty() {
-        if let Some(d) = check_source("peetprint", &r.sources.peetprint, &o.sources.peetprint) {
-            diffs.push(d);
-        } else if o.tls.peetprint_hash != r.tls.peetprint_hash {
-            diffs.push(FieldDiff {
-                field: "peetprint_hash".into(),
-                expected: r.tls.peetprint_hash.clone(),
-                observed: o.tls.peetprint_hash.clone(),
-            });
-        }
-    }
-
-    // --- HTTP/2 Akamai fingerprint ---
-    if let Some(d) = check_source("http2_akamai", &r.sources.http2, &o.sources.http2) {
-        diffs.push(d);
-    } else if o.http2_akamai_fingerprint != r.http2_akamai_fingerprint {
-        diffs.push(FieldDiff {
-            field: "http2_akamai".into(),
-            expected: r.http2_akamai_fingerprint.clone(),
-            observed: o.http2_akamai_fingerprint.clone(),
-        });
-    }
-
-    // --- header order + sec-ch-ua + accept* (peet only) ---
-    if !r.sources.headers.is_empty() || !o.sources.headers.is_empty() {
-        if let Some(d) = check_source("header_order", &r.sources.headers, &o.sources.headers) {
-            diffs.push(d);
-        } else {
-            if o.header_order != r.header_order {
-                diffs.push(FieldDiff {
-                    field: "header_order".into(),
-                    expected: r.header_order.join(","),
-                    observed: o.header_order.join(","),
-                });
-            }
-            if !skip_sec_ch_ua {
-                if normalize_sec_ch_ua(&o.sec_ch_ua) != normalize_sec_ch_ua(&r.sec_ch_ua)
-                    && !r.sec_ch_ua.is_empty()
-                {
-                    diffs.push(FieldDiff {
-                        field: "sec_ch_ua".into(),
-                        expected: r.sec_ch_ua.clone(),
-                        observed: o.sec_ch_ua.clone(),
-                    });
-                }
-            } else {
-                skipped.push("sec-ch-ua: excluded by reference note (headless mode)".into());
-            }
-            if o.sec_ch_ua_mobile != r.sec_ch_ua_mobile && !r.sec_ch_ua_mobile.is_empty() {
-                diffs.push(FieldDiff {
-                    field: "sec_ch_ua_mobile".into(),
-                    expected: r.sec_ch_ua_mobile.clone(),
-                    observed: o.sec_ch_ua_mobile.clone(),
-                });
-            }
-            if o.sec_ch_ua_platform != r.sec_ch_ua_platform && !r.sec_ch_ua_platform.is_empty() {
-                diffs.push(FieldDiff {
-                    field: "sec_ch_ua_platform".into(),
-                    expected: r.sec_ch_ua_platform.clone(),
-                    observed: o.sec_ch_ua_platform.clone(),
-                });
-            }
-            if o.accept != r.accept && !r.accept.is_empty() {
-                diffs.push(FieldDiff {
-                    field: "accept".into(),
-                    expected: r.accept.clone(),
-                    observed: o.accept.clone(),
-                });
-            }
-            if o.accept_language != r.accept_language && !r.accept_language.is_empty() {
-                diffs.push(FieldDiff {
-                    field: "accept_language".into(),
-                    expected: r.accept_language.clone(),
-                    observed: o.accept_language.clone(),
-                });
-            }
-            if o.accept_encoding != r.accept_encoding && !r.accept_encoding.is_empty() {
-                diffs.push(FieldDiff {
-                    field: "accept_encoding".into(),
-                    expected: r.accept_encoding.clone(),
-                    observed: o.accept_encoding.clone(),
-                });
-            }
-        }
-    }
-
-    // --- user-agent ---
-    if !skip_ua {
-        if o.user_agent != r.user_agent && !r.user_agent.is_empty() {
-            diffs.push(FieldDiff {
-                field: "user_agent".into(),
-                expected: r.user_agent.clone(),
-                observed: o.user_agent.clone(),
-            });
-        }
-    } else {
-        skipped.push("user-agent: excluded by reference note (headless mode)".into());
-    }
-
-    (diffs, skipped)
-}
-
-/// Returns a non-nil FieldDiff if the reference and observed sources for a
-/// metric disagree. A cross-service comparison is a hard FAIL.
-fn check_source(metric: &str, ref_src: &str, obs_src: &str) -> Option<FieldDiff> {
-    if ref_src.is_empty() || obs_src.is_empty() {
-        return None; // metric not present on one side; value comparison handles it
-    }
-    if ref_src == obs_src {
-        return None;
-    }
-    Some(FieldDiff {
-        field: format!("source:{}", metric),
-        expected: format!("reference source={}", ref_src),
-        observed: format!(
-            "observed source={} — cross-service comparison is a tooling artefact, not a fingerprint defect",
-            obs_src
-        ),
-    })
-}
-
-impl Reference {
-    fn note_excludes(&self, field: &str) -> bool {
-        self.notes.iter().any(|n| {
-            n.contains(&format!("excludes {}", field))
-                || n.contains(&format!("{}: excluded", field))
-        })
-    }
-}
-
-/// Replace the GREASE brand in a sec-ch-ua header value with a placeholder.
-/// The GREASE brand is seed-permuted by Chrome per connection, so a raw
-/// compare flaps. The Chromium and Google Chrome brands (with version) are
-/// compared exactly.
-fn normalize_sec_ch_ua(s: &str) -> String {
-    if s.is_empty() {
-        return String::new();
-    }
-    s.split(", ")
-        .map(|p| {
-            let brand = p.split(';').next().unwrap_or("").trim().trim_matches('"');
-            if brand != "Chromium" && brand != "Google Chrome" && brand != "Microsoft Edge" {
-                "GREASE".to_string()
-            } else {
-                p.trim().to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 // ── Test helpers ───────────────────────────────────────────────────────
-
-fn extract_major_version(ua: &str) -> String {
-    if let Some(pos) = ua.find("Chrome/") {
-        return ua[pos + 7..].split('.').next().unwrap_or("0").to_string();
-    }
-    if let Some(pos) = ua.find("rv:") {
-        return ua[pos + 3..].split('.').next().unwrap_or("0").to_string();
-    }
-    if let Some(pos) = ua.find("Version/") {
-        return ua[pos + 8..].split('.').next().unwrap_or("0").to_string();
-    }
-    "0".to_string()
-}
 
 /// Chrome/linux profiles deduplicated by major version. The TLS/HTTP2
 /// fingerprint is per-major, not per-OS, so testing the linux variant of each
 /// major covers every Chrome profile without redundant requests.
+#[cfg(feature = "fingerprint")]
 fn chrome_linux_profiles() -> Vec<&'static BrowserProfile> {
     let mut seen: Vec<String> = Vec::new();
     let mut result = Vec::new();
@@ -576,6 +213,7 @@ fn chrome_linux_profiles() -> Vec<&'static BrowserProfile> {
 }
 
 /// Build an HttpClient with the given profile's Emulation enabled.
+#[cfg(feature = "fingerprint")]
 fn build_client(profile: &BrowserProfile) -> HttpClient {
     let emulation = profile_to_emulation(profile).unwrap_or_else(|| {
         panic!(
@@ -594,6 +232,7 @@ fn build_client(profile: &BrowserProfile) -> HttpClient {
 
 /// Fetch JSON from an echo endpoint using the given client.
 /// An unreachable endpoint is a fatal error (not a skip).
+#[cfg(feature = "fingerprint")]
 async fn fetch_json(client: &HttpClient, endpoint: &str, label: &str) -> serde_json::Value {
     let resp = client.get(endpoint).await.unwrap_or_else(|e| {
         panic!(
@@ -611,6 +250,7 @@ async fn fetch_json(client: &HttpClient, endpoint: &str, label: &str) -> serde_j
 
 /// Capture the observed fingerprint from both echo endpoints using a client
 /// built with the given profile.
+#[cfg(feature = "fingerprint")]
 async fn capture_with_client(profile: &BrowserProfile) -> Observed {
     let client = build_client(profile);
 
@@ -642,6 +282,7 @@ async fn capture_with_client(profile: &BrowserProfile) -> Observed {
     obs
 }
 
+#[cfg(feature = "fingerprint")]
 fn preview_json(v: &serde_json::Value) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| format!("{:?}", v))
 }
@@ -651,6 +292,7 @@ fn preview_json(v: &serde_json::Value) -> String {
 /// The fingerprint oracle: for each Chrome/linux profile, build an ox-browser
 /// client, hit both echo endpoints, and compare the observed fingerprint
 /// against the stored reference for the same major.
+#[cfg(feature = "fingerprint")]
 #[tokio::test]
 async fn test_fingerprint_oracle() {
     let profiles = chrome_linux_profiles();
@@ -685,167 +327,91 @@ async fn test_fingerprint_oracle() {
             eprintln!("  SKIP {}", s);
         }
 
-        // Separate fixable diffs from BoringSSL limitations.
-        // BoringSSL can't send both ALPS codepoints (17613 + 51764) —
-        // `alps_use_new_codepoint` is a boolean, not a list. Real Chrome 148
-        // sends both, producing 17 extensions (JA4 t13d1517h2). We can only
-        // send 16 (JA4 t13d1516h2). This affects ja3n, ja4, ja4_o, peetprint.
-        // JA3 hash also differs because Chrome permutes extensions per
-        // connection while we use a fixed order (bogdanfinn approach).
-        let boringssl_limitations: &[&str] = &[
-            "ja3_hash",       // extension permutation (Chrome permutes, we don't)
-            "ja3n_hash",      // missing APPLICATION_SETTINGS_OLD (51764)
-            "ja4",            // 16 vs 17 extensions (BoringSSL ALPS limitation)
-            "ja4_o",          // same
-            "peetprint_hash", // same
-        ];
-        let (known, real): (Vec<_>, Vec<_>) = diffs
+        // Classify diffs against the two suppression buckets (see
+        // `classify_fingerprint_diffs` in tls.rs). Bucket A = structurally
+        // non-comparable (permanent policy: ja3_hash, ja4_o are
+        // order-sensitive, Chrome permutes extensions per handshake). Bucket
+        // B = the trust_anchors gap (issue #81, temporary — self-expiring:
+        // if a bucket-B field now matches, the test FAILS so the suppression
+        // list does not go stale).
+        let diff_tuples: Vec<(String, String, String)> = diffs
             .iter()
-            .cloned()
-            .partition(|d| boringssl_limitations.contains(&d.field.as_str()));
+            .map(|d| (d.field.clone(), d.expected.clone(), d.observed.clone()))
+            .collect();
+        // Fix B: the branch selection (gap_exhibited → comparable_b;
+        // else → empty bucket B) lives in `classify_for_reference` in
+        // common/mod.rs — the SAME function the offline tests exercise
+        // with both committed fixtures (Chrome 131 + Chrome 148), not a
+        // re-typed copy. Deleting the `else` branch inside it breaks
+        // `classify_for_reference_chrome131_bucket_b_diff_is_hard_failure`.
+        let verdict = classify_for_reference(&reference, &diff_tuples);
 
-        if !known.is_empty() {
-            for d in &known {
-                eprintln!(
-                    "  KNOWN-BORINGSSL {}\n    expected: {}\n    observed: {}",
-                    d.field, d.expected, d.observed
-                );
-            }
+        for f in &verdict.tolerated_a {
+            eprintln!(
+                "  KNOWN-POLICY {} (bucket A: order-sensitive, permanent)",
+                f
+            );
+        }
+        for f in &verdict.tolerated_b {
+            eprintln!("  KNOWN-GAP {} (bucket B: trust_anchors gap, issue #81)", f);
         }
 
-        if real.is_empty() && known.is_empty() {
-            eprintln!("  ✓ all fields match for Chrome {}", major);
-        } else if real.is_empty() {
-            eprintln!(
-                "  ✓ all fixable fields match for Chrome {} ({} BoringSSL limitation(s) remain)",
-                major,
-                known.len()
-            );
-        } else {
-            for d in &real {
+        // F1: print each failure class independently. No `else if` may mask a
+        // non-empty list. `FingerprintVerdict::is_ok()` is
+        // `hard_failures.is_empty() && gap_closed.is_empty()`, so when BOTH
+        // are non-empty the old `else if !verdict.gap_closed.is_empty()` arm
+        // swallowed the `else` printing hard_failures — a genuine profile
+        // regression printed as "fingerprint gap CLOSED … remove them from
+        // FP_BUCKET_B", instructing the operator to DELETE suppression
+        // entries in response to a defect the report never showed. Now both
+        // classes print unconditionally, and exactly ONE panic at the end
+        // names BOTH counts.
+        if !verdict.hard_failures.is_empty() {
+            for d in &verdict.hard_failures {
                 eprintln!(
                     "  FIELD {}\n    expected (real Chrome {}): {}\n    observed (ox-browser): {}",
-                    d.field, reference.browser_version, d.expected, d.observed
+                    d.0, reference.browser_version, d.1, d.2
                 );
             }
-            panic!(
-                "fingerprint mismatch for Chrome {}: {} fixable field(s) differ ({} BoringSSL limitation(s) ignored)",
+        }
+        if !verdict.gap_closed.is_empty() {
+            for f in &verdict.gap_closed {
+                eprintln!(
+                    "  GAP-CLOSED {} — bucket-B field now matches the reference; \
+                     remove it from FP_BUCKET_B in tls.rs",
+                    f
+                );
+            }
+        }
+
+        if verdict.is_ok() && diffs.is_empty() {
+            eprintln!("  ✓ all fields match for Chrome {}", major);
+        } else if verdict.is_ok() {
+            eprintln!(
+                "  ✓ all fixable fields match for Chrome {} ({} bucket-A policy {}, {} bucket-B gap {} remain)",
                 major,
-                real.len(),
-                known.len()
+                verdict.tolerated_a.len(),
+                if verdict.tolerated_a.len() == 1 {
+                    "field"
+                } else {
+                    "fields"
+                },
+                verdict.tolerated_b.len(),
+                if verdict.tolerated_b.len() == 1 {
+                    "field"
+                } else {
+                    "fields"
+                },
             );
+        } else {
+            panic!("{}", fingerprint_fail_message(&verdict, &major));
         }
-    }
-}
-
-/// Verify that every committed reference file carries the provenance fields
-/// that make it falsifiable later — including per-metric Sources. A reference
-/// without provenance is a reference that can silently rot.
-#[test]
-fn test_reference_provenance() {
-    let dir = fixture_dir();
-    let mut any = false;
-    let entries = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read fixtures dir {}: {e}", dir.display()));
-
-    for entry in entries {
-        let entry = entry.unwrap();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !name.starts_with("reference_chrome_") || !name.ends_with(".json") {
-            continue;
-        }
-        any = true;
-        let path = entry.path();
-        let r: Reference = serde_json::from_str(
-            &std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("read {}: {e}", path.display())),
-        )
-        .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
-
-        // Provenance fields
-        if r.browser_version.is_empty()
-            || r.major.is_empty()
-            || r.capture_time.is_empty()
-            || r.endpoint.is_empty()
-            || r.mode.is_empty()
-            || r.browser_source.is_empty()
-        {
-            panic!(
-                "{}: missing provenance (browser={}, version={}, major={}, captured={}, endpoint={}, mode={}, source={})",
-                name,
-                r.browser,
-                r.browser_version,
-                r.major,
-                r.capture_time,
-                r.endpoint,
-                r.mode,
-                r.browser_source
-            );
-        }
-
-        // Per-metric sources: JA4 MUST be sourced from browserleaks (FoxIO-faithful),
-        // not peet (which strips padding 0x0015).
-        if r.sources.ja4.is_empty() {
-            panic!(
-                "{}: missing sources.ja4 — JA4 source must be recorded",
-                name
-            );
-        } else if r.sources.ja4 == SERVICE_PEET {
-            panic!(
-                "{}: sources.ja4={} — peet is NOT FoxIO-compliant for JA4; use browserleaks",
-                name, r.sources.ja4
-            );
-        }
-        if r.sources.ja3.is_empty() {
-            panic!(
-                "{}: missing sources.ja3 — JA3 source must be recorded",
-                name
-            );
-        }
-        if r.sources.http2.is_empty() {
-            panic!(
-                "{}: missing sources.http2 — HTTP/2 Akamai source must be recorded",
-                name
-            );
-        }
-
-        // Core fingerprint fields
-        if r.tls.ja3_hash.is_empty()
-            || r.tls.ja4.is_empty()
-            || r.http2_akamai_fingerprint.is_empty()
-        {
-            panic!(
-                "{}: missing fingerprint fields (ja3_hash={}, ja4={}, akamai={})",
-                name, r.tls.ja3_hash, r.tls.ja4, r.http2_akamai_fingerprint
-            );
-        }
-    }
-
-    assert!(
-        any,
-        "no reference_chrome_*.json files in {} — run go-stealth's capture tool to create one",
-        dir.display()
-    );
-}
-
-/// Verify that profile_to_emulation maps every builtin profile to a non-None
-/// Emulation. This is the P0 gate — if any profile has no Emulation, TLS
-/// fingerprinting is silently disabled for that profile.
-#[test]
-fn all_builtin_profiles_have_emulation_mapping() {
-    for p in BUILTIN_PROFILES {
-        let emulation = profile_to_emulation(p);
-        assert!(
-            emulation.is_some(),
-            "profile {} {} has no Emulation mapping — TLS fingerprinting is disabled",
-            p.browser,
-            extract_major_version(p.user_agent)
-        );
     }
 }
 
 /// Verify that different browser profiles produce different JA4 fingerprints.
 /// If Chrome and Firefox produce the same JA4, the Emulation mapping is wrong.
+#[cfg(feature = "fingerprint")]
 #[tokio::test]
 async fn different_browsers_produce_different_fingerprints() {
     let chrome = BUILTIN_PROFILES

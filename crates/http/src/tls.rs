@@ -8,8 +8,8 @@
 //! fingerprints.
 //!
 //! Why not use wreq-util's preset profiles? wreq-util's Chrome148 profile:
-//!   - Sends 16 TLS extensions (missing `APPLICATION_SETTINGS_OLD` / 51764),
-//!     while real Chrome 148 sends 17. This makes JA4 `t13d1516h2` instead of
+//!   - Sends 16 TLS extensions (missing `trust_anchors` / 0xca34), while real
+//!     Chrome 148 sends 17. This makes JA4 `t13d1516h2` instead of
 //!     `t13d1517h2`.
 //!   - Uses `permute_extensions(true)` with no fixed `extension_permutation`,
 //!     so the JA3 changes every connection (the oracle can't compare it).
@@ -17,7 +17,8 @@
 //!     field, which wreq-util populates with a generic set).
 //!
 //! Building from scratch gives us:
-//!   - The correct 17-extension set (both ALPS codepoints: 17613 + 51764)
+//!   - 16 of Chrome's 17 extensions (ALPS codepoint 17613; the 17th,
+//!     `trust_anchors` / 0xca34, has no wreq knob — tracked in issue #81)
 //!   - A fixed extension order (matching bogdanfinn's stable JA3, which
 //!     indeed.com's WAF allowlists)
 //!   - HTTP/2 SETTINGS in Chrome's exact order
@@ -52,11 +53,14 @@ static CHROME_CERT_COMPRESSORS: &[&'static dyn CertificateCompressor] = &[&Brotl
 /// handshake, but a fixed order matching bogdanfinn's stable JA3 is
 /// allowlisted by WAFs like indeed.com. GREASE slots are inserted by wreq.
 ///
-/// NOTE: Real Chrome 148 sends 17 extensions (including BOTH ALPS codepoints:
-/// 17613 new + 51764 old). BoringSSL's `alps_use_new_codepoint` is a boolean
-/// that selects ONE codepoint, not both — so we can only send 16 extensions.
-/// This produces JA4 `t13d1516h2` instead of `t13d1517h2`. The 1-extension
-/// gap is a BoringSSL limitation, not a configuration error.
+/// NOTE: Real Chrome 148 sends 17 extensions. The 17th is `trust_anchors`
+/// (0xca34 = 51764, draft-ietf-tls-trust-anchor-ids) — wreq exposes no way
+/// to send it, so we emit 16. This produces JA4 `t13d1516h2` instead of
+/// `t13d1517h2`. The 1-extension gap is a wreq limitation, not a
+/// configuration error; tracked in issue #81. (51764 is `trust_anchors`,
+/// NOT `application_settings_old` which is 17513 — `alps_use_new_codepoint`
+/// below is already correct and selects 17613, the only ALPS codepoint real
+/// Chrome 148 sends.)
 fn chrome_extensions() -> Vec<ExtensionType> {
     vec![
         ExtensionType::CERTIFICATE_TIMESTAMP,                  // 18
@@ -228,8 +232,9 @@ pub fn edge_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
 }
 
 /// Build a wreq Emulation for Chrome from scratch (not using wreq-util
-/// presets). This gives us full control over TLS extensions (both ALPS
-/// codepoints), HTTP/2 SETTINGS, and header wire order.
+/// presets). This gives us full control over TLS extensions (ALPS codepoint
+/// 17613; `trust_anchors` / 0xca34 is not emittable via wreq — issue #81),
+/// HTTP/2 SETTINGS, and header wire order.
 ///
 /// The Emulation's headers field is set to the Chrome wire-order set, but
 /// ox-browser's middleware chain also sets headers via `browser_headers()`.
@@ -390,4 +395,352 @@ fn safari_profile(profile: &BrowserProfile, major: u32) -> Option<wreq_util::Pro
         _ => Safari18_5,
     };
     Some(p)
+}
+
+// ── Fingerprint oracle classification ───────────────────────────────────
+//
+// Pure verdict logic for the fingerprint oracle
+// (crates/http/tests/fingerprint_oracle_test.rs). Extracted from the test so
+// it can be unit-tested without the `fingerprint` feature, which needs live
+// network access to tls.peet.ws / tls.browserleaks.com.
+
+/// Bucket A — structurally non-comparable, permanent by policy.
+///
+/// `ja3_hash` and `ja4_o` are both order-sensitive. Chrome permutes
+/// ClientHello extensions per handshake, so a reference capture is one sample
+/// of a randomised order and can never be matched by any fixed-order client.
+/// We deliberately choose a fixed extension order for WAF-allowlist stability
+/// (the bogdanfinn approach). This is a policy decision, not a library
+/// limitation, and these two fields never come off the list — a coincidental
+/// match on a given run carries no signal, so bucket A is NOT self-expiring.
+pub const FP_BUCKET_A: &[&str] = &["ja3_hash", "ja4_o"];
+
+/// Bucket B — known gap, tracked and temporary.
+///
+/// `ja3n_hash`, `ja4`, and `peetprint_hash` all fail for one cause: the
+/// missing `trust_anchors` extension (0xca34 = 51764) leaves us at 16
+/// extensions instead of 17 (`t13d1516h2` vs `t13d1517h2`). Tracked in
+/// issue #81. When that gap closes, every field in this bucket must be
+/// removed — the oracle enforces this by FAILING if a bucket-B field now
+/// matches the reference (see [`classify_fingerprint_diffs`]).
+///
+/// Version scoping: the gap only holds for Chrome versions that actually
+/// SEND `trust_anchors` (51764). References captured from Chrome versions
+/// that do NOT send it (e.g. Chrome 131, 133 — 16 extensions, no 51764)
+/// have a correct 16-extension ClientHello by construction; for those, a
+/// match is CORRECT and must NOT be reported as a closed gap. The oracle
+/// derives comparability from the reference itself: a bucket-B field is
+/// only comparable if the reference's JA3 extension list contains 51764
+/// (see `reference_exhibits_gap` in the oracle). If the JA3 string is
+/// absent or unparseable, the field is treated as NOT comparable.
+pub const FP_BUCKET_B: &[&str] = &["ja3n_hash", "ja4", "peetprint_hash"];
+
+/// Verdict returned by [`classify_fingerprint_diffs`].
+#[derive(Debug, Default)]
+pub struct FingerprintVerdict {
+    /// Bucket-A fields that differed (tolerated, permanent).
+    pub tolerated_a: Vec<String>,
+    /// Bucket-B fields that differed (tolerated, gap still open).
+    pub tolerated_b: Vec<String>,
+    /// Bucket-B fields that now MATCH the reference — the gap has closed and
+    /// they MUST be removed from [`FP_BUCKET_B`]. A non-empty list is a
+    /// FAILURE: a closed gap that keeps being ignored is a defect.
+    pub gap_closed: Vec<String>,
+    /// Diffs outside both buckets — hard failures, the profile is wrong.
+    pub hard_failures: Vec<(String, String, String)>,
+}
+
+impl FingerprintVerdict {
+    /// True if the verdict is clean (no hard failures, no closed gap).
+    pub fn is_ok(&self) -> bool {
+        self.hard_failures.is_empty() && self.gap_closed.is_empty()
+    }
+}
+
+/// Classify fingerprint diffs against the two suppression buckets.
+///
+/// `diffs` is `(field, expected, observed)` for every field that differed.
+/// `comparable_b` is the subset of [`FP_BUCKET_B`] fields with a non-empty
+/// reference value — a match is only meaningful for those; a field with no
+/// reference value is not "matching", it's absent. The observed side is
+/// checked in [`classify_with`]: a bucket-B diff with an empty observed
+/// value is a hard failure (the metric could not be measured), not a
+/// tolerated gap — so a partial 200 missing one key cannot silently disable
+/// self-expiry.
+///
+/// - A diff in bucket A → tolerated.
+/// - A diff in bucket B → tolerated (gap still open).
+/// - A bucket-B field in `comparable_b` with NO diff → `gap_closed` (FAIL).
+/// - A diff outside both buckets → `hard_failures` (FAIL).
+///
+/// This is a thin wrapper over [`classify_with`] that passes the production
+/// [`FP_BUCKET_A`] / [`FP_BUCKET_B`]. Unit tests should call [`classify_with`]
+/// with literal buckets so the gap-closed path stays exercised regardless of
+/// what the production consts happen to contain (see F7).
+pub fn classify_fingerprint_diffs(
+    diffs: &[(String, String, String)],
+    comparable_b: &[&str],
+) -> FingerprintVerdict {
+    classify_with(FP_BUCKET_A, FP_BUCKET_B, diffs, comparable_b)
+}
+
+/// Parameterized classifier — the actual verdict logic, decoupled from the
+/// production bucket consts. `classify_fingerprint_diffs` is a thin wrapper
+/// over this.
+///
+/// A `source:<field>` diff (emitted by the oracle's cross-service consistency
+/// check) means the field could NOT be reliably compared — a tooling
+/// disagreement, not a fingerprint match. Such a diff must NOT let the
+/// field be reported as `gap_closed` (a closed gap means "matched"); the
+/// `source:` diff itself is a hard failure (it is in neither bucket). See F4.
+pub fn classify_with(
+    bucket_a: &[&str],
+    bucket_b: &[&str],
+    diffs: &[(String, String, String)],
+    comparable_b: &[&str],
+) -> FingerprintVerdict {
+    let mut v = FingerprintVerdict::default();
+    for d in diffs {
+        if bucket_a.contains(&d.0.as_str()) {
+            v.tolerated_a.push(d.0.clone());
+        } else if bucket_b.contains(&d.0.as_str()) {
+            // Fix C: a bucket-B diff with an empty observed value means the
+            // metric could not be measured — a partial 200 from an echo
+            // service that is missing one key (e.g. browserleaks returns
+            // 200 but `ja3n_hash` is absent from the JSON, so
+            // `extract_browserleaks` sets it to ""). "We could not measure
+            // it" is a hard failure, not "the known gap is still open" —
+            // otherwise a missing key silently disables self-expiry while
+            // the oracle reports green. The self-expiry can never fire on
+            // an empty observed value because it never matches the
+            // reference; the diff must not be tolerated either.
+            //
+            // Reachability: `ja4` has a non-empty assert in
+            // `capture_with_client` that panics before `compare()` is
+            // reached, so this guard is never hit for `ja4` on the live
+            // path. The genuinely reachable inputs are `ja3n_hash` and
+            // `peetprint_hash` — neither has an emptiness assert in
+            // `capture_with_client`, so a partial 200 missing one of them
+            // flows through to this guard. Adding symmetric asserts there
+            // would make this guard unreachable on the live path for ALL
+            // bucket-B fields, reducing it to a test-only safety net; the
+            // current design keeps it as the only live defence for those
+            // fields.
+            if d.2.is_empty() {
+                v.hard_failures.push(d.clone());
+            } else {
+                v.tolerated_b.push(d.0.clone());
+            }
+        } else {
+            v.hard_failures.push(d.clone());
+        }
+    }
+    // Self-expiring: any comparable bucket-B field that did NOT diff has
+    // matched the reference — the gap closed, it must leave the list.
+    // Collect the metric names that had a `source:` disagreement so they
+    // can be excluded from gap_closed (F4): a source:<field> diff means the
+    // field was not comparable, not that it matched.
+    let source_disputed: Vec<&str> = diffs
+        .iter()
+        .filter_map(|d| d.0.strip_prefix("source:"))
+        .collect();
+    for field in comparable_b {
+        if !bucket_b.contains(field) {
+            continue;
+        }
+        if source_disputed.contains(field) {
+            continue;
+        }
+        if !diffs.iter().any(|d| &d.0 == field) {
+            v.gap_closed.push((*field).to_string());
+        }
+    }
+    v
+}
+
+/// F3: does the reference's own ClientHello exhibit the `trust_anchors` gap?
+///
+/// A bucket-B field is only comparable if the reference EXHIBITS the gap —
+/// i.e. the reference's own ClientHello sends extension `51764`
+/// (`trust_anchors`, 0xca34 = draft-ietf-tls-trust-anchor-ids). References
+/// captured from Chrome versions that do NOT send it (e.g. Chrome 131/133 —
+/// 16 extensions, no 51764) have a correct 16-extension ClientHello by
+/// construction; for those, a match is CORRECT and must NOT be reported as a
+/// closed gap, or the operator would be told to delete suppression entries
+/// in response to a correct result (which would then break Chrome 148).
+///
+/// The reference's JA3 string carries the full extension list as its third
+/// `-`-joined component
+/// (`<TLSVersion>,<Ciphers>,<Extensions>,<EllipticCurves>,<ECPointFormats>`).
+/// Returns `false` if the JA3 string is absent or unparseable — never assume
+/// the gap is exhibited.
+pub fn reference_exhibits_gap(ja3: &str) -> bool {
+    let parts: Vec<&str> = ja3.split(',').collect();
+    if parts.len() < 3 || parts[2].is_empty() {
+        return false;
+    }
+    parts[2].split('-').any(|e| e == "51764")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(field: &str, exp: &str, obs: &str) -> (String, String, String) {
+        (field.to_string(), exp.to_string(), obs.to_string())
+    }
+
+    // Literal buckets decoupled from the production consts (F7): the
+    // gap-closed path must stay exercised regardless of what FP_BUCKET_A /
+    // FP_BUCKET_B happen to contain. If FP_BUCKET_B becomes empty (the
+    // follow-up PR that closes the trust_anchors gap), tests that read the
+    // consts directly would silently stop exercising the mechanism.
+    const TEST_A: &[&str] = &["ja3_hash", "ja4_o"];
+    const TEST_B: &[&str] = &["ja3n_hash", "ja4", "peetprint_hash"];
+
+    // Case 1: a diff in bucket A is tolerated.
+    #[test]
+    fn bucket_a_diff_is_tolerated() {
+        let v = classify_with(TEST_A, TEST_B, &[d("ja3_hash", "a", "b")], &[]);
+        assert!(v.is_ok());
+        assert_eq!(v.tolerated_a, vec!["ja3_hash"]);
+        assert!(v.tolerated_b.is_empty());
+        assert!(v.gap_closed.is_empty());
+        assert!(v.hard_failures.is_empty());
+    }
+
+    // Case 2: a diff in bucket B is tolerated (gap still open).
+    #[test]
+    fn bucket_b_diff_is_tolerated() {
+        let v = classify_with(
+            TEST_A,
+            TEST_B,
+            &[d("ja4", "t13d1517h2", "t13d1516h2")],
+            &["ja4"],
+        );
+        assert!(v.is_ok());
+        assert_eq!(v.tolerated_b, vec!["ja4"]);
+        assert!(v.gap_closed.is_empty());
+        assert!(v.hard_failures.is_empty());
+    }
+
+    // Case 3 (falsification): a comparable bucket-B field that MATCHED (no
+    // diff) means the trust_anchors gap has closed → must FAIL. This is the
+    // case that was silently green under the old single-bucket partition and
+    // is now RED-on-match.
+    #[test]
+    fn bucket_b_match_signals_gap_closed() {
+        let v = classify_with(TEST_A, TEST_B, &[], &["ja4"]);
+        assert!(!v.is_ok(), "a closed gap must not be tolerated");
+        assert_eq!(v.gap_closed, vec!["ja4"]);
+        assert!(v.hard_failures.is_empty());
+    }
+
+    // Case 4: a diff outside both buckets is a hard failure.
+    #[test]
+    fn diff_outside_buckets_is_hard_fail() {
+        let v = classify_with(TEST_A, TEST_B, &[d("http2_akamai", "x", "y")], &[]);
+        assert!(!v.is_ok());
+        assert_eq!(v.hard_failures.len(), 1);
+        assert_eq!(v.hard_failures[0].0, "http2_akamai");
+        assert!(v.gap_closed.is_empty());
+    }
+
+    // Bucket A is NOT self-expiring: a comparable-A field that matched must
+    // NOT trip gap_closed (coincidental matches carry no signal).
+    #[test]
+    fn bucket_a_match_does_not_trip_gap_closed() {
+        let v = classify_with(TEST_A, TEST_B, &[], &["ja3_hash"]);
+        assert!(v.is_ok(), "bucket A has no gap-closed semantics");
+        assert!(v.gap_closed.is_empty());
+    }
+
+    // F4: a `source:<field>` diff must NOT let a bucket-B field be reported
+    // as gap_closed. The field could not be reliably compared (cross-service
+    // tooling disagreement); the source: diff is itself a hard failure.
+    #[test]
+    fn source_prefix_diff_does_not_close_gap() {
+        let v = classify_with(
+            TEST_A,
+            TEST_B,
+            &[d(
+                "source:ja4",
+                "reference source=browserleaks",
+                "observed source=peet",
+            )],
+            &["ja4"],
+        );
+        // ja4 must NOT appear in gap_closed — the source:ja4 diff means it
+        // was not comparable, not that it matched.
+        assert!(
+            v.gap_closed.is_empty(),
+            "source: diff must not close the gap"
+        );
+        // The source:ja4 diff is a hard failure (in neither bucket).
+        assert_eq!(v.hard_failures.len(), 1);
+        assert_eq!(v.hard_failures[0].0, "source:ja4");
+        assert!(!v.is_ok());
+    }
+
+    // F6: bucket A and bucket B are disjoint — a field present in both would
+    // be silently classified permanent (bucket A wins) and could never
+    // expire. They are disjoint today; this pins it.
+    #[test]
+    fn bucket_a_and_b_are_disjoint() {
+        assert!(
+            FP_BUCKET_A.iter().all(|a| !FP_BUCKET_B.contains(a)),
+            "FP_BUCKET_A and FP_BUCKET_B must be disjoint — a field in both \
+             is silently permanent and can never expire"
+        );
+    }
+
+    // F7: the public wrapper must agree with classify_with on the production
+    // buckets — this keeps the production wiring itself covered.
+    #[test]
+    fn public_wrapper_matches_classify_with_production_buckets() {
+        let diffs = &[d("ja4", "t13d1517h2", "t13d1516h2")];
+        let via_wrapper = classify_fingerprint_diffs(diffs, &["ja4"]);
+        let via_inner = classify_with(FP_BUCKET_A, FP_BUCKET_B, diffs, &["ja4"]);
+        assert_eq!(via_wrapper.tolerated_a, via_inner.tolerated_a);
+        assert_eq!(via_wrapper.tolerated_b, via_inner.tolerated_b);
+        assert_eq!(via_wrapper.gap_closed, via_inner.gap_closed);
+        assert_eq!(via_wrapper.hard_failures, via_inner.hard_failures);
+    }
+
+    // F3: a reference whose ClientHello sends extension 51764 (trust_anchors)
+    // exhibits the gap — bucket-B fields ARE comparable for it. Chrome 148,
+    // 144, 146 all send 51764 (17 extensions).
+    #[test]
+    fn reference_exhibits_gap_chrome148_true() {
+        let ja3 = "771,4865-4866-4867-49195,10-0-23-65281-65037-45-27-11-51764-43-35-5-18-17613-13-16-51,4588-29-23-24,0";
+        assert!(reference_exhibits_gap(ja3));
+    }
+
+    // F3: a reference whose ClientHello does NOT send 51764 does NOT exhibit
+    // the gap — bucket-B fields are NOT comparable (a match is correct, not a
+    // closed gap). Chrome 131/133 send 16 extensions, no 51764.
+    #[test]
+    fn reference_exhibits_gap_chrome131_false() {
+        let ja3 = "771,4865-4866-4867-49195,18-45-16-11-51-13-65281-17613-0-23-5-27-35-43-65037-10,4588-29-23-24,0";
+        assert!(!reference_exhibits_gap(ja3));
+    }
+
+    // F3: an absent or unparseable JA3 string must NOT be assumed to exhibit
+    // the gap — return false so the field is treated as not comparable.
+    #[test]
+    fn reference_exhibits_gap_empty_ja3_false() {
+        assert!(!reference_exhibits_gap(""));
+    }
+
+    #[test]
+    fn reference_exhibits_gap_malformed_ja3_false() {
+        // Only two components — no extension list to inspect.
+        assert!(!reference_exhibits_gap("771,4865-4866"));
+    }
+
+    #[test]
+    fn reference_exhibits_gap_empty_extension_list_false() {
+        // Third component present but empty.
+        assert!(!reference_exhibits_gap("771,4865-4866,,4588-29-23-24,0"));
+    }
 }
