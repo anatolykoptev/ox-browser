@@ -25,147 +25,122 @@ use dom_query::NodeRef;
 // ---------------------------------------------------------------------------
 
 const NOISE_TAGS: &[&str] = &[
-    "nav", "footer", "header", "aside", "script", "style", "noscript", "iframe", "svg", "form",
-];
-
-// ---------------------------------------------------------------------------
-// Noise ARIA roles
-// ---------------------------------------------------------------------------
-
-const NOISE_ROLES: &[&str] = &[
-    "navigation",
-    "banner",
-    "contentinfo",
-    "complementary",
-    "search",
-    "menu",
-    "menubar",
-    "toolbar",
-    "dialog",
-    "alertdialog",
-    "status",
-    "alert",
-    "tooltip",
-    "tablist",
-    "tab",
-    "tab-panel",
-];
-
-// ---------------------------------------------------------------------------
-// Noise class patterns — substring matches against class attribute
-// ---------------------------------------------------------------------------
-
-const NOISE_CLASS_PATTERNS: &[&str] = &[
-    // Navigation
+    "script",
+    "style",
+    "noscript",
+    "iframe",
+    "svg",
     "nav",
+    "aside",
+    "footer",
+    "header",
+    "video",
+    "audio",
+    "canvas",
+    // NOTE: <form> is NOT here — ASP.NET wraps entire page body in <form>.
+    // Forms are handled with a heuristic in is_noise() that distinguishes
+    // small input forms (noise) from page-wrapping forms (not noise).
+    // NOTE: <picture> is NOT here — it's a responsive image container.
+];
+
+// ---------------------------------------------------------------------------
+// Noise ARIA roles — kept minimal to avoid false positives (webclaw approach)
+// ---------------------------------------------------------------------------
+
+const NOISE_ROLES: &[&str] = &["navigation", "banner", "complementary", "contentinfo"];
+
+// ---------------------------------------------------------------------------
+// Noise classes — exact token matches against class attribute tokens
+// ---------------------------------------------------------------------------
+
+/// Class tokens that indicate noise when matched EXACTLY (after splitting
+/// the class attribute on whitespace). Uses webclaw's approach: substring
+/// matching like `class.contains("nav")` causes false positives on classes
+/// like `UnderlineNav`, `color-bg-header`, etc. Token matching avoids this.
+const NOISE_CLASSES: &[&str] = &[
+    "header",
+    "top",
     "navbar",
-    "navigation",
+    "footer",
+    "bottom",
+    "sidebar",
+    "modal",
+    "popup",
+    "overlay",
+    "ad",
+    "ads",
+    "advert",
+    "lang-selector",
+    "language",
+    "social",
+    "social-media",
+    "social-links",
     "menu",
+    "navigation",
+    "breadcrumbs",
     "breadcrumb",
+    "share",
+    "widget",
+    "cookie",
+    "newsletter",
+    "subscribe",
+    "skip-link",
+    "sr-only",
+    "visually-hidden",
+    "notification",
+    "alert",
+    "toast",
     "pagination",
     "pager",
-    // Layout chrome
-    "sidebar",
-    "footer",
-    "header",
-    "masthead",
-    "toolbar",
-    "banner",
-    // Cookie/consent
-    "cookie",
-    "consent",
-    "gdpr",
-    "onetrust",
-    "cmp-",
-    "cmp_",
-    // Ads
-    "advert",
-    "advertisement",
-    "adsense",
-    "ad-banner",
-    "ad-container",
-    "ad-slot",
-    "dfp",
-    "google-ad",
-    "promo",
-    "sponsored",
-    // Social
-    "social",
-    "share",
-    "sharing",
-    "twitter-share",
-    "facebook-share",
-    "linkedin-share",
-    // Modals/overlays
-    "modal",
-    "popup",
-    "overlay",
-    "lightbox",
-    "dialog",
-    // Newsletter/signup
-    "newsletter",
-    "subscribe",
-    "signup-form",
-    "email-signup",
-    // Widgets
-    "widget",
-    "widget-area",
-    // Skip links / accessibility chrome
-    "skip-link",
-    "skip-to-content",
-    "screen-reader",
-    "visually-hidden",
-    "sr-only",
+    "signup",
+    "login-form",
+    "search-form",
+    "related-posts",
+    "recommended",
 ];
 
 // ---------------------------------------------------------------------------
-// Noise ID patterns — substring matches against id attribute
+// Noise IDs — exact matches against id attribute
 // ---------------------------------------------------------------------------
 
-const NOISE_ID_PATTERNS: &[&str] = &[
+const NOISE_IDS: &[&str] = &[
+    "header",
+    "footer",
     "nav",
-    "navbar",
-    "navigation",
-    "menu",
-    "footer",
-    "header",
     "sidebar",
-    "breadcrumb",
-    "pagination",
-    "cookie",
-    "consent",
-    "onetrust",
-    "cmp-",
-    "cmp_",
+    "menu",
     "modal",
     "popup",
-    "overlay",
-    "newsletter",
-    "subscribe",
+    "cookie",
+    "breadcrumbs",
+    "widget",
+    "ad",
     "social",
     "share",
-    "advert",
-    "ad-",
-    "sidebar",
+    "newsletter",
+    "subscribe",
+    "comments",
+    "related",
 ];
 
-// ---------------------------------------------------------------------------
-// Tailwind-safe exclusions — class substrings that look noise-ish but aren't
-// ---------------------------------------------------------------------------
-
-/// Class substrings that should NOT trigger noise classification even if they
-/// contain a noise pattern. These are Tailwind animation utilities and CSS
-/// custom property syntax that appear in real content elements.
-const TAILWIND_SAFE_PATTERNS: &[&str] = &[
-    "animate-",
-    "transition-",
-    "duration-",
-    "delay-",
-    "ease-",
-    "motion-",
-    "group-hover:",
-    "peer-hover:",
-    "focus-within:",
+/// Cookie consent platform ID/class prefixes — substring matched against
+/// both id and class attributes. These platforms generate huge overlays that
+/// are always noise.
+const COOKIE_CONSENT_PREFIXES: &[&str] = &[
+    "onetrust",
+    "optanon",
+    "ot-sdk",
+    "cookiebot",
+    "CybotCookiebot",
+    "cc-",
+    "cookie-law",
+    "gdpr",
+    "consent-",
+    "cmp-",
+    "sp_message",
+    "qc-cmp",
+    "trustarc",
+    "evidon",
 ];
 
 // ---------------------------------------------------------------------------
@@ -178,16 +153,52 @@ const TAILWIND_SAFE_PATTERNS: &[&str] = &[
 /// Tailwind-safe: animation utilities and CSS custom properties do NOT
 /// trigger noise classification. BEM component names (`card__title`) are
 /// NOT noise — they're structural naming.
+/// Safety valve threshold: if a noise-matched element has more than this
+/// many characters of text, it's almost certainly a broken wrapper that
+/// absorbed the page content — treat it as content, not noise.
+const NOISE_TEXT_LIMIT: usize = 5000;
+
 pub(crate) fn is_noise(node: &NodeRef) -> bool {
     if !node.is_element() {
         return false;
     }
 
-    // 1. Tag name check
+    // Never treat <body> or <html> as noise.
     if let Some(name) = node.node_name() {
         let lower = name.to_lowercase();
+        if lower == "body" || lower == "html" {
+            return false;
+        }
+
+        // 1. Tag name check
         if NOISE_TAGS.contains(&lower.as_str()) {
             return true;
+        }
+
+        // <form> heuristic: ASP.NET wraps the entire page body in a single <form>.
+        // These page-wrapping forms contain hundreds of words of real content.
+        // Small forms (login, search, newsletter) are noise.
+        if lower == "form" {
+            let text_len = node.text().len();
+            // A form with substantial text (>500 chars) is likely a page wrapper, not noise.
+            if text_len < 500 {
+                return true;
+            }
+            // Also check noise classes — a big form with class="login-form" is still noise
+            if let Some(class) = node.class() {
+                let cl = class.to_lowercase();
+                if cl.split_whitespace().any(|token| {
+                    token == "login-form"
+                        || token == "search-form"
+                        || token == "subscribe"
+                        || token == "signup"
+                        || token == "newsletter"
+                        || token == "contact"
+                }) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
@@ -199,22 +210,62 @@ pub(crate) fn is_noise(node: &NodeRef) -> bool {
         }
     }
 
-    // 3. Class pattern check (Tailwind-safe)
+    // 3. Class check — exact token matching (webclaw approach)
     if let Some(class) = node.class()
         && is_noise_class(&class.to_lowercase())
     {
+        // Safety valve: malformed HTML can leave noise containers unclosed,
+        // causing them to absorb the entire page content. A real header/nav/
+        // footer rarely exceeds a few thousand characters of text. If a
+        // noise-class element has massive text content, it's almost certainly
+        // a broken wrapper — treat it as content, not noise.
+        let text_len = node.text().len();
+        if text_len > NOISE_TEXT_LIMIT {
+            return false;
+        }
         return true;
     }
 
-    // 4. ID pattern check
+    // 4. ID check — exact match with structural exclusion
     if let Some(id) = node.id_attr() {
-        let id = id.to_lowercase();
-        if is_noise_id(&id) {
+        let id_lower = id.to_lowercase();
+        if NOISE_IDS.contains(&id_lower.as_str()) && !is_structural_id(&id_lower) {
+            let text_len = node.text().len();
+            if text_len > NOISE_TEXT_LIMIT {
+                return false;
+            }
             return true;
+        }
+        // Cookie consent platform IDs (prefix match) — with safety valve:
+        // malformed HTML can leave a cookie container unclosed, causing it
+        // to absorb page content. Same NOISE_TEXT_LIMIT guard as exact IDs.
+        let text_len = node.text().len();
+        for prefix in COOKIE_CONSENT_PREFIXES {
+            if id_lower.starts_with(prefix) {
+                if text_len > NOISE_TEXT_LIMIT {
+                    return false;
+                }
+                return true;
+            }
         }
     }
 
-    // 5. Hidden elements
+    // 5. Cookie consent class detection (prefix/substring match for platform classes)
+    // — with safety valve: same NOISE_TEXT_LIMIT guard as ID prefix match.
+    if let Some(class) = node.class() {
+        let class_lower = class.to_lowercase();
+        let text_len = node.text().len();
+        for prefix in COOKIE_CONSENT_PREFIXES {
+            if class_lower.contains(prefix) {
+                if text_len > NOISE_TEXT_LIMIT {
+                    return false;
+                }
+                return true;
+            }
+        }
+    }
+
+    // 6. Hidden elements
     if is_hidden(node) {
         return true;
     }
@@ -223,53 +274,55 @@ pub(crate) fn is_noise(node: &NodeRef) -> bool {
 }
 
 /// Check if a class attribute string contains noise patterns.
-/// Tailwind-safe: animation/transition utilities are excluded.
+/// Uses exact token matching: splits the class attribute on whitespace and
+/// checks each token against the noise list. This avoids false positives
+/// where `UnderlineNav` contains `nav` as a substring but is not a navigation
+/// noise element.
 fn is_noise_class(class: &str) -> bool {
-    // Quick check: if the class contains Tailwind-safe patterns,
-    // don't flag it based on those substrings.
-    let has_tailwind_safe = TAILWIND_SAFE_PATTERNS.iter().any(|p| class.contains(p));
-
-    for pattern in NOISE_CLASS_PATTERNS {
-        if class.contains(pattern) {
-            // If the only match is in a Tailwind-safe context, skip.
-            // Check if the pattern appears outside of a safe prefix.
-            if has_tailwind_safe && is_only_in_safe_context(class, pattern) {
-                continue;
-            }
+    for token in class.split_whitespace() {
+        let lower = token.to_lowercase();
+        if NOISE_CLASSES.contains(&lower.as_str()) {
+            return true;
+        }
+        // Structural elements use compound names (FooterLinks, Header-nav, etc.)
+        // These are always noise regardless of compound form.
+        if lower.starts_with("footer")
+            || lower.starts_with("header-")
+            || lower.starts_with("nav-")
+        {
             return true;
         }
     }
-    false
+    is_ad_class(class)
 }
 
-/// Check if the noise pattern only appears within a Tailwind-safe prefix.
-/// E.g., "animate-menu-open" contains "menu" but only within "animate-menu-open".
-fn is_only_in_safe_context(class: &str, pattern: &str) -> bool {
-    // Find all occurrences of the pattern
-    let mut search_from = 0;
-    while let Some(pos) = class[search_from..].find(pattern) {
-        let abs_pos = search_from + pos;
-        // Check if this occurrence is preceded by a safe pattern
-        let before = &class[..abs_pos];
-        let is_safe = TAILWIND_SAFE_PATTERNS.iter().any(|safe| {
-            before
-                .rfind(safe)
-                .is_some_and(|sp| abs_pos - sp < safe.len() + 20)
-        });
-        if !is_safe {
-            return false;
-        }
-        search_from = abs_pos + pattern.len();
-    }
-    true
+/// Check if a class attribute contains ad-related tokens.
+fn is_ad_class(class: &str) -> bool {
+    class.split_whitespace().any(|token| {
+        token == "ad"
+            || token.starts_with("ad-")
+            || token.starts_with("ad_")
+            || token.ends_with("-ad")
+            || token.ends_with("_ad")
+    })
 }
 
-/// Check if an ID string contains noise patterns.
-fn is_noise_id(id: &str) -> bool {
-    NOISE_ID_PATTERNS.iter().any(|p| id.contains(p))
+/// Check if an ID is structural (not noise even if it matches a noise pattern).
+/// IDs containing these suffixes are app mount points, not noise containers.
+fn is_structural_id(id: &str) -> bool {
+    const STRUCTURAL_SUFFIXES: &[&str] =
+        &["portal", "root", "container", "wrapper", "mount", "app"];
+    STRUCTURAL_SUFFIXES.iter().any(|s| id.contains(s))
 }
 
-/// Check if an element is hidden via inline styles.
+/// Check if an element is hidden via inline styles or ARIA.
+///
+/// NOTE: the HTML `hidden` attribute is intentionally NOT checked here.
+/// React Suspense boundaries use `<div hidden id="S:N">` to wrap server-rendered
+/// content that is revealed after hydration. The content IS in the HTML —
+/// stripping it loses real content (e.g., feature card sections on nextjs.org).
+/// Only `display:none`, `visibility:hidden`, and `aria-hidden="true"` are treated
+/// as truly hidden.
 fn is_hidden(node: &NodeRef) -> bool {
     if let Some(style) = node.attr("style") {
         let style = style.to_lowercase();
@@ -279,10 +332,6 @@ fn is_hidden(node: &NodeRef) -> bool {
         if style.contains("visibility:hidden") || style.contains("visibility: hidden") {
             return true;
         }
-    }
-    if let Some(hidden) = node.attr("hidden") {
-        let _ = hidden;
-        return true;
     }
     if node.has_attr("aria-hidden")
         && let Some(val) = node.attr("aria-hidden")
@@ -436,21 +485,44 @@ mod tests {
 
     #[test]
     fn real_nav_class_is_noise() {
-        let html = r#"<html><body><div class="main-nav">Navigation links</div><div class="article-body">Content</div></body></html>"#;
+        // Exact token match: "navbar" is in NOISE_CLASSES.
+        // Note: "nav" alone is NOT in NOISE_CLASSES — we rely on the <nav> tag
+        // for navigation elements, not the class, to avoid false positives on
+        // classes like "post-nav" (article pagination).
+        let html = r#"<html><body><div class="navbar">Navigation links</div><div class="article-body">Content</div></body></html>"#;
         let doc = Document::from(html);
         assert_eq!(count_noise(&doc), 1);
     }
 
     #[test]
+    fn nav_prefix_class_is_noise() {
+        // Structural prefix: "nav-main" starts with "nav-"
+        let html = r#"<html><body><div class="nav-main">Navigation links</div><div class="article-body">Content</div></body></html>"#;
+        let doc = Document::from(html);
+        assert_eq!(count_noise(&doc), 1);
+    }
+
+    #[test]
+    fn compound_nav_not_noise() {
+        // "UnderlineNav" is a single token — does NOT match "nav" exactly.
+        // This is the GitHub false-positive case that token matching fixes.
+        let html = r#"<html><body><div class="UnderlineNav">Content here</div></body></html>"#;
+        let doc = Document::from(html);
+        assert_eq!(count_noise(&doc), 0, "UnderlineNav should not be noise");
+    }
+
+    #[test]
     fn social_share_class_is_noise() {
-        let html = r#"<html><body><div class="social-share-buttons">Share on Twitter</div><div class="post-content">Article</div></body></html>"#;
+        // Exact token match: "social" is in NOISE_CLASSES
+        let html = r#"<html><body><div class="social share-buttons">Share on Twitter</div><div class="post-content">Article</div></body></html>"#;
         let doc = Document::from(html);
         assert_eq!(count_noise(&doc), 1);
     }
 
     #[test]
     fn newsletter_signup_is_noise() {
-        let html = r#"<html><body><div class="newsletter-signup">Subscribe!</div><article>Content</article></body></html>"#;
+        // Exact token match: "newsletter" is in NOISE_CLASSES
+        let html = r#"<html><body><div class="newsletter signup">Subscribe!</div><article>Content</article></body></html>"#;
         let doc = Document::from(html);
         assert_eq!(count_noise(&doc), 1);
     }
@@ -465,11 +537,11 @@ mod tests {
 
     #[test]
     fn remove_noise_strips_banners() {
-        let html = r#"<html><body><nav>Nav</nav><div class="cookie-consent">Cookies</div><article><p>Real content</p></article><footer>Footer</footer></body></html>"#;
+        let html = r#"<html><body><nav>Nav</nav><div class="cookie">Cookies</div><article><p>Real content</p></article><footer>Footer</footer></body></html>"#;
         let doc = Document::from(html);
         remove_noise(&doc);
         let html_out = doc.html();
-        assert!(!html_out.contains("cookie-consent"));
+        assert!(!html_out.contains("Cookies"));
         assert!(!html_out.contains("Nav"));
         assert!(!html_out.contains("Footer"));
         assert!(html_out.contains("Real content"));
@@ -523,14 +595,16 @@ mod tests {
 
     #[test]
     fn modal_class_is_noise() {
-        let html = r#"<html><body><div class="modal-overlay">Modal content</div><div class="page-content">Real content</div></body></html>"#;
+        // Exact token match: "modal" is in NOISE_CLASSES
+        let html = r#"<html><body><div class="modal overlay">Modal content</div><div class="page-content">Real content</div></body></html>"#;
         let doc = Document::from(html);
         assert_eq!(count_noise(&doc), 1);
     }
 
     #[test]
     fn advertisement_class_is_noise() {
-        let html = r#"<html><body><div class="advertisement">Buy now!</div><article>News article</article></body></html>"#;
+        // "ad-banner" starts with "ad-" — caught by is_ad_class
+        let html = r#"<html><body><div class="ad-banner">Buy now!</div><article>News article</article></body></html>"#;
         let doc = Document::from(html);
         assert_eq!(count_noise(&doc), 1);
     }
@@ -543,10 +617,13 @@ mod tests {
     }
 
     #[test]
-    fn hidden_attr_is_noise() {
+    fn hidden_attr_is_not_noise() {
+        // HTML `hidden` attribute is NOT treated as noise — React Suspense
+        // boundaries use `<div hidden id="S:N">` for server-rendered content
+        // that is revealed after hydration. The content is real.
         let html =
             r#"<html><body><div hidden>This is hidden</div><div>Visible</div></body></html>"#;
         let doc = Document::from(html);
-        assert_eq!(count_noise(&doc), 1);
+        assert_eq!(count_noise(&doc), 0, "hidden attribute should not be noise");
     }
 }
