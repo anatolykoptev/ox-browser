@@ -4785,13 +4785,13 @@ dependencies = [
 [[package]]
 name = "wreq"
 version = "6.0.0-rc.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f0eba5f5814a94e5f1a99156f187133464e525b66bdbc69a9627d46530af2e1"
+source = "git+https://github.com/anatolykoptev/wreq?branch=feat%2Ftrust-anchors#60a8f62ddeb5c0d95906bfa2bf3b05cc3c40d3c4"
 dependencies = [
  "btls",
  "btls-sys",
  "bytes",
  "cookie",
+ "foreign-types",
  "futures-util",
  "http",
  "http-body",

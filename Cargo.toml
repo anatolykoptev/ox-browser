@@ -68,3 +68,13 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 1
+
+# TEMPORARY — pending upstream wreq PR for the `trust_anchors` extension
+# (draft-ietf-tls-trust-anchor-ids, codepoint 0xca34 = 51764). The fork adds
+# `TlsOptions::requested_trust_anchors` + builder setter, applied per-connection
+# via BoringSSL's `SSL_set1_requested_trust_anchors`. It branches off the
+# released `v6.0.0-rc.29` tag, so the version wreq-util resolves against is
+# unchanged. Remove this stanza once the upstream PR lands and is released.
+# Tracked in issue #81.
+[patch.crates-io]
+wreq = { git = "https://github.com/anatolykoptev/wreq", branch = "feat/trust-anchors" }
