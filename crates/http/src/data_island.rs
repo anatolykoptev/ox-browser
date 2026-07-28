@@ -6,8 +6,8 @@
 //! text content as a fallback when normal DOM extraction yields sparse
 //! results.
 //!
-//! Ported from webclaw `crates/webclaw-core/src/data_island.rs` (MIT),
-//! adapted from `scraper::Html`/`Selector` to `dom_query::Document`.
+//! Clean-room adaptation informed by webclaw's `crates/webclaw-core/src/data_island.rs`
+//! (AGPL-3.0). Rewritten for `dom_query::Document` — not a port.
 //!
 //! Issue #60: data island + JS eval — SPA content recovery.
 

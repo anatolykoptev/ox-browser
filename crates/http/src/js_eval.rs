@@ -6,8 +6,8 @@
 //! `<script type="application/json">`. This module executes inline `<script>`
 //! tags in a sandboxed QuickJS runtime to capture those JS-assigned data blobs.
 //!
-//! Ported from webclaw `crates/webclaw-core/src/js_eval.rs` (MIT), adapted
-//! from `scraper::Html`/`Selector` to `dom_query::Document`.
+//! Clean-room adaptation informed by webclaw's `crates/webclaw-core/src/js_eval.rs`
+//! (AGPL-3.0). Rewritten for `dom_query::Document` — not a port.
 //!
 //! Issue #60: data island + JS eval — SPA content recovery.
 

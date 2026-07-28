@@ -759,17 +759,17 @@ fn find_content_position(markdown: &str, needle: &str) -> Option<usize> {
 /// Check if a position in markdown falls inside `![...](...)` image syntax.
 fn is_inside_image_syntax(markdown: &str, pos: usize) -> bool {
     let before = &markdown[..pos];
-    let bytes = before.as_bytes();
-    let mut i = bytes.len();
-    while i > 0 {
-        i -= 1;
-        if i > 0 && bytes[i - 1] == b'!' && bytes[i] == b'[' {
+    // Walk backwards through char boundaries to find `![` opener.
+    // The pattern is ASCII-only, but using char_indices ensures we never
+    // land mid-UTF-8 char when multibyte content precedes the search position.
+    for (i, ch) in before.char_indices().rev() {
+        if i > 0 && before.as_bytes()[i - 1] == b'!' && ch == '[' {
             let after = &markdown[pos..];
             if after.contains("](") {
                 return true;
             }
         }
-        if bytes[i] == b')' {
+        if ch == ')' {
             break;
         }
     }

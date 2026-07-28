@@ -71,6 +71,7 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 |----------|--------|-------------|
 | `/health` | GET | Health check |
 | `/read` | POST | Fetch + extract content (markdown/HTML/text) |
+| `/readability` | POST | **DEPRECATED** — use `/read` instead |
 | `/fetch` | POST | Raw HTTP fetch |
 | `/solve` | POST | Solve Cloudflare challenge for URL |
 | `/crawl` | POST | Crawl a site (BFS) |
