@@ -418,11 +418,21 @@ pub const FP_BUCKET_A: &[&str] = &["ja3_hash", "ja4_o"];
 /// Bucket B — known gap, tracked and temporary.
 ///
 /// `ja3n_hash`, `ja4`, and `peetprint_hash` all fail for one cause: the
-/// missing `trust_anchors` extension (0xca34) leaves us at 16 extensions
-/// instead of 17 (`t13d1516h2` vs `t13d1517h2`). Tracked in issue #81. When
-/// that gap closes, every field in this bucket must be removed — the oracle
-/// enforces this by FAILING if a bucket-B field now matches the reference
-/// (see [`classify_fingerprint_diffs`]).
+/// missing `trust_anchors` extension (0xca34 = 51764) leaves us at 16
+/// extensions instead of 17 (`t13d1516h2` vs `t13d1517h2`). Tracked in
+/// issue #81. When that gap closes, every field in this bucket must be
+/// removed — the oracle enforces this by FAILING if a bucket-B field now
+/// matches the reference (see [`classify_fingerprint_diffs`]).
+///
+/// Version scoping: the gap only holds for Chrome versions that actually
+/// SEND `trust_anchors` (51764). References captured from Chrome versions
+/// that do NOT send it (e.g. Chrome 131, 133 — 16 extensions, no 51764)
+/// have a correct 16-extension ClientHello by construction; for those, a
+/// match is CORRECT and must NOT be reported as a closed gap. The oracle
+/// derives comparability from the reference itself: a bucket-B field is
+/// only comparable if the reference's JA3 extension list contains 51764
+/// (see `reference_exhibits_gap` in the oracle). If the JA3 string is
+/// absent or unparseable, the field is treated as NOT comparable.
 pub const FP_BUCKET_B: &[&str] = &["ja3n_hash", "ja4", "peetprint_hash"];
 
 /// Verdict returned by [`classify_fingerprint_diffs`].
@@ -458,15 +468,38 @@ impl FingerprintVerdict {
 /// - A diff in bucket B → tolerated (gap still open).
 /// - A bucket-B field in `comparable_b` with NO diff → `gap_closed` (FAIL).
 /// - A diff outside both buckets → `hard_failures` (FAIL).
+///
+/// This is a thin wrapper over [`classify_with`] that passes the production
+/// [`FP_BUCKET_A`] / [`FP_BUCKET_B`]. Unit tests should call [`classify_with`]
+/// with literal buckets so the gap-closed path stays exercised regardless of
+/// what the production consts happen to contain (see F7).
 pub fn classify_fingerprint_diffs(
+    diffs: &[(String, String, String)],
+    comparable_b: &[&str],
+) -> FingerprintVerdict {
+    classify_with(FP_BUCKET_A, FP_BUCKET_B, diffs, comparable_b)
+}
+
+/// Parameterized classifier — the actual verdict logic, decoupled from the
+/// production bucket consts. `classify_fingerprint_diffs` is a thin wrapper
+/// over this.
+///
+/// A `source:<field>` diff (emitted by the oracle's cross-service consistency
+/// check) means the field could NOT be reliably compared — a tooling
+/// disagreement, not a fingerprint match. Such a diff must NOT let the
+/// field be reported as `gap_closed` (a closed gap means "matched"); the
+/// `source:` diff itself is a hard failure (it is in neither bucket). See F4.
+pub fn classify_with(
+    bucket_a: &[&str],
+    bucket_b: &[&str],
     diffs: &[(String, String, String)],
     comparable_b: &[&str],
 ) -> FingerprintVerdict {
     let mut v = FingerprintVerdict::default();
     for d in diffs {
-        if FP_BUCKET_A.contains(&d.0.as_str()) {
+        if bucket_a.contains(&d.0.as_str()) {
             v.tolerated_a.push(d.0.clone());
-        } else if FP_BUCKET_B.contains(&d.0.as_str()) {
+        } else if bucket_b.contains(&d.0.as_str()) {
             v.tolerated_b.push(d.0.clone());
         } else {
             v.hard_failures.push(d.clone());
@@ -474,8 +507,18 @@ pub fn classify_fingerprint_diffs(
     }
     // Self-expiring: any comparable bucket-B field that did NOT diff has
     // matched the reference — the gap closed, it must leave the list.
+    // Collect the metric names that had a `source:` disagreement so they
+    // can be excluded from gap_closed (F4): a source:<field> diff means the
+    // field was not comparable, not that it matched.
+    let source_disputed: Vec<&str> = diffs
+        .iter()
+        .filter_map(|d| d.0.strip_prefix("source:"))
+        .collect();
     for field in comparable_b {
-        if !FP_BUCKET_B.contains(field) {
+        if !bucket_b.contains(field) {
+            continue;
+        }
+        if source_disputed.contains(field) {
             continue;
         }
         if !diffs.iter().any(|d| &d.0 == field) {
@@ -493,10 +536,18 @@ mod tests {
         (field.to_string(), exp.to_string(), obs.to_string())
     }
 
+    // Literal buckets decoupled from the production consts (F7): the
+    // gap-closed path must stay exercised regardless of what FP_BUCKET_A /
+    // FP_BUCKET_B happen to contain. If FP_BUCKET_B becomes empty (the
+    // follow-up PR that closes the trust_anchors gap), tests that read the
+    // consts directly would silently stop exercising the mechanism.
+    const TEST_A: &[&str] = &["ja3_hash", "ja4_o"];
+    const TEST_B: &[&str] = &["ja3n_hash", "ja4", "peetprint_hash"];
+
     // Case 1: a diff in bucket A is tolerated.
     #[test]
     fn bucket_a_diff_is_tolerated() {
-        let v = classify_fingerprint_diffs(&[d("ja3_hash", "a", "b")], &[]);
+        let v = classify_with(TEST_A, TEST_B, &[d("ja3_hash", "a", "b")], &[]);
         assert!(v.is_ok());
         assert_eq!(v.tolerated_a, vec!["ja3_hash"]);
         assert!(v.tolerated_b.is_empty());
@@ -507,7 +558,12 @@ mod tests {
     // Case 2: a diff in bucket B is tolerated (gap still open).
     #[test]
     fn bucket_b_diff_is_tolerated() {
-        let v = classify_fingerprint_diffs(&[d("ja4", "t13d1517h2", "t13d1516h2")], &["ja4"]);
+        let v = classify_with(
+            TEST_A,
+            TEST_B,
+            &[d("ja4", "t13d1517h2", "t13d1516h2")],
+            &["ja4"],
+        );
         assert!(v.is_ok());
         assert_eq!(v.tolerated_b, vec!["ja4"]);
         assert!(v.gap_closed.is_empty());
@@ -520,7 +576,7 @@ mod tests {
     // is now RED-on-match.
     #[test]
     fn bucket_b_match_signals_gap_closed() {
-        let v = classify_fingerprint_diffs(&[], &["ja4"]);
+        let v = classify_with(TEST_A, TEST_B, &[], &["ja4"]);
         assert!(!v.is_ok(), "a closed gap must not be tolerated");
         assert_eq!(v.gap_closed, vec!["ja4"]);
         assert!(v.hard_failures.is_empty());
@@ -529,7 +585,7 @@ mod tests {
     // Case 4: a diff outside both buckets is a hard failure.
     #[test]
     fn diff_outside_buckets_is_hard_fail() {
-        let v = classify_fingerprint_diffs(&[d("http2_akamai", "x", "y")], &[]);
+        let v = classify_with(TEST_A, TEST_B, &[d("http2_akamai", "x", "y")], &[]);
         assert!(!v.is_ok());
         assert_eq!(v.hard_failures.len(), 1);
         assert_eq!(v.hard_failures[0].0, "http2_akamai");
@@ -540,8 +596,73 @@ mod tests {
     // NOT trip gap_closed (coincidental matches carry no signal).
     #[test]
     fn bucket_a_match_does_not_trip_gap_closed() {
-        let v = classify_fingerprint_diffs(&[], &["ja3_hash"]);
+        let v = classify_with(TEST_A, TEST_B, &[], &["ja3_hash"]);
         assert!(v.is_ok(), "bucket A has no gap-closed semantics");
         assert!(v.gap_closed.is_empty());
+    }
+
+    // F4: a `source:<field>` diff must NOT let a bucket-B field be reported
+    // as gap_closed. The field could not be reliably compared (cross-service
+    // tooling disagreement); the source: diff is itself a hard failure.
+    #[test]
+    fn source_prefix_diff_does_not_close_gap() {
+        let v = classify_with(
+            TEST_A,
+            TEST_B,
+            &[d(
+                "source:ja4",
+                "reference source=browserleaks",
+                "observed source=peet",
+            )],
+            &["ja4"],
+        );
+        // ja4 must NOT appear in gap_closed — the source:ja4 diff means it
+        // was not comparable, not that it matched.
+        assert!(
+            v.gap_closed.is_empty(),
+            "source: diff must not close the gap"
+        );
+        // The source:ja4 diff is a hard failure (in neither bucket).
+        assert_eq!(v.hard_failures.len(), 1);
+        assert_eq!(v.hard_failures[0].0, "source:ja4");
+        assert!(!v.is_ok());
+    }
+
+    // F6: bucket A and bucket B are disjoint — a field present in both would
+    // be silently classified permanent (bucket A wins) and could never
+    // expire. They are disjoint today; this pins it.
+    #[test]
+    fn bucket_a_and_b_are_disjoint() {
+        assert!(
+            FP_BUCKET_A.iter().all(|a| !FP_BUCKET_B.contains(a)),
+            "FP_BUCKET_A and FP_BUCKET_B must be disjoint — a field in both \
+             is silently permanent and can never expire"
+        );
+    }
+
+    // F7: the public wrapper must agree with classify_with on the production
+    // buckets — this keeps the production wiring itself covered.
+    #[test]
+    fn public_wrapper_matches_classify_with_production_buckets() {
+        let diffs = &[d("ja4", "t13d1517h2", "t13d1516h2")];
+        let via_wrapper = classify_fingerprint_diffs(diffs, &["ja4"]);
+        let via_inner = classify_with(FP_BUCKET_A, FP_BUCKET_B, diffs, &["ja4"]);
+        assert_eq!(via_wrapper.tolerated_a, via_inner.tolerated_a);
+        assert_eq!(via_wrapper.tolerated_b, via_inner.tolerated_b);
+        assert_eq!(via_wrapper.gap_closed, via_inner.gap_closed);
+        assert_eq!(via_wrapper.hard_failures, via_inner.hard_failures);
+    }
+
+    // F7: the gap-closed path must be exercised even if FP_BUCKET_B becomes
+    // empty (the follow-up PR that closes the trust_anchors gap). Using
+    // literal buckets guarantees this test does not silently stop exercising
+    // the mechanism when the production const changes.
+    #[test]
+    fn gap_closed_path_survives_empty_production_bucket_b() {
+        // A matching bucket-B field against a literal non-empty bucket_b must
+        // produce gap_closed regardless of what FP_BUCKET_B contains.
+        let v = classify_with(TEST_A, TEST_B, &[], &["ja4"]);
+        assert!(!v.is_ok());
+        assert_eq!(v.gap_closed, vec!["ja4"]);
     }
 }
