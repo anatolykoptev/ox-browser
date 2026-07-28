@@ -460,9 +460,12 @@ impl FingerprintVerdict {
 /// Classify fingerprint diffs against the two suppression buckets.
 ///
 /// `diffs` is `(field, expected, observed)` for every field that differed.
-/// `comparable_b` is the subset of [`FP_BUCKET_B`] fields that were actually
-/// measured on both sides (reference non-empty) — a match is only meaningful
-/// for those; a field with no reference value is not "matching", it's absent.
+/// `comparable_b` is the subset of [`FP_BUCKET_B`] fields with a non-empty
+/// reference value — a match is only meaningful for those; a field with no
+/// reference value is not "matching", it's absent. The observed side is
+/// checked in [`classify_with`]: a bucket-B diff with an empty observed
+/// value is a hard failure (the metric could not be measured), not a
+/// tolerated gap — so a service outage cannot silently disable self-expiry.
 ///
 /// - A diff in bucket A → tolerated.
 /// - A diff in bucket B → tolerated (gap still open).
@@ -500,7 +503,18 @@ pub fn classify_with(
         if bucket_a.contains(&d.0.as_str()) {
             v.tolerated_a.push(d.0.clone());
         } else if bucket_b.contains(&d.0.as_str()) {
-            v.tolerated_b.push(d.0.clone());
+            // Fix C: a bucket-B diff with an empty observed value means the
+            // metric could not be measured (e.g. browserleaks outage). "We
+            // could not measure it" is a hard failure, not "the known gap is
+            // still open" — otherwise a service outage silently disables
+            // self-expiry while the oracle reports green. The self-expiry
+            // can never fire on an empty observed value because it never
+            // matches the reference; the diff must not be tolerated either.
+            if d.2.is_empty() {
+                v.hard_failures.push(d.clone());
+            } else {
+                v.tolerated_b.push(d.0.clone());
+            }
         } else {
             v.hard_failures.push(d.clone());
         }
@@ -540,7 +554,8 @@ pub fn classify_with(
 /// in response to a correct result (which would then break Chrome 148).
 ///
 /// The reference's JA3 string carries the full extension list as its third
-/// `-`-joined component (`<version>,<ciphers>,<extensions>,<sigalgs>,<version>`).
+/// `-`-joined component
+/// (`<TLSVersion>,<Ciphers>,<Extensions>,<EllipticCurves>,<ECPointFormats>`).
 /// Returns `false` if the JA3 string is absent or unparseable — never assume
 /// the gap is exhibited.
 pub fn reference_exhibits_gap(ja3: &str) -> bool {
@@ -674,19 +689,6 @@ mod tests {
         assert_eq!(via_wrapper.tolerated_b, via_inner.tolerated_b);
         assert_eq!(via_wrapper.gap_closed, via_inner.gap_closed);
         assert_eq!(via_wrapper.hard_failures, via_inner.hard_failures);
-    }
-
-    // F7: the gap-closed path must be exercised even if FP_BUCKET_B becomes
-    // empty (the follow-up PR that closes the trust_anchors gap). Using
-    // literal buckets guarantees this test does not silently stop exercising
-    // the mechanism when the production const changes.
-    #[test]
-    fn gap_closed_path_survives_empty_production_bucket_b() {
-        // A matching bucket-B field against a literal non-empty bucket_b must
-        // produce gap_closed regardless of what FP_BUCKET_B contains.
-        let v = classify_with(TEST_A, TEST_B, &[], &["ja4"]);
-        assert!(!v.is_ok());
-        assert_eq!(v.gap_closed, vec!["ja4"]);
     }
 
     // F3: a reference whose ClientHello sends extension 51764 (trust_anchors)

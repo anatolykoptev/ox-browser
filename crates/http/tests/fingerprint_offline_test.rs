@@ -323,33 +323,139 @@ fn source_prefix_diff_excludes_every_bucket_b_field() {
     }
 }
 
-// ── Fix E: bucket-B diff is a hard failure when gap not exhibited ──────
+// ── Fix B: classify_for_reference drives the branch selection ──────────
 //
-// When the reference does not exhibit the trust_anchors gap (no 51764 in
-// JA3), a bucket-B diff is a real mismatch — it cannot be explained by the
-// missing extension. The call site passes an empty bucket B to
-// `classify_with` so the diff is NOT suppressed into tolerated_b.
+// The branch selection (gap_exhibited → comparable_b; else → empty bucket B)
+// lives in `classify_for_reference` in common/mod.rs — the SAME function the
+// live oracle calls. These tests drive it with BOTH committed fixtures:
+// Chrome 131 (no 51764 → bucket-B diff must be a HARD failure) and
+// Chrome 148 (51764 present → bucket-B diff must be tolerated_b).
+//
+// Falsification: delete the `else` branch inside `classify_for_reference`
+// and the Chrome 131 test FAILS (ja4 goes to tolerated_b, verdict.is_ok()
+// becomes true, hard_failures is empty).
+
 #[test]
-fn bucket_b_diff_is_hard_failure_when_gap_not_exhibited() {
-    let v = classify_with(
-        FP_BUCKET_A,
-        &[],
-        &[(
+fn classify_for_reference_chrome131_bucket_b_diff_is_hard_failure() {
+    let reference = load_reference("131");
+    assert!(
+        !reference_exhibits_gap(&reference.tls.ja3),
+        "Chrome 131 JA3 must NOT contain 51764"
+    );
+    let diffs = vec![(
+        "ja4".to_string(),
+        "t13d1516h2".to_string(),
+        "t13d1515h2".to_string(),
+    )];
+    let verdict = classify_for_reference(&reference, &diffs);
+    assert!(
+        !verdict.is_ok(),
+        "Chrome 131 (no gap): bucket-B diff must be a hard failure"
+    );
+    assert_eq!(verdict.hard_failures.len(), 1);
+    assert_eq!(verdict.hard_failures[0].0, "ja4");
+    assert!(
+        verdict.tolerated_b.is_empty(),
+        "Chrome 131 (no gap): bucket-B diff must NOT be tolerated"
+    );
+}
+
+#[test]
+fn classify_for_reference_chrome148_bucket_b_diff_is_tolerated() {
+    let reference = load_reference("148");
+    assert!(
+        reference_exhibits_gap(&reference.tls.ja3),
+        "Chrome 148 JA3 must contain 51764"
+    );
+    // Provide diffs for ALL bucket-B fields so none trigger gap_closed
+    // (a field with no diff means it matched → gap closed). All three are
+    // bucket-B diffs with non-empty observed values → tolerated_b.
+    let diffs = vec![
+        (
+            "ja3n_hash".to_string(),
+            "aaa".to_string(),
+            "bbb".to_string(),
+        ),
+        (
             "ja4".to_string(),
             "t13d1517h2".to_string(),
             "t13d1516h2".to_string(),
-        )],
-        &[],
+        ),
+        (
+            "peetprint_hash".to_string(),
+            "ccc".to_string(),
+            "ddd".to_string(),
+        ),
+    ];
+    let verdict = classify_for_reference(&reference, &diffs);
+    assert!(
+        verdict.is_ok(),
+        "Chrome 148 (gap exhibited): bucket-B diffs must be tolerated"
+    );
+    assert_eq!(verdict.tolerated_b.len(), 3);
+    assert!(verdict.hard_failures.is_empty());
+}
+
+// ── Fix C: empty observed bucket-B diff is a hard failure ──────────────
+//
+// A browserleaks outage yields an empty observed ja4. The diff (non-empty
+// expected vs empty observed) must NOT be tolerated as bucket B — "we could
+// not measure it" is a hard failure, not "the known gap is still open".
+// Revert the empty-observed check in classify_with and this test fails
+// (ja4 goes to tolerated_b, verdict.is_ok() becomes true).
+#[test]
+fn empty_observed_bucket_b_field_is_hard_failure() {
+    let v = classify_with(
+        FP_BUCKET_A,
+        FP_BUCKET_B,
+        &[("ja4".to_string(), "t13d1517h2".to_string(), String::new())],
+        &["ja4"],
+    );
+    assert!(!v.is_ok(), "empty observed ja4 must not be tolerated");
+    assert!(
+        v.hard_failures.iter().any(|d| d.0 == "ja4"),
+        "ja4 with empty observed must be a hard failure"
     );
     assert!(
-        !v.is_ok(),
-        "bucket-B diff must be a hard failure when gap not exhibited"
+        !v.tolerated_b.contains(&"ja4".to_string()),
+        "ja4 with empty observed must NOT be in tolerated_b"
     );
-    assert_eq!(v.hard_failures.len(), 1);
-    assert_eq!(v.hard_failures[0].0, "ja4");
+}
+
+// Fix C integration: a browserleaks outage (empty observed ja4, matching
+// sources) through the full compare → classify_for_reference path must
+// produce a hard failure, not a tolerated gap.
+#[test]
+fn browserleaks_outage_empty_ja4_is_hard_failure_full_path() {
+    let reference = load_reference("148");
+    let mut observed = Observed::default();
+    observed.sources.ja4 = reference.sources.ja4.clone();
+    observed.tls.ja4 = String::new(); // empty — browserleaks down
+
+    let (diffs, _) = compare(&observed, &reference);
+    let ja4_diff = diffs.iter().find(|d| d.field == "ja4");
+    assert!(ja4_diff.is_some(), "compare must emit a ja4 diff");
     assert!(
-        v.tolerated_b.is_empty(),
-        "bucket-B diff must NOT be tolerated when gap not exhibited"
+        ja4_diff.unwrap().observed.is_empty(),
+        "observed ja4 must be empty"
+    );
+
+    let diff_tuples: Vec<(String, String, String)> = diffs
+        .iter()
+        .map(|d| (d.field.clone(), d.expected.clone(), d.observed.clone()))
+        .collect();
+    let verdict = classify_for_reference(&reference, &diff_tuples);
+    assert!(
+        !verdict.is_ok(),
+        "browserleaks outage must not yield ok verdict"
+    );
+    assert!(
+        verdict.hard_failures.iter().any(|d| d.0 == "ja4"),
+        "ja4 with empty observed must be a hard failure through the full path"
+    );
+    assert!(
+        !verdict.tolerated_b.contains(&"ja4".to_string()),
+        "ja4 with empty observed must NOT be tolerated_b through the full path"
     );
 }
 

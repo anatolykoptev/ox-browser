@@ -44,19 +44,29 @@
 //! — a skip looks identical to a pass, which is the exact failure class this
 //! repo keeps hitting.
 
+// All tests in this file are #[cfg(feature = "fingerprint")]. Every helper
+// below is used ONLY by those gated tests. Cfg-gating the helpers alongside
+// the tests (rather than a file-level #![allow(dead_code)]) ensures that
+// `cargo clippy --all-targets` WITHOUT --features fingerprint compiles this
+// target as an empty shell — zero warnings, zero blindness. The
+// `--features fingerprint` check in `make preflight` type-checks the gated
+// code so a signature change on any API it consumes is caught in CI.
+#[cfg(feature = "fingerprint")]
 mod common;
 
+#[cfg(feature = "fingerprint")]
 use std::time::Duration;
 
+#[cfg(feature = "fingerprint")]
 use common::*;
-use ox_http::{
-    BUILTIN_PROFILES, BrowserProfile, HttpClient, HttpConfig, profile_to_emulation,
-    tls::{FP_BUCKET_A, classify_fingerprint_diffs, classify_with, reference_exhibits_gap},
-};
+#[cfg(feature = "fingerprint")]
+use ox_http::{BUILTIN_PROFILES, BrowserProfile, HttpClient, HttpConfig, profile_to_emulation};
 
 // ── Echo service endpoints ─────────────────────────────────────────────
 
+#[cfg(feature = "fingerprint")]
 const PEET_ENDPOINT: &str = "https://tls.peet.ws/api/all";
+#[cfg(feature = "fingerprint")]
 const BROWSERLEAKS_ENDPOINT: &str = "https://tls.browserleaks.com/json";
 
 // ── Peet response parsing ──────────────────────────────────────────────
@@ -66,6 +76,7 @@ const BROWSERLEAKS_ENDPOINT: &str = "https://tls.browserleaks.com/json";
 // `sent_frames` (an array of HEADERS frames with `headers` arrays of
 // "name: value" strings).
 
+#[cfg(feature = "fingerprint")]
 fn extract_peet(raw: &serde_json::Value) -> Observed {
     let mut o = Observed::default();
 
@@ -128,6 +139,7 @@ fn extract_peet(raw: &serde_json::Value) -> Observed {
 // tls.browserleaks.com/json returns a flat JSON object with ja3_hash, ja3n_hash,
 // ja4, ja4_o, akamai_text (HTTP/2 Akamai fingerprint), and user_agent.
 
+#[cfg(feature = "fingerprint")]
 fn extract_browserleaks(raw: &serde_json::Value) -> Observed {
     let mut o = Observed::default();
 
@@ -154,6 +166,7 @@ fn extract_browserleaks(raw: &serde_json::Value) -> Observed {
 /// browserleaks takes precedence for JA4, JA3n, JA4_o (FoxIO-faithful);
 /// peet takes precedence for peetprint, header order, sec-ch-ua (browserleaks
 /// does not expose them). JA3 hash and HTTP/2 Akamai come from browserleaks.
+#[cfg(feature = "fingerprint")]
 fn merge_observed(peet: Observed, bl: Observed) -> Observed {
     let mut merged = peet; // start with peet (peetprint, headers, sec-ch-ua, accept*)
 
@@ -181,6 +194,7 @@ fn merge_observed(peet: Observed, bl: Observed) -> Observed {
 /// Chrome/linux profiles deduplicated by major version. The TLS/HTTP2
 /// fingerprint is per-major, not per-OS, so testing the linux variant of each
 /// major covers every Chrome profile without redundant requests.
+#[cfg(feature = "fingerprint")]
 fn chrome_linux_profiles() -> Vec<&'static BrowserProfile> {
     let mut seen: Vec<String> = Vec::new();
     let mut result = Vec::new();
@@ -199,6 +213,7 @@ fn chrome_linux_profiles() -> Vec<&'static BrowserProfile> {
 }
 
 /// Build an HttpClient with the given profile's Emulation enabled.
+#[cfg(feature = "fingerprint")]
 fn build_client(profile: &BrowserProfile) -> HttpClient {
     let emulation = profile_to_emulation(profile).unwrap_or_else(|| {
         panic!(
@@ -217,6 +232,7 @@ fn build_client(profile: &BrowserProfile) -> HttpClient {
 
 /// Fetch JSON from an echo endpoint using the given client.
 /// An unreachable endpoint is a fatal error (not a skip).
+#[cfg(feature = "fingerprint")]
 async fn fetch_json(client: &HttpClient, endpoint: &str, label: &str) -> serde_json::Value {
     let resp = client.get(endpoint).await.unwrap_or_else(|e| {
         panic!(
@@ -234,6 +250,7 @@ async fn fetch_json(client: &HttpClient, endpoint: &str, label: &str) -> serde_j
 
 /// Capture the observed fingerprint from both echo endpoints using a client
 /// built with the given profile.
+#[cfg(feature = "fingerprint")]
 async fn capture_with_client(profile: &BrowserProfile) -> Observed {
     let client = build_client(profile);
 
@@ -265,6 +282,7 @@ async fn capture_with_client(profile: &BrowserProfile) -> Observed {
     obs
 }
 
+#[cfg(feature = "fingerprint")]
 fn preview_json(v: &serde_json::Value) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| format!("{:?}", v))
 }
@@ -320,46 +338,13 @@ async fn test_fingerprint_oracle() {
             .iter()
             .map(|d| (d.field.clone(), d.expected.clone(), d.observed.clone()))
             .collect();
-        // comparable_b = bucket-B fields that are actually comparable. Two
-        // gates, both required so a desync or a version mismatch can never
-        // silently disable self-expiry:
-        //   (F2) the field has a non-empty reference value — a field with no
-        //     reference value is absent, not matching. reference_value_for
-        //     panics on an unknown field (F2a), so a new FP_BUCKET_B entry with
-        //     no arm here is loud, never silently `_ => false`.
-        //   (F3) the reference EXHIBITS the trust_anchors gap — its own
-        //     ClientHello sends extension 51764. References from Chrome
-        //     versions that do NOT send it (131/133 — 16 extensions) have a
-        //     correct 16-extension ClientHello by construction; for those a
-        //     match is CORRECT and must NOT be reported as a closed gap.
-        // For each field filtered out, eprintln why (F2c) — never silent.
-        let gap_exhibited = reference_exhibits_gap(&reference.tls.ja3);
-        if !gap_exhibited {
-            eprintln!(
-                "  NOTE reference (Chrome {}) does not exhibit the trust_anchors gap \
-                 (no extension 51764 in JA3) — bucket-B self-expiry disabled for ALL fields; \
-                 a match is correct, not a closed gap",
-                major
-            );
-        }
-        // Fix B: use the shared comparable_bucket_b function — the SAME
-        // function the F3 version-scoping tests exercise, not a re-typed copy.
-        let comparable_b = comparable_bucket_b(&reference, gap_exhibited);
-
-        // Fix E: when the reference does not exhibit the trust_anchors gap,
-        // pass an EMPTY bucket B to the classifier — a bucket-B diff against
-        // a 16-extension reference is a real mismatch, not the tolerated gap.
-        // No tolerance and no expiry for a reference the gap does not apply to.
-        let verdict = if gap_exhibited {
-            classify_fingerprint_diffs(&diff_tuples, &comparable_b)
-        } else {
-            eprintln!(
-                "  NOTE bucket-B tolerance DISABLED for Chrome {} — reference does not \
-                 exhibit the trust_anchors gap; bucket-B diffs are hard failures",
-                major
-            );
-            classify_with(FP_BUCKET_A, &[], &diff_tuples, &[])
-        };
+        // Fix B: the branch selection (gap_exhibited → comparable_b;
+        // else → empty bucket B) lives in `classify_for_reference` in
+        // common/mod.rs — the SAME function the offline tests exercise
+        // with both committed fixtures (Chrome 131 + Chrome 148), not a
+        // re-typed copy. Deleting the `else` branch inside it breaks
+        // `classify_for_reference_chrome131_bucket_b_diff_is_hard_failure`.
+        let verdict = classify_for_reference(&reference, &diff_tuples);
 
         for f in &verdict.tolerated_a {
             eprintln!(

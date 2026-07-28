@@ -7,7 +7,10 @@
 //! and the `ja3` provenance guard (C) all live here so both targets exercise
 //! the SAME code path, never a re-typed copy.
 
-use ox_http::tls::{FP_BUCKET_B, FingerprintVerdict};
+use ox_http::tls::{
+    FP_BUCKET_A, FP_BUCKET_B, FingerprintVerdict, classify_fingerprint_diffs, classify_with,
+    reference_exhibits_gap,
+};
 use serde::{Deserialize, Serialize};
 
 // ── Echo service constants ─────────────────────────────────────────────
@@ -500,6 +503,32 @@ pub fn comparable_bucket_b(reference: &Reference, gap_exhibited: bool) -> Vec<&'
         .collect()
 }
 
+/// Fix B: the branch SELECTION itself — gap_exhibited → classify with
+/// `comparable_b`; else → classify with an empty bucket B so a bucket-B
+/// diff against a 16-extension reference is a hard failure, not the
+/// tolerated gap. Extracted here so the live oracle AND the offline tests
+/// call the SAME function, not a re-typed copy. Deleting the `else` branch
+/// breaks `classify_for_reference_chrome131_bucket_b_diff_is_hard_failure`.
+pub fn classify_for_reference(
+    reference: &Reference,
+    diffs: &[(String, String, String)],
+) -> FingerprintVerdict {
+    let gap_exhibited = reference_exhibits_gap(&reference.tls.ja3);
+    if !gap_exhibited {
+        eprintln!(
+            "  NOTE reference does not exhibit the trust_anchors gap \
+             (no extension 51764 in JA3) — bucket-B tolerance DISABLED; \
+             bucket-B diffs are hard failures"
+        );
+    }
+    let comparable_b = comparable_bucket_b(reference, gap_exhibited);
+    if gap_exhibited {
+        classify_fingerprint_diffs(diffs, &comparable_b)
+    } else {
+        classify_with(FP_BUCKET_A, &[], diffs, &[])
+    }
+}
+
 // ── F1: failure message helper ─────────────────────────────────────────
 
 /// F1: build the failure panic message naming BOTH the hard-failure count
@@ -521,15 +550,12 @@ pub fn fingerprint_fail_message(verdict: &FingerprintVerdict, major: &str) -> St
 
 // ── UA version extraction ──────────────────────────────────────────────
 
+/// D1: delegate to the crate's own `extract_major_version_pub` rather than
+/// re-implementing it. The local copy dropped the `Edg/` branch, so an Edge
+/// profile without `Chrome/` in the UA would print `major="0"`. The public
+/// function handles Chrome, Edge, Firefox, and Safari.
 pub fn extract_major_version(ua: &str) -> String {
-    if let Some(pos) = ua.find("Chrome/") {
-        return ua[pos + 7..].split('.').next().unwrap_or("0").to_string();
-    }
-    if let Some(pos) = ua.find("rv:") {
-        return ua[pos + 3..].split('.').next().unwrap_or("0").to_string();
-    }
-    if let Some(pos) = ua.find("Version/") {
-        return ua[pos + 8..].split('.').next().unwrap_or("0").to_string();
-    }
-    "0".to_string()
+    ox_http::profile::extract_major_version_pub(ua)
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "0".to_string())
 }

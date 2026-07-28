@@ -11,7 +11,7 @@ test:
 	$(MAKE) test-doc
 
 lint:
-	cargo clippy --workspace -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
 
 fmt:
 	cargo fmt --all
@@ -19,8 +19,9 @@ fmt:
 check: fmt lint test
 	@echo "All checks passed"
 
-## CI gate — fmt check + clippy -D warnings + nextest + doctests
+## CI gate — fmt check + clippy -D warnings + nextest + doctests + fingerprint feature check
 preflight: fmt lint test
+	cargo check -p ox-http --all-targets --features fingerprint
 	@echo "Preflight passed"
 
 deny:
