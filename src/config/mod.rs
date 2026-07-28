@@ -4,7 +4,7 @@
 //!
 //! Each section lives in its own module:
 //! - `server` — bind address, port
-//! - `http` — timeout, redirects, TLS emulation
+//! - `http` — timeout, redirects, browser profile
 //! - `retry` — exponential backoff parameters
 //! - `cache` — cookie cache TTL
 //! - `proxy` — proxy URL, webshare, health tracking
@@ -194,7 +194,7 @@ pub fn build_http_config(config: &ServerConfig) -> HttpConfig {
         max_redirects: config.http.max_redirects,
         cloudflare_detect: config.cloudflare.detect,
         debug: config.log.level == "debug",
-        emulation: config.http.emulation(),
+        profile: config.http.profile(),
         retry: Some(config.retry.to_retry_config()),
         residential_proxy: config.proxy.residential_url.clone(),
         ..Default::default()
@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(cfg.server.bind, "0.0.0.0");
         assert_eq!(cfg.http.timeout_secs, 20);
         assert_eq!(cfg.http.max_redirects, 10);
-        assert_eq!(cfg.http.emulation, "chrome148");
+        assert_eq!(cfg.http.profile, "chrome");
         assert_eq!(cfg.retry.max_retries, 3);
         assert_eq!(cfg.retry.initial_wait_ms, 500);
         assert_eq!(cfg.retry.max_wait_ms, 10_000);
@@ -287,7 +287,7 @@ bind = "127.0.0.1"
 [http]
 timeout_secs = 30
 max_redirects = 5
-emulation = "safari18"
+profile = "safari"
 
 [retry]
 max_retries = 5
@@ -323,7 +323,7 @@ level = "debug"
         assert_eq!(cfg.server.bind, "127.0.0.1");
         assert_eq!(cfg.http.timeout_secs, 30);
         assert_eq!(cfg.http.max_redirects, 5);
-        assert_eq!(cfg.http.emulation, "safari18");
+        assert_eq!(cfg.http.profile, "safari");
         assert_eq!(cfg.retry.max_retries, 5);
         assert_eq!(cfg.retry.initial_wait_ms, 1000);
         assert_eq!(cfg.cache.cookie_ttl_secs, 3600);

@@ -9,9 +9,9 @@
 [http]
 # timeout_secs = 20
 # max_redirects = 10
-# Emulation: chrome136, chrome131, chrome127, chrome124, chrome120, chrome116,
-#            safari18, safari17, edge127, none
-emulation = "chrome136"
+# Browser profile: chrome, firefox, safari, edge, none.
+# One name yields TLS + HTTP/2 + headers + UA + client hints atomically.
+profile = "chrome"
 
 [retry]
 # max_retries = 3

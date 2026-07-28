@@ -12,6 +12,7 @@ use crate::middleware_residential::residential_proxy_middleware;
 use crate::middleware_retry::retry_middleware;
 use crate::middleware_solver::{solver_middleware, solver_middleware_with_negcache};
 use crate::middleware_ssrf::ssrf_middleware;
+use crate::profile::profile_to_emulation;
 use crate::profile_hints::browser_headers;
 use crate::ssrf_connect::{SsrfGuardedResolver, ssrf_redirect_policy};
 use crate::{HttpConfig, HttpError, HttpResponse, Result};
@@ -31,10 +32,23 @@ impl HttpClient {
     /// Chain order (outermost first):
     /// `[logging?] -> [rate_limit?] -> [retry?] -> [solver?] -> [residential?] -> [cloudflare?] -> [quality_check] -> [client_hints] -> wreq`
     pub fn new(config: HttpConfig) -> Result<Self> {
-        let client = Self::build_wreq_client(&config)?;
+        // ONE identity source of truth: when `profile` is set, derive the
+        // TLS/HTTP2 Emulation from it via `profile_to_emulation`. The
+        // `config.emulation` field is IGNORED when a profile is set — a
+        // config naming one browser must not be able to produce another
+        // browser's TLS fingerprint. When no profile is set (non-browser
+        // clients like the Twitter API client), `config.emulation` is used
+        // as-is for TLS fingerprinting without browser identity headers.
+        let emulation = if let Some(profile) = config.profile {
+            profile_to_emulation(profile)
+        } else {
+            config.emulation.clone()
+        };
+
+        let client = Self::build_wreq_client(&config, emulation.as_ref())?;
         // A sibling client with no proxy, used as a direct-connection fallback
         // when an upstream proxy returns HTTP 402 Payment Required.
-        let direct_client = Self::build_direct_wreq_client(&config)?;
+        let direct_client = Self::build_direct_wreq_client(&config, emulation.as_ref())?;
         let needs_fallback = config.proxy_url.is_some() || config.proxy_pool.is_some();
         let base: Arc<dyn Handler> = if let Some(ref pool) = config.proxy_pool {
             Arc::new(
@@ -100,7 +114,14 @@ impl HttpClient {
         }
 
         // Innermost middleware: auto-inject client hints.
-        middlewares.push(client_hints_middleware());
+        // ONLY when no profile is set — when a profile is set, `browser_headers()`
+        // in `build_request()` provides the complete, coherent header set
+        // (including sec-ch-ua). The middleware must not add headers the
+        // profile didn't include (e.g. sec-ch-ua-full-version-list, which
+        // real Chrome doesn't send on top-level navigation).
+        if config.profile.is_none() {
+            middlewares.push(client_hints_middleware());
+        }
 
         let handler = chain(middlewares, base);
         Ok(Self { handler, config })
@@ -176,7 +197,11 @@ impl HttpClient {
     }
 
     /// Build the underlying wreq client from config.
-    fn build_wreq_client(config: &HttpConfig) -> Result<Client> {
+    /// `emulation` is the derived Emulation (from profile or config.emulation).
+    fn build_wreq_client(
+        config: &HttpConfig,
+        emulation: Option<&wreq::Emulation>,
+    ) -> Result<Client> {
         let mut builder = Client::builder()
             .timeout(config.timeout)
             // Connect-time, rebind-resistant IP guard (see crate::ssrf_connect
@@ -196,21 +221,25 @@ impl HttpClient {
             builder = builder.proxy(proxy);
         }
 
-        // Browser emulation for Chrome-identical TLS/HTTP2 fingerprints.
-        if let Some(emulation) = config.emulation.clone() {
-            builder = builder.emulation(emulation);
+        // Browser emulation for TLS/HTTP2 fingerprints. The Emulation
+        // controls TLS + HTTP/2 ONLY — identity headers are set per-request
+        // by `build_request()` via `browser_headers()`.
+        if let Some(emu) = emulation {
+            builder = builder.emulation(emu.clone());
         }
 
         // Note: we do NOT set .user_agent() on the builder — headers are
-        // managed by the middleware chain (profile headers or fallback UA).
-
+        // managed per-request (profile headers or fallback UA).
         Ok(builder.build()?)
     }
 
     /// Build a wreq client identical to [`build_wreq_client`] but with no
     /// proxy. Used as the direct-connection fallback when Webshare returns
     /// HTTP 402.
-    fn build_direct_wreq_client(config: &HttpConfig) -> Result<Client> {
+    fn build_direct_wreq_client(
+        config: &HttpConfig,
+        emulation: Option<&wreq::Emulation>,
+    ) -> Result<Client> {
         let mut builder = Client::builder()
             .timeout(config.timeout)
             .dns_resolver(SsrfGuardedResolver)
@@ -218,8 +247,8 @@ impl HttpClient {
             .cookie_store(true)
             .no_proxy();
 
-        if let Some(emulation) = config.emulation.clone() {
-            builder = builder.emulation(emulation);
+        if let Some(emu) = emulation {
+            builder = builder.emulation(emu.clone());
         }
 
         Ok(builder.build()?)

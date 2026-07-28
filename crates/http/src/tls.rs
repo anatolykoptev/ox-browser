@@ -229,33 +229,29 @@ pub fn edge_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
 
 /// Build a wreq Emulation for Chrome from scratch (not using wreq-util
 /// presets). This gives us full control over TLS extensions (both ALPS
-/// codepoints), HTTP/2 SETTINGS, and header wire order.
+/// codepoints) and HTTP/2 SETTINGS.
 ///
-/// The Emulation's headers field is set to the Chrome wire-order set, but
-/// ox-browser's middleware chain also sets headers via `browser_headers()`.
-/// The middleware headers take precedence (they're applied per-request on top
-/// of the Emulation defaults). Both must agree for the fingerprint to match.
+/// The Emulation controls TLS + HTTP/2 ONLY. Identity headers (User-Agent,
+/// sec-ch-ua, accept, header order) are set per-request by `browser_headers()`
+/// via `HttpClient::build_request()`. This separation makes a post-hoc UA
+/// override structurally impossible: the Emulation does not set a UA, so
+/// `WreqHandler`'s per-request `.header(user-agent, …)` cannot replace one
+/// that isn't there — the per-request UA is the ONLY UA.
 pub fn chrome_emulation(profile: &BrowserProfile) -> Emulation {
-    let headers = chrome_headers(profile);
-    let header_map = build_header_map(&headers);
-
+    let _ = profile; // profile is used by chrome_headers (per-request), not here
     Emulation::builder()
         .tls_options(chrome_tls())
         .http2_options(chrome_h2())
-        .headers(header_map)
         .build(Group::default())
 }
 
-/// Build a wreq Emulation for Edge — same TLS/HTTP2 as Chrome, different
-/// headers.
+/// Build a wreq Emulation for Edge — same TLS/HTTP2 as Chrome.
+/// Headers are set per-request by `edge_headers()` via `browser_headers()`.
 pub fn edge_emulation(profile: &BrowserProfile) -> Emulation {
-    let headers = edge_headers(profile);
-    let header_map = build_header_map(&headers);
-
+    let _ = profile;
     Emulation::builder()
         .tls_options(chrome_tls())
         .http2_options(chrome_h2())
-        .headers(header_map)
         .build(Group::default())
 }
 
@@ -279,19 +275,6 @@ pub fn safari_emulation(profile: &BrowserProfile) -> Option<Emulation> {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
-
-fn build_header_map(pairs: &[(String, String)]) -> wreq::header::HeaderMap {
-    let mut map = wreq::header::HeaderMap::with_capacity(pairs.len());
-    for (name, value) in pairs {
-        if let (Ok(n), Ok(v)) = (
-            wreq::header::HeaderName::from_bytes(name.as_bytes()),
-            wreq::header::HeaderValue::from_str(value),
-        ) {
-            map.insert(n, v);
-        }
-    }
-    map
-}
 
 fn extract_platform_from_ua(ua: &str) -> &'static str {
     if ua.contains("Windows") {

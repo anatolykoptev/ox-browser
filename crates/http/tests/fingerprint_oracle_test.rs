@@ -488,7 +488,67 @@ fn compare(o: &Observed, r: &Reference) -> (Vec<FieldDiff>, Vec<String>) {
         skipped.push("user-agent: excluded by reference note (headless mode)".into());
     }
 
+    // --- coherence invariant: sec-ch-ua major version == User-Agent major version ---
+    //
+    // This is the one check that would have caught the original bug: the
+    // service sent sec-ch-ua with v="136" (from a wreq-util preset) while the
+    // User-Agent was "ox-browser/0.8.0" (a fallback). No project in the field
+    // ships this check. It operates on the OBSERVED side alone — it does not
+    // need the reference, so it works even for headless references that
+    // exclude UA/sec-ch-ua from the per-field comparison.
+    if !o.sec_ch_ua.is_empty() && !o.user_agent.is_empty() {
+        let ua_major = extract_major_from_ua(&o.user_agent);
+        let hint_major = extract_major_from_sec_ch_ua(&o.sec_ch_ua);
+        if let (Some(ua_maj), Some(hint_maj)) = (ua_major, hint_major) {
+            if ua_maj != hint_maj {
+                diffs.push(FieldDiff {
+                    field: "coherence:sec_ch_ua_vs_ua_major".into(),
+                    expected: format!("sec-ch-ua major == UA major == {ua_maj}"),
+                    observed: format!("sec-ch-ua major={hint_maj}, UA major={ua_maj} — INCOHERENT"),
+                });
+            }
+        }
+    }
+
     (diffs, skipped)
+}
+
+/// Extract the major version number from a User-Agent string.
+/// Returns None if no version is found.
+fn extract_major_from_ua(ua: &str) -> Option<u32> {
+    if let Some(pos) = ua.find("Chrome/") {
+        return ua[pos + 7..].split('.').next()?.parse().ok();
+    }
+    if let Some(pos) = ua.find("Edg/") {
+        return ua[pos + 4..].split('.').next()?.parse().ok();
+    }
+    if let Some(pos) = ua.find("rv:") {
+        return ua[pos + 3..].split('.').next()?.parse().ok();
+    }
+    if let Some(pos) = ua.find("Version/") {
+        return ua[pos + 8..].split('.').next()?.parse().ok();
+    }
+    None
+}
+
+/// Extract the Chromium major version from a sec-ch-ua header value.
+/// Looks for `"Chromium";v="<major>"` or `"Google Chrome";v="<major>"`.
+/// Returns None if no Chromium/Chrome brand is found.
+fn extract_major_from_sec_ch_ua(sec_ch_ua: &str) -> Option<u32> {
+    for brand in &["Chromium", "Google Chrome"] {
+        let needle = format!(r#""{brand}";v=""#);
+        if let Some(pos) = sec_ch_ua.find(&needle) {
+            let rest = &sec_ch_ua[pos + needle.len()..];
+            let ver = rest.split('"').next().unwrap_or("");
+            // The version may be "148" or "148.0.0.0" — take the major.
+            if let Some(major) = ver.split('.').next() {
+                if let Ok(m) = major.parse::<u32>() {
+                    return Some(m);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Returns a non-nil FieldDiff if the reference and observed sources for a
@@ -575,16 +635,14 @@ fn chrome_linux_profiles() -> Vec<&'static BrowserProfile> {
     result
 }
 
-/// Build an HttpClient with the given profile's Emulation enabled.
-fn build_client(profile: &BrowserProfile) -> HttpClient {
-    let emulation = profile_to_emulation(profile).unwrap_or_else(|| {
-        panic!(
-            "no Emulation mapping for browser={} — profile_to_emulation must cover all builtin profiles",
-            profile.browser
-        )
-    });
+/// Build an HttpClient through the SAME public entry point the service uses
+/// (HttpConfig { profile: Some(..), .. }). HttpClient::new derives the
+/// TLS/HTTP2 Emulation from the profile internally — so the thing under test
+/// and the thing shipped cannot diverge. (Issue #81: oracle measures shipped
+/// construction.)
+fn build_client(profile: &'static BrowserProfile) -> HttpClient {
     let config = HttpConfig {
-        emulation: Some(emulation),
+        profile: Some(profile),
         timeout: Duration::from_secs(30),
         ..HttpConfig::default()
     };
@@ -611,7 +669,7 @@ async fn fetch_json(client: &HttpClient, endpoint: &str, label: &str) -> serde_j
 
 /// Capture the observed fingerprint from both echo endpoints using a client
 /// built with the given profile.
-async fn capture_with_client(profile: &BrowserProfile) -> Observed {
+async fn capture_with_client(profile: &'static BrowserProfile) -> Observed {
     let client = build_client(profile);
 
     // peet: JA3, peetprint, HTTP/2 akamai, header order, sec-ch-ua.
@@ -656,7 +714,7 @@ async fn test_fingerprint_oracle() {
     let profiles = chrome_linux_profiles();
     assert!(!profiles.is_empty(), "no Chrome/linux profiles found");
 
-    for profile in &profiles {
+    for &profile in &profiles {
         let major = extract_major_version(profile.user_agent);
         eprintln!("\n=== Chrome {} ({}) ===", major, profile.user_agent);
 
