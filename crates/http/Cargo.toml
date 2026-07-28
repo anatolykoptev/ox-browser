@@ -14,6 +14,12 @@ quickjs = ["rquickjs"]
 # claimed browser. Requires network access. Run explicitly:
 #   cargo test -p ox-http --features fingerprint --test fingerprint_oracle_test
 fingerprint = []
+# SOCKS proxy support in wreq. DELIBERATELY GUARDED against — the dial-failure
+# classifier's precision argument (proxy_fallback::looks_like_proxy_dial_failure)
+# assumes socks is NOT compiled, because socks proxy errors surface as
+# `is_proxy_connect()` and would falsify the "proxy-dial failure" classification.
+# Enabling this feature triggers a compile_error in proxy_fallback.rs.
+socks = ["wreq/socks"]
 
 [dependencies]
 wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli", "zstd"] }

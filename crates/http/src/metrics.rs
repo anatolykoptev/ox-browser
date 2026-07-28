@@ -5,7 +5,7 @@
 //! solver-giveup invisible to the operator and to Prometheus alerting.
 //!
 //! This module hand-rolls a handful of monotonic `AtomicU64` counters (the same
-//! pattern already used by [`crate::proxy_fallback::PROXY_FALLBACK_TOTAL`]) and a
+//! pattern already used by [`crate::proxy_fallback::PROXY_DIAL_FALLBACK_TOTAL`]) and a
 //! [`render`] function that emits them in Prometheus exposition format. No
 //! `prometheus` crate dependency — the counter set is tiny and fixed, so a
 //! hand-rolled exporter keeps the dependency surface (and Docker build time) flat.
@@ -15,7 +15,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::proxy_fallback::PROXY_FALLBACK_TOTAL;
+use crate::proxy_fallback::PROXY_DIAL_FALLBACK_TOTAL;
 
 /// Total fetch attempts entering the read/fetch path (any outcome).
 pub static FETCH_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -27,10 +27,32 @@ pub static FETCH_SUCCESS_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// (static, pool, residential, or per-request override).
 pub static PROXY_USED_TOTAL: AtomicU64 = AtomicU64::new(0);
 
-/// Times an upstream proxy surfaced an HTTP 402 (Webshare quota / billing).
-/// This is the trigger condition for the direct-connection fallback; compare
-/// against `oxbrowser_proxy_fallback_total` to confirm every 402 degraded.
+/// Times an HTTP 402 response was observed while the request was proxied.
+/// Observation-only — a 402 relayed by a healthy forward proxy may have
+/// originated at the origin (metered APIs, x402), so this counter does NOT
+/// trigger degradation. The previous attribution heuristic that used this
+/// counter as a fallback trigger has been removed (issue #90); a 402 now
+/// surfaces to the caller unchanged.
 pub static PROXY_402_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+/// Times a per-request proxy URL (from `req.proxy` or the rotating pool) was
+/// unparsable and the request failed closed instead of silently degrading to
+/// direct. Each bump is also a `tracing::warn!` naming the reason — without
+/// this counter the rejection is indistinguishable from any other
+/// `InvalidUrl` error (issue: unobservable_enforcement).
+pub static PROXY_ATTACH_INVALID_URL_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+/// Times an upstream proxy was unreachable at the dial step (connect
+/// refused / timeout / DNS / TLS handshake to the proxy host) for ANY target
+/// scheme. This is the trigger condition for the dial-failure fallback, but
+/// the fallback itself is gated more narrowly (HTTP targets + `max_redirects
+/// == 0` only — see `proxy_fallback::looks_like_proxy_dial_failure`).
+/// `HttpConfig::max_redirects` defaults to `10` and nothing in production
+/// sets it to `0`, so under the default configuration
+/// `oxbrowser_proxy_dial_fallback_total` stays at zero for ALL schemes — a
+/// gap between the two counters is the normal state and not by itself
+/// evidence about HTTPS (issue #86; tracking issue ox-browser#90).
+pub static PROXY_DIAL_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Record a fetch attempt (any outcome). Call once per top-level fetch/read.
 pub fn record_fetch() {
@@ -47,9 +69,24 @@ pub fn record_proxy_used() {
     PROXY_USED_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Record an upstream-proxy HTTP 402 (quota exhausted).
+/// Record an upstream-proxy HTTP 402 (observation-only — see [`PROXY_402_TOTAL`]).
 pub fn record_proxy_402() {
     PROXY_402_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record that a per-request proxy URL was unparsable and the request failed
+/// closed (issue: unobservable_enforcement). Each bump is also a
+/// `tracing::warn!` in the handler.
+pub fn record_proxy_attach_invalid_url() {
+    PROXY_ATTACH_INVALID_URL_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record an upstream-proxy dial failure (proxy host unreachable) detected
+/// for ANY target scheme. Mirrors [`record_proxy_402`]: counts the trigger
+/// condition regardless of whether a direct fallback was wired/applied, so a
+/// gap between this and `oxbrowser_proxy_dial_fallback_total` is visible.
+pub fn record_proxy_dial() {
+    PROXY_DIAL_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record a crawler dedup cap eviction (URL or content dedup hit its
@@ -155,9 +192,10 @@ pub fn set_gauge(gauge: &AtomicU64, value: u64) {
 ///
 /// The output is a valid `text/plain; version=0.0.4` body: a `# HELP` line, a
 /// `# TYPE … counter` line, and a sample line per metric. The
-/// `oxbrowser_proxy_fallback_total` series reuses the long-standing
-/// [`PROXY_FALLBACK_TOTAL`] counter so the fallback event already logged by
-/// [`crate::proxy_fallback::record_webshare_402_fallback`] is now scrapeable.
+/// `oxbrowser_proxy_dial_fallback_total` series reuses the
+/// [`PROXY_DIAL_FALLBACK_TOTAL`] counter so the dial-fallback event already
+/// logged by [`crate::proxy_fallback::record_proxy_dial_fallback`] is now
+/// scrapeable.
 pub fn render() -> String {
     let counters = [
         Counter {
@@ -177,13 +215,23 @@ pub fn render() -> String {
         },
         Counter {
             name: "oxbrowser_proxy_402_total",
-            help: "Upstream-proxy HTTP 402 responses (Webshare quota/billing exhausted).",
+            help: "HTTP 402 responses observed while proxied (observation-only — does NOT trigger degradation; see issue #90).",
             value: PROXY_402_TOTAL.load(Ordering::Relaxed),
         },
         Counter {
-            name: "oxbrowser_proxy_fallback_total",
-            help: "Direct-connection fallbacks taken because a proxy returned HTTP 402.",
-            value: PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed),
+            name: "oxbrowser_proxy_attach_invalid_url_total",
+            help: "Per-request proxy URLs that were unparsable and failed closed (not silently degraded to direct).",
+            value: PROXY_ATTACH_INVALID_URL_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
+            name: "oxbrowser_proxy_dial_total",
+            help: "Upstream-proxy dial failures (proxy host unreachable) detected for any target scheme.",
+            value: PROXY_DIAL_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
+            name: "oxbrowser_proxy_dial_fallback_total",
+            help: "Direct-connection fallbacks taken because the upstream proxy could not be dialled (HTTP targets + max_redirects==0 only; stays 0 under the shipped default max_redirects=10 — see issue #90).",
+            value: PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed),
         },
         Counter {
             name: "oxbrowser_solver_giveup_total",
@@ -318,7 +366,9 @@ mod tests {
             "oxbrowser_fetch_success_total",
             "oxbrowser_proxy_used_total",
             "oxbrowser_proxy_402_total",
-            "oxbrowser_proxy_fallback_total",
+            "oxbrowser_proxy_attach_invalid_url_total",
+            "oxbrowser_proxy_dial_total",
+            "oxbrowser_proxy_dial_fallback_total",
             "oxbrowser_solver_giveup_total",
             "oxbrowser_crawler_dedup_evicted_total",
             "oxbrowser_frontier_dropped_total",

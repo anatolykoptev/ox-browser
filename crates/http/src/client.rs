@@ -33,18 +33,45 @@ impl HttpClient {
     pub fn new(config: HttpConfig) -> Result<Self> {
         let client = Self::build_wreq_client(&config)?;
         // A sibling client with no proxy, used as a direct-connection fallback
-        // when an upstream proxy returns HTTP 402 Payment Required.
+        // when the upstream proxy cannot be dialled (a provable proxy-dial
+        // failure — the proxy host is dead). The previous 402-triggered
+        // degradation has been removed (issue #90).
         let direct_client = Self::build_direct_wreq_client(&config)?;
-        let needs_fallback = config.proxy_url.is_some() || config.proxy_pool.is_some();
+        // Whether to attach the direct (no-proxy) fallback used on a provable
+        // proxy-dial failure. Must cover EVERY path that can route a request
+        // through an upstream proxy: the static `proxy_url`, the rotating
+        // `proxy_pool`, AND the residential proxy injected per-request by the
+        // residential middleware on a CF retry (`middleware_residential.rs:60`
+        // sets `retry_req.proxy = Some(self.proxy_url)`). Omitting
+        // `residential_proxy` left a residential-only config with no direct
+        // sibling, so a dial failure during a residential CF-retry hard-failed
+        // the read into a 502 instead of degrading — the May-outage gap.
+        let needs_fallback = config.proxy_url.is_some()
+            || config.proxy_pool.is_some()
+            || config.residential_proxy.is_some();
+        let client_has_static_proxy = config.proxy_url.is_some();
+        let max_redirects = config.max_redirects;
         let base: Arc<dyn Handler> = if let Some(ref pool) = config.proxy_pool {
             Arc::new(
-                WreqHandler::with_proxy_pool(client, Arc::clone(pool))
-                    .with_direct_fallback(direct_client),
+                WreqHandler::with_proxy_pool(
+                    client,
+                    Arc::clone(pool),
+                    client_has_static_proxy,
+                    max_redirects,
+                )
+                .with_direct_fallback(direct_client),
             )
         } else if needs_fallback {
-            Arc::new(WreqHandler::new(client).with_direct_fallback(direct_client))
+            Arc::new(
+                WreqHandler::new(client, client_has_static_proxy, max_redirects)
+                    .with_direct_fallback(direct_client),
+            )
         } else {
-            Arc::new(WreqHandler::new(client))
+            Arc::new(WreqHandler::new(
+                client,
+                client_has_static_proxy,
+                max_redirects,
+            ))
         };
 
         let mut middlewares: Vec<MiddlewareFn> = Vec::new();
@@ -194,6 +221,20 @@ impl HttpClient {
             let proxy =
                 wreq::Proxy::all(proxy_url).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
             builder = builder.proxy(proxy);
+        } else {
+            // C: wreq's `ClientBuilder` defaults `auto_sys_proxy: true`,
+            // which installs a `ProxyMatcher::system()` that reads
+            // `HTTP_PROXY` / `http_proxy` (and the macOS dynamic store) at
+            // build time. Without `.no_proxy()`, an ambient `HTTP_PROXY` —
+            // routine in Docker images and CI runners — silently proxies the
+            // base client while `client_has_static_proxy` reads false. That
+            // breaks the iff the `WreqHandler::new` docstring asserts: every
+            // proxy counter under-reports, and the dial fallback is skipped
+            // (used_proxy is false), so a dead ambient proxy hard-fails every
+            // read instead of degrading. Calling
+            // `.no_proxy()` clears `auto_sys_proxy`, making the flag a true
+            // iff and preventing unlogged ambient-proxy attribution.
+            builder = builder.no_proxy();
         }
 
         // Browser emulation for Chrome-identical TLS/HTTP2 fingerprints.
@@ -208,8 +249,8 @@ impl HttpClient {
     }
 
     /// Build a wreq client identical to [`build_wreq_client`] but with no
-    /// proxy. Used as the direct-connection fallback when Webshare returns
-    /// HTTP 402.
+    /// proxy. Used as the direct-connection fallback when the upstream proxy
+    /// cannot be dialled (a provable proxy-dial failure).
     fn build_direct_wreq_client(config: &HttpConfig) -> Result<Client> {
         let mut builder = Client::builder()
             .timeout(config.timeout)
