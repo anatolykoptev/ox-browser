@@ -10,6 +10,10 @@ pub struct Browser {
 
 impl Browser {
     pub fn new(config: BrowserConfig) -> Result<Self> {
+        // Derive TLS/HTTP2 Emulation from the profile so JA4 matches the UA.
+        // (Issue #77: enable TLS fingerprinting)
+        let emulation = config.profile.and_then(ox_http::profile_to_emulation);
+
         let http_config = HttpConfig {
             timeout: config.timeout,
             user_agent: config.user_agent.clone(),
@@ -19,6 +23,7 @@ impl Browser {
             proxy_pool: config.proxy_pool.clone(),
             retry: config.retry.clone(),
             debug: config.debug,
+            emulation,
             ..HttpConfig::default()
         };
         let http = HttpClient::new(http_config)?;

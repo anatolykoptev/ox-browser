@@ -1,4 +1,5 @@
 use rand::seq::SliceRandom;
+use wreq_util::{Emulation, Profile};
 
 /// Browser identity with user-agent and metadata for filtering.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,63 +12,64 @@ pub struct BrowserProfile {
 }
 
 /// 16 built-in profiles matching go-stealth: Chrome/Firefox/Safari/Edge x OS.
+/// Versions aligned with wreq-util Emulation profiles (rc.12).
 pub static BUILTIN_PROFILES: &[BrowserProfile] = &[
-    // Chrome -- Windows
+    // Chrome 148 -- Windows
     bp(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
         "chrome",
         "windows",
         false,
         "en-US,en;q=0.9",
     ),
     bp(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
         "chrome",
         "windows",
         false,
         "en-US,en;q=0.9",
     ),
-    // Chrome -- macOS
+    // Chrome 148 -- macOS
     bp(
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
         "chrome",
         "macos",
         false,
         "en-US,en;q=0.9",
     ),
     bp(
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
         "chrome",
         "macos",
         false,
         "en-US,en;q=0.9",
     ),
-    // Chrome -- Linux
+    // Chrome 148 -- Linux
     bp(
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
         "chrome",
         "linux",
         false,
         "en-US,en;q=0.9",
     ),
     bp(
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
         "chrome",
         "linux",
         false,
         "en-US,en;q=0.9",
     ),
-    // Chrome -- Android
+    // Chrome 148 -- Android
     bp(
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36",
         "chrome",
         "android",
         true,
         "en-US,en;q=0.9",
     ),
-    // Safari -- macOS
+    // Safari 18.5 -- macOS
     bp(
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15",
         "safari",
         "macos",
         false,
@@ -82,7 +84,7 @@ pub static BUILTIN_PROFILES: &[BrowserProfile] = &[
     ),
     // Safari -- iOS
     bp(
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
         "safari",
         "ios",
         true,
@@ -95,31 +97,31 @@ pub static BUILTIN_PROFILES: &[BrowserProfile] = &[
         true,
         "en-US,en;q=0.9",
     ),
-    // Firefox -- Windows
+    // Firefox 148 -- Windows
     bp(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0",
         "firefox",
         "windows",
         false,
         "en-US,en;q=0.9",
     ),
-    // Firefox -- macOS
+    // Firefox 148 -- macOS
     bp(
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:138.0) Gecko/20100101 Firefox/138.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:148.0) Gecko/20100101 Firefox/148.0",
         "firefox",
         "macos",
         false,
         "en-US,en;q=0.9",
     ),
-    // Firefox -- Linux
+    // Firefox 148 -- Linux
     bp(
-        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:138.0) Gecko/20100101 Firefox/138.0",
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0",
         "firefox",
         "linux",
         false,
         "en-US,en;q=0.9",
     ),
-    // Edge -- Windows
+    // Edge 145 -- Windows
     bp(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0",
         "edge",
@@ -127,7 +129,7 @@ pub static BUILTIN_PROFILES: &[BrowserProfile] = &[
         false,
         "en-US,en;q=0.9",
     ),
-    // Edge -- macOS
+    // Edge 145 -- macOS
     bp(
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0",
         "edge",
@@ -198,6 +200,150 @@ pub fn platform_matched_profile() -> &'static BrowserProfile {
         mobile: Some(false),
         ..Default::default()
     })
+}
+
+/// Map a BrowserProfile to the corresponding wreq Emulation (TLS + HTTP/2
+/// fingerprint). This is the critical link between the User-Agent string and
+/// the actual TLS/HTTP/2 fingerprint — without it, CF sees "Chrome 148" in
+/// the UA but a non-Chrome JA4 hash, which is an instant bot signal.
+///
+/// Returns None only for unknown browser names (shouldn't happen with
+/// builtin profiles). The version is extracted from the User-Agent and
+/// mapped to the closest available wreq-util Emulation variant.
+///
+/// Issue #77: enable TLS fingerprinting.
+pub fn profile_to_emulation(profile: &BrowserProfile) -> Option<Emulation> {
+    let major = extract_major_version(profile.user_agent)?;
+    let p = match profile.browser {
+        "chrome" => chrome_profile(major),
+        "firefox" => firefox_profile(major),
+        "safari" => safari_profile(profile, major),
+        "edge" => edge_profile(major),
+        _ => return None,
+    };
+    Some(Emulation::builder().profile(p).build())
+}
+
+/// Extract the major browser version from a User-Agent string.
+fn extract_major_version(ua: &str) -> Option<u32> {
+    // Chrome/Edge: "Chrome/148.0.0.0" or "Edg/145.0.0.0"
+    if let Some(pos) = ua.find("Chrome/") {
+        return parse_version_at(&ua[pos + 7..]);
+    }
+    if let Some(pos) = ua.find("Edg/") {
+        return parse_version_at(&ua[pos + 4..]);
+    }
+    // Firefox: "rv:148.0"
+    if let Some(pos) = ua.find("rv:") {
+        return parse_version_at(&ua[pos + 3..]);
+    }
+    // Safari: "Version/18.5"
+    if let Some(pos) = ua.find("Version/") {
+        return parse_version_at(&ua[pos + 8..]);
+    }
+    None
+}
+
+fn parse_version_at(s: &str) -> Option<u32> {
+    s.split('.').next()?.parse().ok()
+}
+
+/// Map Chrome major version to the closest available wreq-util Profile.
+/// Falls back to Chrome148 (latest available) for versions beyond the range.
+fn chrome_profile(major: u32) -> Profile {
+    match major {
+        148 => Profile::Chrome148,
+        147 => Profile::Chrome147,
+        146 => Profile::Chrome146,
+        145 => Profile::Chrome145,
+        144 => Profile::Chrome144,
+        143 => Profile::Chrome143,
+        142 => Profile::Chrome142,
+        141 => Profile::Chrome141,
+        140 => Profile::Chrome140,
+        139 => Profile::Chrome139,
+        138 => Profile::Chrome138,
+        137 => Profile::Chrome137,
+        136 => Profile::Chrome136,
+        135 => Profile::Chrome135,
+        134 => Profile::Chrome134,
+        133 => Profile::Chrome133,
+        132 => Profile::Chrome132,
+        131 => Profile::Chrome131,
+        v if v > 148 => Profile::Chrome148,
+        _ => Profile::Chrome131,
+    }
+}
+
+/// Map Firefox major version to the closest available wreq-util Profile.
+fn firefox_profile(major: u32) -> Profile {
+    match major {
+        151 => Profile::Firefox151,
+        150 => Profile::Firefox150,
+        149 => Profile::Firefox149,
+        148 => Profile::Firefox148,
+        147 => Profile::Firefox147,
+        146 => Profile::Firefox146,
+        145 => Profile::Firefox145,
+        144 => Profile::Firefox144,
+        143 => Profile::Firefox143,
+        142 => Profile::Firefox142,
+        139 => Profile::Firefox139,
+        136 => Profile::Firefox136,
+        135 => Profile::Firefox135,
+        133 => Profile::Firefox133,
+        128 => Profile::Firefox128,
+        117 => Profile::Firefox117,
+        109 => Profile::Firefox109,
+        v if v > 151 => Profile::Firefox151,
+        _ => Profile::Firefox135,
+    }
+}
+
+/// Map Safari version to wreq-util Profile. Distinguishes desktop Safari
+/// from iOS Safari via the `os` field and `mobile` flag on the profile.
+fn safari_profile(profile: &BrowserProfile, major: u32) -> Profile {
+    if profile.mobile || profile.os == "ios" {
+        match major {
+            18 => Profile::SafariIos18_1_1,
+            17 => Profile::SafariIos17_2,
+            _ => Profile::SafariIos18_1_1,
+        }
+    } else {
+        match major {
+            26 => Profile::Safari26,
+            18 => Profile::Safari18_5,
+            17 => Profile::Safari17_6,
+            16 => Profile::Safari16,
+            v if v > 26 => Profile::Safari26,
+            _ => Profile::Safari16,
+        }
+    }
+}
+
+/// Map Edge major version to wreq-util Profile.
+fn edge_profile(major: u32) -> Profile {
+    match major {
+        146 => Profile::Edge146,
+        145 => Profile::Edge145,
+        144 => Profile::Edge144,
+        143 => Profile::Edge143,
+        142 => Profile::Edge142,
+        141 => Profile::Edge141,
+        140 => Profile::Edge140,
+        139 => Profile::Edge139,
+        138 => Profile::Edge138,
+        137 => Profile::Edge137,
+        136 => Profile::Edge136,
+        135 => Profile::Edge135,
+        134 => Profile::Edge134,
+        131 => Profile::Edge131,
+        127 => Profile::Edge127,
+        122 => Profile::Edge122,
+        101 => Profile::Edge101,
+        v if v > 146 => Profile::Edge146,
+        _ => Profile::Edge131,
+    }
 }
 
 #[cfg(test)]
@@ -282,5 +428,109 @@ mod tests {
             assert_eq!(p.os, "windows");
             assert!(!p.mobile);
         }
+    }
+
+    #[test]
+    fn all_builtin_profiles_map_to_emulation() {
+        for p in BUILTIN_PROFILES {
+            assert!(
+                profile_to_emulation(p).is_some(),
+                "profile {} {} has no Emulation mapping",
+                p.browser,
+                p.user_agent
+            );
+        }
+    }
+
+    #[test]
+    fn chrome_profiles_map_to_chrome_profile() {
+        for p in BUILTIN_PROFILES.iter().filter(|p| p.browser == "chrome") {
+            let major = extract_major_version(p.user_agent).expect("version");
+            let prof = chrome_profile(major);
+            let prof_str = format!("{prof:?}");
+            assert!(
+                prof_str.contains("Chrome"),
+                "chrome profile {major} mapped to non-Chrome Profile: {prof_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn firefox_profiles_map_to_firefox_profile() {
+        for p in BUILTIN_PROFILES.iter().filter(|p| p.browser == "firefox") {
+            let major = extract_major_version(p.user_agent).expect("version");
+            let prof = firefox_profile(major);
+            let prof_str = format!("{prof:?}");
+            assert!(
+                prof_str.contains("Firefox"),
+                "firefox profile {major} mapped to non-Firefox Profile: {prof_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn safari_profiles_map_to_safari_profile() {
+        for p in BUILTIN_PROFILES.iter().filter(|p| p.browser == "safari") {
+            let major = extract_major_version(p.user_agent).expect("version");
+            let prof = safari_profile(p, major);
+            let prof_str = format!("{prof:?}");
+            assert!(
+                prof_str.contains("Safari"),
+                "safari profile {major} mapped to non-Safari Profile: {prof_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn edge_profiles_map_to_edge_profile() {
+        for p in BUILTIN_PROFILES.iter().filter(|p| p.browser == "edge") {
+            let major = extract_major_version(p.user_agent).expect("version");
+            let prof = edge_profile(major);
+            let prof_str = format!("{prof:?}");
+            assert!(
+                prof_str.contains("Edge"),
+                "edge profile {major} mapped to non-Edge Profile: {prof_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn extract_major_version_chrome() {
+        assert_eq!(
+            extract_major_version(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/148.0.0.0 Safari/537.36"
+            ),
+            Some(148)
+        );
+    }
+
+    #[test]
+    fn extract_major_version_firefox() {
+        assert_eq!(
+            extract_major_version(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Firefox/148.0"
+            ),
+            Some(148)
+        );
+    }
+
+    #[test]
+    fn extract_major_version_safari() {
+        assert_eq!(
+            extract_major_version(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/18.5 Safari/605.1.15"
+            ),
+            Some(18)
+        );
+    }
+
+    #[test]
+    fn extract_major_version_edge() {
+        assert_eq!(
+            extract_major_version(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/145.0.0.0 Edg/145.0.0.0"
+            ),
+            Some(145) // Chrome/ found first, which is correct — Edge uses Chrome's TLS stack
+        );
     }
 }

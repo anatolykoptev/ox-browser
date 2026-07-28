@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
@@ -112,7 +113,7 @@ pub async fn download_to_file(
 
 /// Stream response body to file, checking size limit per chunk.
 async fn stream_to_file(
-    mut response: wreq::Response,
+    response: wreq::Response,
     path: &Path,
     max_size_bytes: u64,
 ) -> Result<u64, MediaError> {
@@ -122,11 +123,10 @@ async fn stream_to_file(
 
     let mut written: u64 = 0;
 
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| MediaError::DownloadFailed(format!("read chunk: {e}")))?
-    {
+    // wreq 6.0.0-rc.29 dropped `Response::chunk()`. Stream via `bytes_stream()`.
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| MediaError::DownloadFailed(format!("read chunk: {e}")))?;
         written += chunk.len() as u64;
         if written > max_size_bytes {
             return Err(MediaError::SizeExceeded(format!(

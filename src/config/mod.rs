@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(cfg.server.bind, "0.0.0.0");
         assert_eq!(cfg.http.timeout_secs, 20);
         assert_eq!(cfg.http.max_redirects, 10);
-        assert_eq!(cfg.http.emulation, "chrome136");
+        assert_eq!(cfg.http.emulation, "chrome148");
         assert_eq!(cfg.retry.max_retries, 3);
         assert_eq!(cfg.retry.initial_wait_ms, 500);
         assert_eq!(cfg.retry.max_wait_ms, 10_000);

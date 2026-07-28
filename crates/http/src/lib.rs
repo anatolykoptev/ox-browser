@@ -65,7 +65,8 @@ pub use middleware_retry::retry_middleware;
 pub use middleware_solver::{solver_middleware, solver_middleware_with_negcache};
 pub use middleware_ssrf::{is_private_ip, ssrf_middleware, validate_allowlist, validate_url};
 pub use profile::{
-    BUILTIN_PROFILES, BrowserProfile, ProfileFilter, platform_matched_profile, random_profile,
+    BUILTIN_PROFILES, BrowserProfile, ProfileFilter, platform_matched_profile,
+    profile_to_emulation, random_profile,
 };
 pub use profile_hints::{DEFAULT_HEADER_ORDER, browser_headers, client_hints_headers};
 pub use proxy_fallback::{

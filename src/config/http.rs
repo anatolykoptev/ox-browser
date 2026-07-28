@@ -1,7 +1,7 @@
 //! HTTP client configuration: timeouts, redirects, TLS emulation.
 
 use serde::Deserialize;
-use wreq_util::Emulation;
+use wreq_util::{Emulation, Profile};
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -16,30 +16,36 @@ impl Default for HttpSection {
         Self {
             timeout_secs: 20,
             max_redirects: 10,
-            emulation: "chrome136".into(),
+            emulation: "chrome148".into(),
         }
     }
 }
 
 impl HttpSection {
-    /// Parse the emulation string into wreq Emulation enum.
+    /// Parse the emulation string into wreq Emulation.
+    /// Returns None for "none" or empty string (TLS fingerprinting disabled).
     pub fn emulation(&self) -> Option<Emulation> {
-        match self.emulation.as_str() {
-            "chrome136" => Some(Emulation::Chrome136),
-            "chrome131" => Some(Emulation::Chrome131),
-            "chrome127" => Some(Emulation::Chrome127),
-            "chrome124" => Some(Emulation::Chrome124),
-            "chrome116" => Some(Emulation::Chrome116),
-            "chrome120" => Some(Emulation::Chrome120),
-            "safari18" => Some(Emulation::Safari18),
-            "safari17" => Some(Emulation::Safari17_0),
-            "edge127" => Some(Emulation::Edge127),
-            "none" | "" => None,
+        let profile = match self.emulation.as_str() {
+            "chrome148" => Profile::Chrome148,
+            "chrome145" => Profile::Chrome145,
+            "chrome136" => Profile::Chrome136,
+            "chrome131" => Profile::Chrome131,
+            "chrome127" => Profile::Chrome127,
+            "chrome124" => Profile::Chrome124,
+            "chrome120" => Profile::Chrome120,
+            "chrome116" => Profile::Chrome116,
+            "safari18" => Profile::Safari18,
+            "safari17" => Profile::Safari17_0,
+            "edge145" => Profile::Edge145,
+            "edge127" => Profile::Edge127,
+            "firefox135" => Profile::Firefox135,
+            "none" | "" => return None,
             other => {
-                tracing::warn!("unknown emulation '{other}', falling back to chrome136");
-                Some(Emulation::Chrome136)
+                tracing::warn!("unknown emulation '{other}', falling back to chrome148");
+                Profile::Chrome148
             }
-        }
+        };
+        Some(Emulation::builder().profile(profile).build())
     }
 }
 
@@ -52,13 +58,13 @@ mod tests {
         let s = HttpSection::default();
         assert_eq!(s.timeout_secs, 20);
         assert_eq!(s.max_redirects, 10);
-        assert_eq!(s.emulation, "chrome136");
+        assert_eq!(s.emulation, "chrome148");
     }
 
     #[test]
     fn emulation_parsing() {
         let s = HttpSection::default();
-        assert!(matches!(s.emulation(), Some(Emulation::Chrome136)));
+        assert!(s.emulation().is_some());
 
         let s2 = HttpSection {
             emulation: "none".into(),
@@ -70,6 +76,6 @@ mod tests {
             emulation: "safari18".into(),
             ..Default::default()
         };
-        assert!(matches!(s3.emulation(), Some(Emulation::Safari18)));
+        assert!(s3.emulation().is_some());
     }
 }

@@ -25,16 +25,7 @@ use dom_query::NodeRef;
 // ---------------------------------------------------------------------------
 
 const NOISE_TAGS: &[&str] = &[
-    "script",
-    "style",
-    "noscript",
-    "iframe",
-    "svg",
-    "nav",
-    "aside",
-    "footer",
-    "header",
-    "video",
+    "script", "style", "noscript", "iframe", "svg", "nav", "aside", "footer", "header", "video",
     "audio",
     "canvas",
     // NOTE: <form> is NOT here — ASP.NET wraps entire page body in <form>.
@@ -286,9 +277,7 @@ fn is_noise_class(class: &str) -> bool {
         }
         // Structural elements use compound names (FooterLinks, Header-nav, etc.)
         // These are always noise regardless of compound form.
-        if lower.starts_with("footer")
-            || lower.starts_with("header-")
-            || lower.starts_with("nav-")
+        if lower.starts_with("footer") || lower.starts_with("header-") || lower.starts_with("nav-")
         {
             return true;
         }

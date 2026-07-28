@@ -197,7 +197,7 @@ impl HttpClient {
         }
 
         // Browser emulation for Chrome-identical TLS/HTTP2 fingerprints.
-        if let Some(emulation) = config.emulation {
+        if let Some(emulation) = config.emulation.clone() {
             builder = builder.emulation(emulation);
         }
 
@@ -218,7 +218,7 @@ impl HttpClient {
             .cookie_store(true)
             .no_proxy();
 
-        if let Some(emulation) = config.emulation {
+        if let Some(emulation) = config.emulation.clone() {
             builder = builder.emulation(emulation);
         }
 

@@ -54,12 +54,8 @@ fn fixture_dir() -> std::path::PathBuf {
 fn fixtures_meet_word_count_thresholds() {
     for fixture in FIXTURES {
         let path = fixture_dir().join(fixture.filename);
-        let html = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!(
-                "failed to read fixture {}: {e}",
-                path.display()
-            )
-        });
+        let html = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", path.display()));
 
         let result = extract_content(&html, fixture.url, ContentFormat::Markdown);
         let words = result.content.split_whitespace().count();
@@ -78,12 +74,8 @@ fn fixtures_meet_word_count_thresholds() {
 fn fixtures_extract_non_empty_title() {
     for fixture in FIXTURES {
         let path = fixture_dir().join(fixture.filename);
-        let html = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!(
-                "failed to read fixture {}: {e}",
-                path.display()
-            )
-        });
+        let html = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", path.display()));
 
         let result = extract_content(&html, fixture.url, ContentFormat::Markdown);
         assert!(

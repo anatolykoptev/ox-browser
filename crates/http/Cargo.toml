@@ -10,10 +10,14 @@ default = ["quickjs"]
 # (window.__PRELOADED_STATE__, Next.js self.__next_f). Links a C library —
 # disabled on wasm32 targets.
 quickjs = ["rquickjs"]
+# Fingerprint oracle test — verifies TLS/HTTP2 fingerprint matches the
+# claimed browser. Requires network access. Run explicitly:
+#   cargo test -p ox-http --features fingerprint --test fingerprint_oracle_test
+fingerprint = []
 
 [dependencies]
-wreq = { version = "6.0.0-rc.28", default-features = false, features = ["cookies", "gzip", "brotli"] }
-wreq-util = "3.0.0-rc.10"
+wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli"] }
+wreq-util = "3.0.0-rc.12"
 cookie_store = "0.21"
 url = "2"
 async-trait = "0.1"

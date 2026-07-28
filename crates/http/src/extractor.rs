@@ -947,12 +947,18 @@ mod tests {
         // pr-review-council.
         let md = "![Заголовок](a.png) Ещё текст Заголовок here";
         let pos = find_content_position(md, "Заголовок");
-        assert!(pos.is_some(), "should find the content occurrence, not the image alt");
+        assert!(
+            pos.is_some(),
+            "should find the content occurrence, not the image alt"
+        );
         let pos = pos.unwrap();
         assert!(md.is_char_boundary(pos));
         // The found position must be the second occurrence (after the image),
         // not the one inside ![...].
-        assert!(pos > md.find(']').unwrap(), "should skip the image alt occurrence");
+        assert!(
+            pos > md.find(']').unwrap(),
+            "should skip the image alt occurrence"
+        );
     }
 
     #[test]
