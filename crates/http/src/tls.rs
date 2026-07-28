@@ -465,7 +465,8 @@ impl FingerprintVerdict {
 /// reference value is not "matching", it's absent. The observed side is
 /// checked in [`classify_with`]: a bucket-B diff with an empty observed
 /// value is a hard failure (the metric could not be measured), not a
-/// tolerated gap — so a service outage cannot silently disable self-expiry.
+/// tolerated gap — so a partial 200 missing one key cannot silently disable
+/// self-expiry.
 ///
 /// - A diff in bucket A → tolerated.
 /// - A diff in bucket B → tolerated (gap still open).
@@ -504,12 +505,27 @@ pub fn classify_with(
             v.tolerated_a.push(d.0.clone());
         } else if bucket_b.contains(&d.0.as_str()) {
             // Fix C: a bucket-B diff with an empty observed value means the
-            // metric could not be measured (e.g. browserleaks outage). "We
-            // could not measure it" is a hard failure, not "the known gap is
-            // still open" — otherwise a service outage silently disables
-            // self-expiry while the oracle reports green. The self-expiry
-            // can never fire on an empty observed value because it never
-            // matches the reference; the diff must not be tolerated either.
+            // metric could not be measured — a partial 200 from an echo
+            // service that is missing one key (e.g. browserleaks returns
+            // 200 but `ja3n_hash` is absent from the JSON, so
+            // `extract_browserleaks` sets it to ""). "We could not measure
+            // it" is a hard failure, not "the known gap is still open" —
+            // otherwise a missing key silently disables self-expiry while
+            // the oracle reports green. The self-expiry can never fire on
+            // an empty observed value because it never matches the
+            // reference; the diff must not be tolerated either.
+            //
+            // Reachability: `ja4` has a non-empty assert in
+            // `capture_with_client` that panics before `compare()` is
+            // reached, so this guard is never hit for `ja4` on the live
+            // path. The genuinely reachable inputs are `ja3n_hash` and
+            // `peetprint_hash` — neither has an emptiness assert in
+            // `capture_with_client`, so a partial 200 missing one of them
+            // flows through to this guard. Adding symmetric asserts there
+            // would make this guard unreachable on the live path for ALL
+            // bucket-B fields, reducing it to a test-only safety net; the
+            // current design keeps it as the only live defence for those
+            // fields.
             if d.2.is_empty() {
                 v.hard_failures.push(d.clone());
             } else {

@@ -436,9 +436,35 @@ pub fn reference_value_for<'a>(field: &str, reference: &'a Reference) -> &'a str
     }
 }
 
-/// F2b: every bucket-B field must have a non-empty reference value, so its
-/// self-expiry stays armed. A reference capture that drops a bucket-B field
-/// silently disables that field's expiry while the run stays green.
+/// Reference provenance source for a bucket-B field. Exhaustive over
+/// [`FP_BUCKET_B`] with the same panic-on-desync contract as
+/// [`reference_value_for`]: adding a field to `FP_BUCKET_B` without an arm
+/// here fails loudly. The mapping is bucket-B field name → `Sources` field
+/// (e.g. `ja3n_hash` → `sources.ja3n`), mirroring the `check_source` calls
+/// in `compare`.
+pub fn reference_source_for<'a>(field: &str, reference: &'a Reference) -> &'a str {
+    match field {
+        "ja3n_hash" => &reference.sources.ja3n,
+        "ja4" => &reference.sources.ja4,
+        "peetprint_hash" => &reference.sources.peetprint,
+        _ => panic!(
+            "reference_source_for: unknown bucket-B field {:?} — FP_BUCKET_B in \
+             crates/http/src/tls.rs lists a field with no matching arm in \
+             crates/http/tests/common/mod.rs. Add the arm; this \
+             panic is the desync guard required by F2.",
+            field
+        ),
+    }
+}
+
+/// F2b: every bucket-B field must have a non-empty reference value AND a
+/// non-empty provenance source, so its self-expiry stays armed and its
+/// cross-service consistency is falsifiable. A reference capture that drops
+/// a bucket-B field's value silently disables that field's expiry; a
+/// capture that drops its source silently downgrades `check_source` to a
+/// raw value comparison of unknown provenance (the same asymmetry Fix C
+/// closed on the value side, here closed on the provenance side). Both
+/// stay green without these asserts.
 #[allow(dead_code)] // only called from the offline test target
 pub fn assert_bucket_b_provenance(r: &Reference, name: &str) {
     for field in FP_BUCKET_B {
@@ -447,6 +473,15 @@ pub fn assert_bucket_b_provenance(r: &Reference, name: &str) {
             !val.is_empty(),
             "{}: bucket-B field {} has an empty reference value — its self-expiry is \
              silently disabled. Re-capture the reference with the field populated.",
+            name,
+            field
+        );
+        let src = reference_source_for(field, r);
+        assert!(
+            !src.is_empty(),
+            "{}: bucket-B field {} has an empty provenance source — check_source \
+             silently downgrades to a raw value comparison of unknown provenance. \
+             Re-capture the reference with the source recorded.",
             name,
             field
         );

@@ -201,6 +201,20 @@ fn f2b_empty_bucket_b_field_fails_provenance() {
     assert_bucket_b_provenance(&r, "reference_chrome_148.json");
 }
 
+// F2b (provenance side): a reference with an empty source for a bucket-B
+// field must FAIL provenance, so a future capture that drops the source
+// cannot silently downgrade check_source to a raw value comparison of
+// unknown provenance. Mutation: remove the source assert from
+// assert_bucket_b_provenance and this test fails (no panic → should_panic
+// test fails).
+#[test]
+#[should_panic(expected = "bucket-B field peetprint_hash has an empty provenance source")]
+fn f2b_empty_bucket_b_source_fails_provenance() {
+    let mut r = load_reference("148");
+    r.sources.peetprint.clear();
+    assert_bucket_b_provenance(&r, "reference_chrome_148.json");
+}
+
 // F2b (positive): every committed reference passes the bucket-B provenance
 // guard — all bucket-B fields are populated.
 #[test]
@@ -398,35 +412,73 @@ fn classify_for_reference_chrome148_bucket_b_diff_is_tolerated() {
 
 // ── Fix C: empty observed bucket-B diff is a hard failure ──────────────
 //
-// A browserleaks outage yields an empty observed ja4. The diff (non-empty
-// expected vs empty observed) must NOT be tolerated as bucket B — "we could
-// not measure it" is a hard failure, not "the known gap is still open".
-// Revert the empty-observed check in classify_with and this test fails
-// (ja4 goes to tolerated_b, verdict.is_ok() becomes true).
+// A partial 200 from an echo service (missing one key) yields an empty
+// observed value for a bucket-B field. The diff (non-empty expected vs
+// empty observed) must NOT be tolerated as bucket B — "we could not
+// measure it" is a hard failure, not "the known gap is still open".
+//
+// `ja4` has a non-empty assert in `capture_with_client` that panics before
+// `compare()` is reached, so the guard is never hit for `ja4` on the live
+// path. The genuinely reachable inputs are `ja3n_hash` and
+// `peetprint_hash` — neither has an emptiness assert in
+// `capture_with_client`, so a partial 200 missing one of them flows
+// through to the guard. Both are exercised here.
+//
+// Revert the empty-observed check in classify_with and these tests fail
+// (the field goes to tolerated_b, verdict.is_ok() becomes true).
 #[test]
-fn empty_observed_bucket_b_field_is_hard_failure() {
+fn empty_observed_ja3n_hash_is_hard_failure() {
     let v = classify_with(
         FP_BUCKET_A,
         FP_BUCKET_B,
-        &[("ja4".to_string(), "t13d1517h2".to_string(), String::new())],
-        &["ja4"],
+        &[("ja3n_hash".to_string(), "abc123".to_string(), String::new())],
+        &["ja3n_hash"],
     );
-    assert!(!v.is_ok(), "empty observed ja4 must not be tolerated");
+    assert!(!v.is_ok(), "empty observed ja3n_hash must not be tolerated");
     assert!(
-        v.hard_failures.iter().any(|d| d.0 == "ja4"),
-        "ja4 with empty observed must be a hard failure"
+        v.hard_failures.iter().any(|d| d.0 == "ja3n_hash"),
+        "ja3n_hash with empty observed must be a hard failure"
     );
     assert!(
-        !v.tolerated_b.contains(&"ja4".to_string()),
-        "ja4 with empty observed must NOT be in tolerated_b"
+        !v.tolerated_b.contains(&"ja3n_hash".to_string()),
+        "ja3n_hash with empty observed must NOT be in tolerated_b"
     );
 }
 
-// Fix C integration: a browserleaks outage (empty observed ja4, matching
-// sources) through the full compare → classify_for_reference path must
-// produce a hard failure, not a tolerated gap.
 #[test]
-fn browserleaks_outage_empty_ja4_is_hard_failure_full_path() {
+fn empty_observed_peetprint_hash_is_hard_failure() {
+    let v = classify_with(
+        FP_BUCKET_A,
+        FP_BUCKET_B,
+        &[(
+            "peetprint_hash".to_string(),
+            "def456".to_string(),
+            String::new(),
+        )],
+        &["peetprint_hash"],
+    );
+    assert!(
+        !v.is_ok(),
+        "empty observed peetprint_hash must not be tolerated"
+    );
+    assert!(
+        v.hard_failures.iter().any(|d| d.0 == "peetprint_hash"),
+        "peetprint_hash with empty observed must be a hard failure"
+    );
+    assert!(
+        !v.tolerated_b.contains(&"peetprint_hash".to_string()),
+        "peetprint_hash with empty observed must NOT be in tolerated_b"
+    );
+}
+
+// Fix C integration: an empty observed ja4 (matching sources) through the
+// compare → classify_for_reference path must produce a hard failure, not a
+// tolerated gap. This test does NOT traverse `capture_with_client` (which
+// has its own non-empty ja4 assert that would panic first); it calls
+// `compare()` directly to exercise the classify_with guard via the
+// production comparison code path.
+#[test]
+fn browserleaks_outage_empty_ja4_is_hard_failure() {
     let reference = load_reference("148");
     let mut observed = Observed::default();
     observed.sources.ja4 = reference.sources.ja4.clone();
@@ -451,11 +503,11 @@ fn browserleaks_outage_empty_ja4_is_hard_failure_full_path() {
     );
     assert!(
         verdict.hard_failures.iter().any(|d| d.0 == "ja4"),
-        "ja4 with empty observed must be a hard failure through the full path"
+        "ja4 with empty observed must be a hard failure through compare → classify"
     );
     assert!(
         !verdict.tolerated_b.contains(&"ja4".to_string()),
-        "ja4 with empty observed must NOT be tolerated_b through the full path"
+        "ja4 with empty observed must NOT be tolerated_b through compare → classify"
     );
 }
 
