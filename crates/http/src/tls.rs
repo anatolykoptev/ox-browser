@@ -17,8 +17,11 @@
 //!     field, which wreq-util populates with a generic set).
 //!
 //! Building from scratch gives us:
-//!   - 16 of Chrome's 17 extensions (ALPS codepoint 17613; the 17th,
-//!     `trust_anchors` / 0xca34, has no wreq knob — tracked in issue #81)
+//!   - All 17 of Chrome's extensions, including `trust_anchors` (0xca34 =
+//!     51764, draft-ietf-tls-trust-anchor-ids), sent via the patched wreq
+//!     fork's `TlsOptions::requested_trust_anchors` (see workspace
+//!     Cargo.toml `[patch.crates.io]`; tracked in issue #81). ALPS uses the
+//!     new codepoint 17613 (the only ALPS codepoint real Chrome 148 sends).
 //!   - A fixed extension order (matching bogdanfinn's stable JA3, which
 //!     indeed.com's WAF allowlists)
 //!   - HTTP/2 SETTINGS in Chrome's exact order
@@ -53,14 +56,22 @@ static CHROME_CERT_COMPRESSORS: &[&'static dyn CertificateCompressor] = &[&Brotl
 /// handshake, but a fixed order matching bogdanfinn's stable JA3 is
 /// allowlisted by WAFs like indeed.com. GREASE slots are inserted by wreq.
 ///
-/// NOTE: Real Chrome 148 sends 17 extensions. The 17th is `trust_anchors`
-/// (0xca34 = 51764, draft-ietf-tls-trust-anchor-ids) — wreq exposes no way
-/// to send it, so we emit 16. This produces JA4 `t13d1516h2` instead of
-/// `t13d1517h2`. The 1-extension gap is a wreq limitation, not a
-/// configuration error; tracked in issue #81. (51764 is `trust_anchors`,
+/// Emits all 17 of real Chrome 148's extensions, including `trust_anchors`
+/// (0xca34 = 51764, draft-ietf-tls-trust-anchor-ids). The extension is sent
+/// via `TlsOptions::requested_trust_anchors` (see `chrome_tls`); listing it
+/// here fixes its wire position. btls exposes no named constant for 51764,
+/// so it is constructed via `ExtensionType::from`. (51764 is `trust_anchors`,
 /// NOT `application_settings_old` which is 17513 — `alps_use_new_codepoint`
-/// below is already correct and selects 17613, the only ALPS codepoint real
-/// Chrome 148 sends.)
+/// in `chrome_tls` is already correct and selects 17613, the only ALPS
+/// codepoint real Chrome 148 sends.)
+///
+/// Position of 51764: the reference's wire order places it between
+/// `ec_point_formats` (11) and `supported_versions` (43). Our list is a
+/// deliberately fixed order that already differs from Chrome's per-handshake
+/// permutation, so the exact slot only affects `ja3_hash`/`ja4_o` (bucket A,
+/// permanently non-comparable). We insert 51764 immediately after
+/// `EC_POINT_FORMATS` to preserve the reference's relative ordering
+/// (51764 after 11, before 43).
 fn chrome_extensions() -> Vec<ExtensionType> {
     vec![
         ExtensionType::CERTIFICATE_TIMESTAMP,                  // 18
@@ -70,6 +81,7 @@ fn chrome_extensions() -> Vec<ExtensionType> {
         ExtensionType::SUPPORTED_GROUPS,                       // 10
         ExtensionType::PSK_KEY_EXCHANGE_MODES,                 // 45
         ExtensionType::EC_POINT_FORMATS,                       // 11
+        ExtensionType::from(51764),                            // trust_anchors (0xca34)
         ExtensionType::CERT_COMPRESSION,                       // 27
         ExtensionType::APPLICATION_SETTINGS,                   // 17613 (new ALPS)
         ExtensionType::SUPPORTED_VERSIONS,                     // 43
@@ -105,6 +117,16 @@ fn chrome_tls() -> TlsOptions {
         .alps_use_new_codepoint(true)
         .aes_hw_override(true)
         .certificate_compressors(CHROME_CERT_COMPRESSORS)
+        // trust_anchors (0xca34 = 51764, draft-ietf-tls-trust-anchor-ids) —
+        // the 17th ClientHello extension real Chrome 148 sends. We request an
+        // EMPTY trust-anchor list: per BoringSSL's `SSL_set1_requested_trust_anchors`
+        // an empty list still sends the extension (signals support for the
+        // retry flow without requesting any specific anchor). We are imitating
+        // the ClientHello shape, not participating in the retry flow, so we do
+        // not invent trust anchor IDs. Closes the JA4 t13d1516h2 -> t13d1517h2
+        // gap (issue #81). Requires the patched wreq fork (see workspace
+        // Cargo.toml [patch.crates.io]).
+        .requested_trust_anchors(Vec::<u8>::new())
         .build()
 }
 
@@ -232,9 +254,10 @@ pub fn edge_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
 }
 
 /// Build a wreq Emulation for Chrome from scratch (not using wreq-util
-/// presets). This gives us full control over TLS extensions (ALPS codepoint
-/// 17613; `trust_anchors` / 0xca34 is not emittable via wreq — issue #81),
-/// HTTP/2 SETTINGS, and header wire order.
+/// presets). This gives us full control over TLS extensions — all 17 of
+/// Chrome's, including `trust_anchors` (0xca34 = 51764) via the patched wreq
+/// fork's `requested_trust_anchors` (issue #81), and ALPS codepoint 17613 —
+/// plus HTTP/2 SETTINGS, and header wire order.
 ///
 /// The Emulation's headers field is set to the Chrome wire-order set, but
 /// ox-browser's middleware chain also sets headers via `browser_headers()`.
@@ -417,23 +440,19 @@ pub const FP_BUCKET_A: &[&str] = &["ja3_hash", "ja4_o"];
 
 /// Bucket B — known gap, tracked and temporary.
 ///
-/// `ja3n_hash`, `ja4`, and `peetprint_hash` all fail for one cause: the
-/// missing `trust_anchors` extension (0xca34 = 51764) leaves us at 16
-/// extensions instead of 17 (`t13d1516h2` vs `t13d1517h2`). Tracked in
-/// issue #81. When that gap closes, every field in this bucket must be
-/// removed — the oracle enforces this by FAILING if a bucket-B field now
-/// matches the reference (see [`classify_fingerprint_diffs`]).
+/// The `trust_anchors` gap (issue #81) is CLOSED: since `chrome_tls` now
+/// sends the `trust_anchors` extension (0xca34 = 51764) via the patched wreq
+/// fork's `requested_trust_anchors`, the ClientHello carries all 17 of
+/// Chrome 148's extensions and `ja3n_hash`, `ja4`, and `peetprint_hash` all
+/// match the reference. The oracle confirmed this live — it FAILED with
+/// `GAP-CLOSED` on all three, which is the self-expiring signal that they
+/// had to leave the bucket. The bucket is now empty.
 ///
-/// Version scoping: the gap only holds for Chrome versions that actually
-/// SEND `trust_anchors` (51764). References captured from Chrome versions
-/// that do NOT send it (e.g. Chrome 131, 133 — 16 extensions, no 51764)
-/// have a correct 16-extension ClientHello by construction; for those, a
-/// match is CORRECT and must NOT be reported as a closed gap. The oracle
-/// derives comparability from the reference itself: a bucket-B field is
-/// only comparable if the reference's JA3 extension list contains 51764
-/// (see `reference_exhibits_gap` in the oracle). If the JA3 string is
-/// absent or unparseable, the field is treated as NOT comparable.
-pub const FP_BUCKET_B: &[&str] = &["ja3n_hash", "ja4", "peetprint_hash"];
+/// The constant and the self-expiring machinery are kept on purpose: an
+/// empty bucket is meaningful (it asserts "no known gap"), and the next
+/// gap will need the mechanism. Do NOT delete [`FP_BUCKET_B`] or
+/// [`classify_fingerprint_diffs`]'s gap-closed path.
+pub const FP_BUCKET_B: &[&str] = &[];
 
 /// Verdict returned by [`classify_fingerprint_diffs`].
 #[derive(Debug, Default)]
@@ -624,6 +643,28 @@ mod tests {
         assert!(v.hard_failures.is_empty());
     }
 
+    // Case 2b: the trust_anchors gap (issue #81) is CLOSED in production —
+    // `chrome_tls` now sends extension 51764, so `ja4` matches the reference
+    // and has been removed from FP_BUCKET_B (now empty). A `ja4` diff via the
+    // real production wrapper is therefore no longer tolerated; it is a hard
+    // failure. The oracle confirmed the close live (GAP-CLOSED on ja3n_hash,
+    // ja4, peetprint_hash). `bucket_b_diff_is_tolerated` above deliberately
+    // stays on literal buckets (F7) so that mechanism keeps being exercised
+    // even though the production bucket is now empty — this test covers the
+    // production wiring itself, which the literal-bucket test cannot.
+    #[test]
+    fn closed_gap_field_diff_is_now_hard_fail() {
+        let v = classify_fingerprint_diffs(&[d("ja4", "t13d1517h2", "t13d1516h2")], &["ja4"]);
+        assert!(
+            !v.is_ok(),
+            "ja4 is no longer in bucket B — a diff must fail"
+        );
+        assert!(v.tolerated_b.is_empty());
+        assert!(v.gap_closed.is_empty());
+        assert_eq!(v.hard_failures.len(), 1);
+        assert_eq!(v.hard_failures[0].0, "ja4");
+    }
+
     // Case 3 (falsification): a comparable bucket-B field that MATCHED (no
     // diff) means the trust_anchors gap has closed → must FAIL. This is the
     // case that was silently green under the old single-bucket partition and
@@ -633,6 +674,20 @@ mod tests {
         let v = classify_with(TEST_A, TEST_B, &[], &["ja4"]);
         assert!(!v.is_ok(), "a closed gap must not be tolerated");
         assert_eq!(v.gap_closed, vec!["ja4"]);
+        assert!(v.hard_failures.is_empty());
+    }
+
+    // Case 3b: with production FP_BUCKET_B empty (gap closed), a matching
+    // `ja4` does NOT trip gap_closed via the real wrapper — the field is no
+    // longer tracked, so the self-expiring machinery correctly stays dormant.
+    // The gap-closed path itself is retained in `classify_fingerprint_diffs`
+    // for the next gap; it was proven to fire by the live oracle run
+    // (GAP-CLOSED on all three fields before the bucket was emptied).
+    #[test]
+    fn empty_bucket_match_does_not_trip_gap_closed() {
+        let v = classify_fingerprint_diffs(&[], &["ja4"]);
+        assert!(v.is_ok(), "empty bucket → no gap-closed signal");
+        assert!(v.gap_closed.is_empty());
         assert!(v.hard_failures.is_empty());
     }
 
