@@ -98,3 +98,83 @@ fn test_extract_og_image_single_quotes() {
     let html = r#"<html><head><meta property='og:image' content='https://example.com/img.png'></head></html>"#;
     assert_eq!(extract_og_image(html), "https://example.com/img.png");
 }
+
+#[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
+#[test]
+fn recovers_spa_content_from_data_island() {
+    // A sparse SPA page where the visible DOM has almost no content,
+    // but a <script type="application/json"> data island contains the
+    // real page content. extract_content should recover it.
+    let html = r##"<html><head><title>Test SPA</title></head>
+    <body>
+        <div id="root">Loading...</div>
+        <script type="application/json" data-target="app-data">
+        {"page":{"heading":"Understanding Rust Ownership","body":"Rust ownership is a set of rules that governs how a Rust program manages memory. All programs have to manage the way they use a computer's memory while running. Some languages have garbage collection that constantly looks for no-longer-used memory as the program runs."}}
+        </script>
+    </body></html>"##;
+
+    let result = extract_content(html, "https://example.com", ContentFormat::Markdown);
+    assert!(
+        result.content.contains("Understanding Rust Ownership"),
+        "should recover heading from data island. Got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Rust ownership is a set of rules"),
+        "should recover body text from data island"
+    );
+}
+
+#[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
+#[test]
+fn recovers_spa_content_from_js_eval() {
+    // A sparse SPA page where content is assigned to window.__PRELOADED_STATE__
+    // via an inline <script> tag. QuickJS should execute it and recover the text.
+    let html = r#"<html><head><title>JS SPA</title></head>
+    <body>
+        <div id="root">Loading...</div>
+        <script>
+        window.__PRELOADED_STATE__ = {
+            "article": {
+                "title": "Understanding Rust Ownership and Borrowing",
+                "body": "Rust ownership is a set of rules that governs how a Rust program manages memory. All programs have to manage the way they use a computer's memory while running. Some languages have garbage collection that constantly looks for no-longer-used memory as the program runs."
+            }
+        };
+        </script>
+    </body></html>"#;
+
+    let result = extract_content(html, "https://example.com", ContentFormat::Markdown);
+    assert!(
+        result.content.contains("Understanding Rust Ownership and Borrowing"),
+        "should recover title from JS eval. Got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Rust ownership is a set of rules"),
+        "should recover body text from JS eval"
+    );
+}
+
+#[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
+#[test]
+fn does_not_recover_when_dom_has_enough_content() {
+    // A page with plenty of DOM content should NOT trigger SPA recovery,
+    // even if data islands are present.
+    let mut body = String::from("<html><head><title>Full Page</title></head><body><article>");
+    for i in 0..100 {
+        body.push_str(&format!(
+            "<p>This is paragraph number {i} with enough text to exceed the sparse threshold for SPA content recovery.</p>"
+        ));
+    }
+    body.push_str(
+        r##"</article>
+        <script type="application/json">{"heading":"Should Not Appear","description":"This content should not be extracted because the DOM already has enough content."}</script>
+        </body></html>"##,
+    );
+
+    let result = extract_content(&body, "https://example.com", ContentFormat::Markdown);
+    assert!(
+        !result.content.contains("Should Not Appear"),
+        "should NOT recover data island when DOM has enough content"
+    );
+}
