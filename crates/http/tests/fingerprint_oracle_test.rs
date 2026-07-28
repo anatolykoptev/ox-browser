@@ -45,7 +45,10 @@
 
 use std::time::Duration;
 
-use ox_http::{BUILTIN_PROFILES, BrowserProfile, HttpClient, HttpConfig, profile_to_emulation};
+use ox_http::{
+    BUILTIN_PROFILES, BrowserProfile, HttpClient, HttpConfig, profile_to_emulation,
+    tls::{FP_BUCKET_B, classify_fingerprint_diffs},
+};
 use serde::{Deserialize, Serialize};
 
 // ── Echo service endpoints ─────────────────────────────────────────────
@@ -685,54 +688,101 @@ async fn test_fingerprint_oracle() {
             eprintln!("  SKIP {}", s);
         }
 
-        // Separate fixable diffs from BoringSSL limitations.
-        // BoringSSL can't send both ALPS codepoints (17613 + 51764) —
-        // `alps_use_new_codepoint` is a boolean, not a list. Real Chrome 148
-        // sends both, producing 17 extensions (JA4 t13d1517h2). We can only
-        // send 16 (JA4 t13d1516h2). This affects ja3n, ja4, ja4_o, peetprint.
-        // JA3 hash also differs because Chrome permutes extensions per
-        // connection while we use a fixed order (bogdanfinn approach).
-        let boringssl_limitations: &[&str] = &[
-            "ja3_hash",       // extension permutation (Chrome permutes, we don't)
-            "ja3n_hash",      // missing APPLICATION_SETTINGS_OLD (51764)
-            "ja4",            // 16 vs 17 extensions (BoringSSL ALPS limitation)
-            "ja4_o",          // same
-            "peetprint_hash", // same
-        ];
-        let (known, real): (Vec<_>, Vec<_>) = diffs
+        // Classify diffs against the two suppression buckets (see
+        // `classify_fingerprint_diffs` in tls.rs). Bucket A = structurally
+        // non-comparable (permanent policy: ja3_hash, ja4_o are
+        // order-sensitive, Chrome permutes extensions per handshake). Bucket
+        // B = the trust_anchors gap (issue #81, temporary — self-expiring:
+        // if a bucket-B field now matches, the test FAILS so the suppression
+        // list does not go stale).
+        let diff_tuples: Vec<(String, String, String)> = diffs
             .iter()
-            .cloned()
-            .partition(|d| boringssl_limitations.contains(&d.field.as_str()));
+            .map(|d| (d.field.clone(), d.expected.clone(), d.observed.clone()))
+            .collect();
+        // comparable_b = bucket-B fields actually measured on both sides
+        // (reference non-empty). Only these can meaningfully "match" — a
+        // field with no reference value is absent, not matching.
+        let comparable_b: Vec<&str> = FP_BUCKET_B
+            .iter()
+            .copied()
+            .filter(|f| match *f {
+                "ja3n_hash" => !reference.tls.ja3n_hash.is_empty(),
+                "ja4" => !reference.tls.ja4.is_empty(),
+                "peetprint_hash" => !reference.tls.peetprint_hash.is_empty(),
+                _ => false,
+            })
+            .collect();
+        let verdict = classify_fingerprint_diffs(&diff_tuples, &comparable_b);
 
-        if !known.is_empty() {
-            for d in &known {
-                eprintln!(
-                    "  KNOWN-BORINGSSL {}\n    expected: {}\n    observed: {}",
-                    d.field, d.expected, d.observed
-                );
-            }
+        for f in &verdict.tolerated_a {
+            eprintln!(
+                "  KNOWN-POLICY {} (bucket A: order-sensitive, permanent)",
+                f
+            );
+        }
+        for f in &verdict.tolerated_b {
+            eprintln!("  KNOWN-GAP {} (bucket B: trust_anchors gap, issue #81)", f);
         }
 
-        if real.is_empty() && known.is_empty() {
+        if verdict.is_ok() && diffs.is_empty() {
             eprintln!("  ✓ all fields match for Chrome {}", major);
-        } else if real.is_empty() {
+        } else if verdict.is_ok() {
             eprintln!(
-                "  ✓ all fixable fields match for Chrome {} ({} BoringSSL limitation(s) remain)",
+                "  ✓ all fixable fields match for Chrome {} ({} bucket-A policy {}, {} bucket-B gap {} remain)",
                 major,
-                known.len()
+                verdict.tolerated_a.len(),
+                if verdict.tolerated_a.len() == 1 {
+                    "field"
+                } else {
+                    "fields"
+                },
+                verdict.tolerated_b.len(),
+                if verdict.tolerated_b.len() == 1 {
+                    "field"
+                } else {
+                    "fields"
+                },
             );
-        } else {
-            for d in &real {
+        } else if !verdict.gap_closed.is_empty() {
+            for f in &verdict.gap_closed {
                 eprintln!(
-                    "  FIELD {}\n    expected (real Chrome {}): {}\n    observed (ox-browser): {}",
-                    d.field, reference.browser_version, d.expected, d.observed
+                    "  GAP-CLOSED {} — bucket-B field now matches the reference; \
+                     remove it from FP_BUCKET_B in tls.rs",
+                    f
                 );
             }
             panic!(
-                "fingerprint mismatch for Chrome {}: {} fixable field(s) differ ({} BoringSSL limitation(s) ignored)",
+                "fingerprint gap CLOSED for Chrome {}: {} bucket-B field(s) now match ({}). \
+                 The trust_anchors gap (issue #81) appears resolved — remove them from \
+                 FP_BUCKET_B so the suppression list does not go stale.",
                 major,
-                real.len(),
-                known.len()
+                verdict.gap_closed.len(),
+                verdict.gap_closed.join(", "),
+            );
+        } else {
+            for d in &verdict.hard_failures {
+                eprintln!(
+                    "  FIELD {}\n    expected (real Chrome {}): {}\n    observed (ox-browser): {}",
+                    d.0, reference.browser_version, d.1, d.2
+                );
+            }
+            panic!(
+                "fingerprint mismatch for Chrome {}: {} fixable field(s) differ \
+                 ({} bucket-A policy {}, {} bucket-B gap {} tolerated)",
+                major,
+                verdict.hard_failures.len(),
+                verdict.tolerated_a.len(),
+                if verdict.tolerated_a.len() == 1 {
+                    "field"
+                } else {
+                    "fields"
+                },
+                verdict.tolerated_b.len(),
+                if verdict.tolerated_b.len() == 1 {
+                    "field"
+                } else {
+                    "fields"
+                },
             );
         }
     }
