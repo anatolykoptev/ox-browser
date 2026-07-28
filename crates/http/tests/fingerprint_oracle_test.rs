@@ -60,7 +60,7 @@ use std::time::Duration;
 #[cfg(feature = "fingerprint")]
 use common::*;
 #[cfg(feature = "fingerprint")]
-use ox_http::{BUILTIN_PROFILES, BrowserProfile, HttpClient, HttpConfig, profile_to_emulation};
+use ox_http::{BUILTIN_PROFILES, BrowserProfile, HttpClient, HttpConfig};
 
 // ── Echo service endpoints ─────────────────────────────────────────────
 
@@ -212,17 +212,15 @@ fn chrome_linux_profiles() -> Vec<&'static BrowserProfile> {
     result
 }
 
-/// Build an HttpClient with the given profile's Emulation enabled.
+/// Build an HttpClient through the SAME public entry point the service uses
+/// (HttpConfig { profile: Some(..), .. }). HttpClient::new derives the
+/// TLS/HTTP2 Emulation from the profile internally — so the thing under test
+/// and the thing shipped cannot diverge. (Issue #81: oracle measures shipped
+/// construction.)
 #[cfg(feature = "fingerprint")]
-fn build_client(profile: &BrowserProfile) -> HttpClient {
-    let emulation = profile_to_emulation(profile).unwrap_or_else(|| {
-        panic!(
-            "no Emulation mapping for browser={} — profile_to_emulation must cover all builtin profiles",
-            profile.browser
-        )
-    });
+fn build_client(profile: &'static BrowserProfile) -> HttpClient {
     let config = HttpConfig {
-        emulation: Some(emulation),
+        profile: Some(profile),
         timeout: Duration::from_secs(30),
         ..HttpConfig::default()
     };
@@ -251,7 +249,7 @@ async fn fetch_json(client: &HttpClient, endpoint: &str, label: &str) -> serde_j
 /// Capture the observed fingerprint from both echo endpoints using a client
 /// built with the given profile.
 #[cfg(feature = "fingerprint")]
-async fn capture_with_client(profile: &BrowserProfile) -> Observed {
+async fn capture_with_client(profile: &'static BrowserProfile) -> Observed {
     let client = build_client(profile);
 
     // peet: JA3, peetprint, HTTP/2 akamai, header order, sec-ch-ua.
@@ -298,7 +296,7 @@ async fn test_fingerprint_oracle() {
     let profiles = chrome_linux_profiles();
     assert!(!profiles.is_empty(), "no Chrome/linux profiles found");
 
-    for profile in &profiles {
+    for &profile in &profiles {
         let major = extract_major_version(profile.user_agent);
         eprintln!("\n=== Chrome {} ({}) ===", major, profile.user_agent);
 

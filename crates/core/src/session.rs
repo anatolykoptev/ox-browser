@@ -38,14 +38,11 @@ impl Session {
     pub fn new(config: SessionConfig) -> Result<Self> {
         let profile = config.profile.unwrap_or_else(platform_matched_profile);
 
-        // Derive the TLS/HTTP2 Emulation from the profile so the JA4
-        // fingerprint matches the User-Agent. Without this, CF sees
-        // "Chrome 148" in the UA but a non-Chrome JA4 hash. (Issue #77)
-        let emulation = ox_http::profile_to_emulation(profile);
-
+        // The profile is the single identity source of truth. HttpClient::new
+        // derives the TLS/HTTP2 Emulation from it — no call site sets
+        // emulation independently. (Issue #81: one identity)
         let http_config = HttpConfig {
             profile: Some(profile),
-            emulation: emulation.or(config.http_config.emulation),
             ..config.http_config
         };
         let http = HttpClient::new(http_config)?;

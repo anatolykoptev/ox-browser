@@ -410,7 +410,68 @@ pub fn compare(o: &Observed, r: &Reference) -> (Vec<FieldDiff>, Vec<String>) {
         skipped.push("user-agent: excluded by reference note (headless mode)".into());
     }
 
+    // --- coherence invariant: sec-ch-ua major version == User-Agent major version ---
+    //
+    // This is the one check that would have caught the original bug (issue
+    // #81): the service sent sec-ch-ua with v="136" (from a wreq-util
+    // preset) while the User-Agent was "ox-browser/0.8.0" (a fallback). No
+    // project in the field ships this check. It operates on the OBSERVED
+    // side alone — it does not need the reference, so it works even for
+    // headless references that exclude UA/sec-ch-ua from the per-field
+    // comparison.
+    if !o.sec_ch_ua.is_empty() && !o.user_agent.is_empty() {
+        let ua_major = extract_major_from_ua(&o.user_agent);
+        let hint_major = extract_major_from_sec_ch_ua(&o.sec_ch_ua);
+        if let (Some(ua_maj), Some(hint_maj)) = (ua_major, hint_major)
+            && ua_maj != hint_maj
+        {
+            diffs.push(FieldDiff {
+                field: "coherence:sec_ch_ua_vs_ua_major".into(),
+                expected: format!("sec-ch-ua major == UA major == {ua_maj}"),
+                observed: format!("sec-ch-ua major={hint_maj}, UA major={ua_maj} — INCOHERENT"),
+            });
+        }
+    }
+
     (diffs, skipped)
+}
+
+/// Extract the major version number from a User-Agent string.
+/// Returns None if no version is found.
+fn extract_major_from_ua(ua: &str) -> Option<u32> {
+    if let Some(pos) = ua.find("Chrome/") {
+        return ua[pos + 7..].split('.').next()?.parse().ok();
+    }
+    if let Some(pos) = ua.find("Edg/") {
+        return ua[pos + 4..].split('.').next()?.parse().ok();
+    }
+    if let Some(pos) = ua.find("rv:") {
+        return ua[pos + 3..].split('.').next()?.parse().ok();
+    }
+    if let Some(pos) = ua.find("Version/") {
+        return ua[pos + 8..].split('.').next()?.parse().ok();
+    }
+    None
+}
+
+/// Extract the Chromium major version from a sec-ch-ua header value.
+/// Looks for `"Chromium";v="<major>"` or `"Google Chrome";v="<major>"`.
+/// Returns None if no Chromium/Chrome brand is found.
+fn extract_major_from_sec_ch_ua(sec_ch_ua: &str) -> Option<u32> {
+    for brand in &["Chromium", "Google Chrome"] {
+        let needle = format!(r#""{brand}";v=""#);
+        if let Some(pos) = sec_ch_ua.find(&needle) {
+            let rest = &sec_ch_ua[pos + needle.len()..];
+            let ver = rest.split('"').next().unwrap_or("");
+            // The version may be "148" or "148.0.0.0" — take the major.
+            if let Some(major) = ver.split('.').next()
+                && let Ok(m) = major.parse::<u32>()
+            {
+                return Some(m);
+            }
+        }
+    }
+    None
 }
 
 // ── Bucket-B comparability helpers (F2/F3, Fix B) ─────────────────────

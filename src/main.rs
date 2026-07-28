@@ -76,9 +76,12 @@ async fn main() -> anyhow::Result<()> {
             let mut cfg = BrowserConfig::default();
 
             if let Some(browser_name) = &profile {
+                // Match the host OS so the CLI and service select the same
+                // profile for the same browser name. (Issue #81: one identity)
                 let filter = ProfileFilter {
                     browser: Some(browser_name.clone()),
-                    ..Default::default()
+                    os: Some(std::env::consts::OS.to_string()),
+                    mobile: Some(false),
                 };
                 cfg.profile = Some(random_profile(&filter));
             }
