@@ -48,7 +48,10 @@ pub struct WreqHandler {
     /// URL, not the redirect target — verified empirically). So when redirects
     /// are enabled, an `is_proxy_connect()` hit may be a CONNECT-tunnel failure
     /// for an HTTPS origin through a HEALTHY proxy (origin unreachable), which
-    /// must NOT degrade. See F2 / `looks_like_proxy_dial_failure`.
+    /// must NOT degrade. See F2 / `looks_like_proxy_dial_failure`. The default
+    /// is `10` (`HttpConfig::max_redirects`), so under the shipped
+    /// configuration the dial-failure fallback is dormant — the predicate
+    /// returns `false` for every request (tracking issue ox-browser#90).
     max_redirects: usize,
 }
 

@@ -142,6 +142,13 @@ pub fn looks_like_proxy_402(err: &wreq::Error) -> bool {
 /// So when `max_redirects > 0` the failing hop's scheme is unobservable from
 /// outside wreq, and we refuse to classify at all. A missing fallback is
 /// strictly better than one that leaks.
+///
+/// ## Operational consequence
+///
+/// `HttpConfig::max_redirects` defaults to `10` and nothing in production
+/// sets it to `0`, so under the default configuration this predicate returns
+/// `false` for every request — the dial-failure fallback is opt-in via
+/// `max_redirects == 0` and dormant otherwise (tracking issue ox-browser#90).
 pub fn looks_like_proxy_dial_failure(err: &wreq::Error, url: &str, max_redirects: usize) -> bool {
     err.is_proxy_connect() && is_http_target(url) && max_redirects == 0
 }

@@ -36,12 +36,12 @@ pub static PROXY_402_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// refused / timeout / DNS / TLS handshake to the proxy host) for ANY target
 /// scheme. This is the trigger condition for the dial-failure fallback, but
 /// the fallback itself is gated more narrowly (HTTP targets + `max_redirects
-/// == 0` only — see `proxy_fallback::looks_like_proxy_dial_failure`). Compare
-/// against `oxbrowser_proxy_dial_fallback_total` to see dial failures that
-/// did NOT degrade (notably HTTPS targets, where the classifier is
-/// deliberately conservative — issue #86). A scrape where this rises but the
-/// fallback total does not means dial failures are occurring that did NOT
-/// degrade — the one signal #86 says needs watching.
+/// == 0` only — see `proxy_fallback::looks_like_proxy_dial_failure`).
+/// `HttpConfig::max_redirects` defaults to `10` and nothing in production
+/// sets it to `0`, so under the default configuration
+/// `oxbrowser_proxy_dial_fallback_total` stays at zero for ALL schemes — a
+/// gap between the two counters is the normal state and not by itself
+/// evidence about HTTPS (issue #86; tracking issue ox-browser#90).
 pub static PROXY_DIAL_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Record a fetch attempt (any outcome). Call once per top-level fetch/read.
