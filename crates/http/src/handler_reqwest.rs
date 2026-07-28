@@ -9,7 +9,10 @@ use async_trait::async_trait;
 use wreq::Client;
 
 use crate::middleware::{Handler, Request};
-use crate::proxy_fallback::{looks_like_proxy_402, record_webshare_402_fallback};
+use crate::proxy_fallback::{
+    looks_like_proxy_402, looks_like_proxy_dial_failure, record_proxy_dial_fallback,
+    record_webshare_402_fallback,
+};
 use crate::proxy_pool::ProxyPool;
 use crate::{HttpError, HttpResponse, Result};
 
@@ -165,6 +168,17 @@ impl Handler for WreqHandler {
             crate::metrics::record_proxy_402();
         }
 
+        // Detect a proxy dial failure (proxy host unreachable) regardless of
+        // whether a direct fallback is wired — the counter must reflect the
+        // real event so the operator sees dial failures that did NOT degrade
+        // (notably HTTPS targets, where the classifier is deliberately
+        // conservative — see proxy_fallback::looks_like_proxy_dial_failure).
+        let is_proxy_dial = used_proxy
+            && matches!(&primary, Err(HttpError::Request(e)) if looks_like_proxy_dial_failure(e, &req.url));
+        if is_proxy_dial {
+            crate::metrics::record_proxy_dial();
+        }
+
         // Decide whether to fall back. Only when:
         // 1. We actually have a direct-client sibling, AND
         // 2. The first attempt was proxied, AND
@@ -185,6 +199,16 @@ impl Handler for WreqHandler {
             // Webshare 402 surfaced as a wrapped wreq connect error.
             Err(HttpError::Request(ref e)) if looks_like_proxy_402(e) => {
                 record_webshare_402_fallback(&req.url);
+                self.execute_with(direct, &req, true).await
+            }
+            // Upstream proxy unreachable (dead host / refused / DNS / TLS dial
+            // to the proxy). Classified via the typed is_proxy_connect()
+            // predicate gated to HTTP targets only — see
+            // proxy_fallback::looks_like_proxy_dial_failure for why HTTPS is
+            // deliberately excluded (the tunnel error surface is ambiguous
+            // between proxy-dial and origin-unreachable-through-proxy).
+            Err(HttpError::Request(ref e)) if looks_like_proxy_dial_failure(e, &req.url) => {
+                record_proxy_dial_fallback(&req.url);
                 self.execute_with(direct, &req, true).await
             }
             other => other,

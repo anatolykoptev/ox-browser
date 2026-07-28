@@ -223,6 +223,150 @@ async fn residential_only_config_falls_back_direct_on_402() {
     );
 }
 
+/// Fix 2, positive: a proxy pointed at a **closed** port (connect refused)
+/// must degrade to direct and increment the dial-failure counter (NOT the
+/// 402 counter). HTTP target so the classifier's forward-proxy path applies
+/// (`is_proxy_connect()` is precisely a proxy-dial failure there).
+#[tokio::test]
+#[serial]
+async fn falls_back_direct_when_proxy_is_dead() {
+    use ox_http::proxy_fallback::PROXY_DIAL_FALLBACK_TOTAL;
+
+    // Reserve a port, then drop the listener so nothing accepts -> connect refused.
+    let dead_port = {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let origin_port = spawn_ok_origin().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{dead_port},127.0.0.1:{origin_port}"),
+        );
+    }
+
+    let dial_before = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    let p402_before = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
+
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        proxy_url: Some(format!("http://127.0.0.1:{dead_port}")),
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    let target = format!("http://127.0.0.1:{origin_port}/test");
+    let resp = client
+        .get(&target)
+        .await
+        .expect("dead-proxy fallback should still succeed via direct");
+
+    assert_eq!(resp.status, 200, "fallback should return target's 200");
+    assert_eq!(resp.body, "direct-success", "body should come from origin");
+
+    let dial_after = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    let p402_after = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    assert!(
+        dial_after > dial_before,
+        "dial-fallback counter must increment (before={dial_before}, after={dial_after})"
+    );
+    assert_eq!(
+        p402_after, p402_before,
+        "402 counter must NOT bump for a dead-proxy dial failure"
+    );
+}
+
+/// Fix 2, negative: a **reachable** proxy that cannot reach the origin must
+/// NOT trigger the dial fallback. The proxy is healthy (the dial to it
+/// succeeded); the failure is on the origin side. Falling back to direct
+/// here would expose the real IP for no benefit — exactly the case the
+/// classifier is designed to refuse. The proxy's error response (502) must
+/// surface to the caller unchanged.
+///
+/// For an HTTP target through a forward proxy, the proxy reaches the origin
+/// itself and returns its own error status when the origin is unreachable.
+/// That surfaces as a normal HTTP response (not a `ProxyConnect` error), so
+/// `is_proxy_connect()` is false and the classifier correctly does NOT fire.
+#[tokio::test]
+#[serial]
+async fn does_not_fallback_when_proxy_reachable_but_origin_unreachable() {
+    use ox_http::proxy_fallback::PROXY_DIAL_FALLBACK_TOTAL;
+
+    // A reachable proxy that returns 502 (simulating "origin unreachable"
+    // from the proxy's perspective) for every request.
+    let proxy_port = {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    let resp = "HTTP/1.1 502 Bad Gateway\r\n\
+                        Content-Length: 20\r\n\
+                        Connection: close\r\n\
+                        \r\n\
+                        origin unreachable!!!";
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        port
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    // Allowlist the proxy AND a dead origin port (nothing listens on it) so
+    // SSRF lets the request through to the proxy, which returns 502.
+    let dead_origin_port = {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap().port()
+    };
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{proxy_port},127.0.0.1:{dead_origin_port}"),
+        );
+    }
+
+    let dial_before = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
+
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        proxy_url: Some(format!("http://127.0.0.1:{proxy_port}")),
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    // Target is a dead origin port — the proxy is reachable but returns 502
+    // (simulating the proxy failing to reach the origin).
+    let target = format!("http://127.0.0.1:{dead_origin_port}/test");
+    let resp = client
+        .get(&target)
+        .await
+        .expect("proxy 502 must surface as a response, not an error");
+
+    // The proxy's 502 must surface — NOT degrade to direct (which would hit
+    // the network with our real IP and fail anyway).
+    assert_eq!(
+        resp.status, 502,
+        "reachable-proxy + unreachable-origin must surface the proxy's 502, not fall back to direct"
+    );
+
+    let dial_after = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    assert_eq!(
+        dial_after, dial_before,
+        "dial-fallback counter must NOT bump when the proxy is reachable (before={dial_before}, after={dial_after})"
+    );
+}
+
 // Keep `Arc` referenced so a dead-code lint doesn't trip future maintainers.
 #[allow(dead_code)]
 fn _arc_marker() -> Arc<()> {

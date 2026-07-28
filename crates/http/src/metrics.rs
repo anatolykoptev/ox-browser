@@ -15,7 +15,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::proxy_fallback::PROXY_FALLBACK_TOTAL;
+use crate::proxy_fallback::{PROXY_DIAL_FALLBACK_TOTAL, PROXY_FALLBACK_TOTAL};
 
 /// Total fetch attempts entering the read/fetch path (any outcome).
 pub static FETCH_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -31,6 +31,16 @@ pub static PROXY_USED_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// This is the trigger condition for the direct-connection fallback; compare
 /// against `oxbrowser_proxy_fallback_total` to confirm every 402 degraded.
 pub static PROXY_402_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+/// Times an upstream proxy was unreachable at the dial step (connect
+/// refused / timeout / DNS / TLS handshake to the proxy host) for an HTTP
+/// target — the trigger condition for the dial-failure fallback. Compare
+/// against `oxbrowser_proxy_dial_fallback_total` to confirm every detected
+/// dial failure degraded. A scrape where this rises but the fallback total
+/// does not means dial failures are occurring that did NOT degrade (notably
+/// HTTPS targets, where the classifier is deliberately conservative — see
+/// `proxy_fallback::looks_like_proxy_dial_failure`).
+pub static PROXY_DIAL_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Record a fetch attempt (any outcome). Call once per top-level fetch/read.
 pub fn record_fetch() {
@@ -50,6 +60,14 @@ pub fn record_proxy_used() {
 /// Record an upstream-proxy HTTP 402 (quota exhausted).
 pub fn record_proxy_402() {
     PROXY_402_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record an upstream-proxy dial failure (proxy host unreachable) detected
+/// for an HTTP target. Mirrors [`record_proxy_402`]: counts the trigger
+/// condition regardless of whether a direct fallback was wired/applied, so a
+/// gap between this and `oxbrowser_proxy_dial_fallback_total` is visible.
+pub fn record_proxy_dial() {
+    PROXY_DIAL_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record a crawler dedup cap eviction (URL or content dedup hit its
@@ -186,6 +204,16 @@ pub fn render() -> String {
             value: PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed),
         },
         Counter {
+            name: "oxbrowser_proxy_dial_total",
+            help: "Upstream-proxy dial failures (proxy host unreachable) detected for HTTP targets.",
+            value: PROXY_DIAL_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
+            name: "oxbrowser_proxy_dial_fallback_total",
+            help: "Direct-connection fallbacks taken because the upstream proxy could not be dialled.",
+            value: PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
             name: "oxbrowser_solver_giveup_total",
             help: "CF-solver give-ups (per-domain negative-cache short-circuit fired).",
             value: crate::solver_negcache::SOLVER_GIVEUP_TOTAL.load(Ordering::Relaxed),
@@ -319,6 +347,8 @@ mod tests {
             "oxbrowser_proxy_used_total",
             "oxbrowser_proxy_402_total",
             "oxbrowser_proxy_fallback_total",
+            "oxbrowser_proxy_dial_total",
+            "oxbrowser_proxy_dial_fallback_total",
             "oxbrowser_solver_giveup_total",
             "oxbrowser_crawler_dedup_evicted_total",
             "oxbrowser_frontier_dropped_total",
