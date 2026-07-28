@@ -70,9 +70,7 @@ pub use profile::{
     profile_to_emulation, random_profile,
 };
 pub use profile_hints::{DEFAULT_HEADER_ORDER, browser_headers, client_hints_headers};
-pub use proxy_fallback::{
-    PROXY_FALLBACK_TOTAL, looks_like_proxy_402, record_webshare_402_fallback,
-};
+pub use proxy_fallback::PROXY_DIAL_FALLBACK_TOTAL;
 pub use proxy_health::{HealthConfig, HealthyPool, ProxyHealth};
 pub use proxy_pool::{ProxyPool, StaticPool};
 pub use proxy_webshare::WebsharePool;

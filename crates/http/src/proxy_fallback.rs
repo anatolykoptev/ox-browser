@@ -1,17 +1,21 @@
-//! Direct-connection fallback when an upstream proxy returns HTTP 402.
+//! Direct-connection fallback when an upstream proxy cannot be dialled.
 //!
-//! Webshare residential proxy returns `HTTP 402 Payment Required` when the
-//! account bandwidth quota is exhausted or payment failed. wreq surfaces this
-//! either as a real response (status 402) or as a wrapped connect error whose
-//! Display string mentions "402"/"Payment Required".
+//! The **response-inferred 402 degradation** that previously lived here has
+//! been removed. Three attempts to attribute a relayed `HTTP 402` to the
+//! upstream proxy (by status code, by response header, by URL scheme) were
+//! each bypassable — a plain-HTTP forward proxy relays the origin's own
+//! headers, so the origin can forge any marker and trigger a direct re-send
+//! of the identical request from the real IP. The sound design (probe the
+//! proxy directly instead of inferring from the response) is specified in
+//! issue **#90** and belongs there, not here.
 //!
-//! Per `~/CLAUDE.md`: "Direct requests to third-party = bug." This is a
-//! deliberate, narrow exception for graceful degradation. We retry **once**
-//! without the proxy, log a `tracing::warn!`, and bump
-//! [`PROXY_FALLBACK_TOTAL`] so the operator sees the IP exposure event.
-//!
-//! Only triggered for HTTP 402. All other proxy errors (timeout, 5xx, network
-//! failure) propagate unchanged.
+//! What survives is the **dial-failure fallback**: when the proxy host itself
+//! is unreachable (connect refused / timeout / DNS / TLS handshake to the
+//! proxy), degrading to direct is safe — the proxy is dead, so the real IP
+//! is exposed only to the target, which is the explicit graceful-degradation
+//! tradeoff. The classifier uses wreq's typed `is_proxy_connect()` predicate
+//! (not Display-string matching) and is gated to the provably precise
+//! forward-proxy path.
 //!
 //! ## SOCKS feature guard
 //!
@@ -35,32 +39,12 @@ compile_error!(
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Number of times we fell back to a direct connection because the proxy
-/// returned HTTP 402 Payment Required (webshare quota / billing exhausted).
-///
-/// Exposed for tests and operator-visible metrics. Increment via
-/// [`record_webshare_402_fallback`].
-pub static PROXY_FALLBACK_TOTAL: AtomicU64 = AtomicU64::new(0);
-
 /// Number of times we fell back to a direct connection because the upstream
 /// proxy could not be dialled at all (connect refused / timeout / DNS / TLS
-/// handshake failure) — a dead or unpaid proxy host. Distinct from
-/// [`PROXY_FALLBACK_TOTAL`]: a billing lapse (402) and a dead host are
-/// different operational events and must stay separable in metrics.
+/// handshake failure) — a dead or unpaid proxy host.
 ///
 /// Increment via [`record_proxy_dial_fallback`].
 pub static PROXY_DIAL_FALLBACK_TOTAL: AtomicU64 = AtomicU64::new(0);
-
-/// Increment the fallback counter and emit a structured warning.
-pub fn record_webshare_402_fallback(url: &str) {
-    PROXY_FALLBACK_TOTAL.fetch_add(1, Ordering::Relaxed);
-    tracing::warn!(
-        url = %url,
-        reason = "webshare_402",
-        metric = "oxbrowser_proxy_fallback_total",
-        "proxy returned HTTP 402 Payment Required — falling back to direct connection (IP exposed)"
-    );
-}
 
 /// Increment the proxy-dial-failure fallback counter and emit a structured
 /// warning. Called when the upstream proxy is unreachable (not a 402): the
@@ -74,23 +58,6 @@ pub fn record_proxy_dial_fallback(url: &str) {
         metric = "oxbrowser_proxy_dial_fallback_total",
         "upstream proxy unreachable — falling back to direct connection (IP exposed)"
     );
-}
-
-/// Returns `true` if the wreq error chain (or any wrapped source) suggests an
-/// HTTP 402 from the upstream proxy.
-///
-/// wreq does not expose proxy response status directly; on `ProxyConnect`
-/// failures the Display chain typically contains "402" and/or
-/// "Payment Required". We match conservatively to avoid false positives.
-pub fn looks_like_proxy_402(err: &wreq::Error) -> bool {
-    let mut buf = String::new();
-    let mut cur: Option<&dyn std::error::Error> = Some(err);
-    while let Some(e) = cur {
-        buf.push_str(&e.to_string());
-        buf.push('\n');
-        cur = e.source();
-    }
-    contains_402_marker(&buf)
 }
 
 /// Returns `true` if the error is a failure to dial the upstream **proxy
@@ -137,12 +104,6 @@ pub fn looks_like_proxy_402(err: &wreq::Error) -> bool {
 /// remains unhandled by design and needs an upstream wreq change (a public
 /// way to split `TunnelError::ConnectFailed` from `TunnelUnsuccessful`).
 ///
-/// Note: [`looks_like_proxy_402`] above matches on Display strings ("402" +
-/// "proxy"/"connect"/"tunnel"). That is fragile — a target URL containing
-/// "proxy" could in principle contribute — but it is the existing 402 path
-/// and is NOT extended here. The dial classifier deliberately uses the typed
-/// predicate instead, because the IP-exposure stakes are higher.
-///
 /// ## F2 — redirect safety (why `max_redirects == 0` is required)
 ///
 /// Both call sites pass `&req.url` — the ORIGINAL caller URL — while the
@@ -183,120 +144,9 @@ pub(crate) fn is_http_target(url: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// True iff an `Ok(402)` response should be attributed to the upstream proxy
-/// (Webshare quota exhaustion) rather than the origin, and is therefore safe
-/// to use as a direct-connection fallback trigger.
-///
-/// `402 Payment Required` is a live origin status (metered APIs, x402), so a
-/// bare 402 relayed by a healthy proxy is NOT proof of a proxy fault. We
-/// require BOTH:
-///
-/// 1. **`is_http_target(url)`** — for an `https://` target, an `Ok(_)`
-///    response traversed the CONNECT tunnel end-to-end, so it can only have
-///    originated at the ORIGIN. A proxy refusing CONNECT with 402 surfaces as
-///    `TunnelError::TunnelUnsuccessful` → `Err`, never `Ok`. Every `Ok(402)`
-///    on https is therefore origin-side and must NOT degrade.
-///
-/// 2. **A proxy-attributable response marker** — on http targets (where the
-///    proxy returns the response directly), we require a header that only a
-///    proxy would emit: `X-Webshare-Error` (the Webshare fingerprint), or
-///    `Proxy-Authenticate` / `Proxy-Connection` (standard hop-by-hop proxy
-///    headers). A bare 402 with no proxy marker is treated as origin-side.
-///
-/// Without this gate, any origin returning 402 through a healthy proxy
-/// triggers a one-request deanonymisation: the identical request is re-sent
-/// from the real IP via `build_direct_wreq_client` (`.no_proxy()`), to an
-/// origin that has already seen the proxy IP for that exact request.
-pub(crate) fn is_proxy_attributed_402(url: &str, headers: &wreq::header::HeaderMap) -> bool {
-    is_http_target(url) && has_proxy_attribution_marker(headers)
-}
-
-/// True if the response headers carry a marker that only an upstream proxy
-/// would emit — proving the 402 came from the proxy, not the origin.
-fn has_proxy_attribution_marker(headers: &wreq::header::HeaderMap) -> bool {
-    use wreq::header::PROXY_AUTHENTICATE;
-    headers.contains_key("x-webshare-error")
-        || headers.contains_key(PROXY_AUTHENTICATE)
-        || headers.contains_key("proxy-connection")
-}
-
-/// True if the chained-error string carries the Webshare 402 fingerprint.
-///
-/// We require both a "402" token AND a phrase indicating it came from a proxy
-/// connect step (Webshare returns the status during the CONNECT handshake).
-///
-/// F5: the `/402` disjunct was removed — it matched a URL *path* segment
-/// (`/402`) in the error's Display string (which includes the request URI),
-/// so any target URL containing `/402` was misclassified as a proxy-402
-/// before the typed dial arm was reached. The remaining `" 402"` and
-/// `"status: 402"` disjuncts require a space / "status:" prefix and do not
-/// match URL paths; they still match the legitimate proxy-402 Display forms
-/// ("proxy returned 402", "HTTP/1.1 402").
-pub(crate) fn contains_402_marker(s: &str) -> bool {
-    let lc = s.to_ascii_lowercase();
-    let has_402 = lc.contains(" 402") || lc.contains("status: 402");
-    let has_payment = lc.contains("payment required");
-    let proxy_context = lc.contains("proxy") || lc.contains("connect") || lc.contains("tunnel");
-    (has_402 || has_payment) && proxy_context
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detects_402_in_proxy_connect_string() {
-        assert!(contains_402_marker(
-            "client error (ProxyConnect): proxy returned 402 Payment Required"
-        ));
-    }
-
-    #[test]
-    fn detects_payment_required_phrase() {
-        assert!(contains_402_marker(
-            "tunnel handshake failed: HTTP/1.1 402 Payment Required"
-        ));
-    }
-
-    #[test]
-    fn ignores_402_outside_proxy_context() {
-        // 402 returned by the *target* (rare) — not a proxy fault.
-        assert!(!contains_402_marker("server returned status 402"));
-    }
-
-    #[test]
-    fn ignores_unrelated_errors() {
-        assert!(!contains_402_marker("connection reset by peer"));
-        assert!(!contains_402_marker(
-            "HTTP/1.1 503 Service Unavailable via proxy"
-        ));
-    }
-
-    /// F5: a target URL containing `/402` as a path segment must NOT be
-    /// misclassified as a proxy-402. The error Display string includes the
-    /// request URI, so the old `/402` disjunct matched the URL path. With the
-    /// disjunct removed, only a real " 402" / "status: 402" / "payment
-    /// required" token in a proxy context classifies.
-    #[test]
-    fn ignores_402_in_url_path() {
-        // The full Display chain wreq produces for a proxy connect error to a
-        // URL whose path contains /402 — before F5 this matched via the
-        // "/402" disjunct + "connect" proxy-context.
-        let display = "error sending request for uri \
-            (http://example.com/orders/402): client error (ProxyConnect)";
-        assert!(
-            !contains_402_marker(display),
-            "a URL path containing /402 must NOT be treated as a proxy-402"
-        );
-    }
-
-    #[test]
-    fn counter_increments() {
-        let before = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
-        record_webshare_402_fallback("https://example.com/test");
-        let after = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
-        assert_eq!(after, before + 1);
-    }
 
     #[test]
     fn dial_counter_increments() {
@@ -314,61 +164,6 @@ mod tests {
         assert!(!is_http_target("https://example.com/"));
         assert!(!is_http_target("not a url"));
         assert!(!is_http_target("ftp://example.com/"));
-    }
-
-    /// A: an https target with a proxy marker must NOT be attributed to the
-    /// proxy — every `Ok(402)` on https traversed the CONNECT tunnel and
-    /// originated at the origin. Reverting the `is_http_target` gate makes
-    /// this test fail (returns true for https + marker).
-    #[test]
-    fn a_https_402_with_marker_not_proxy_attributed() {
-        let mut headers = wreq::header::HeaderMap::new();
-        headers.insert("x-webshare-error", "402".parse().unwrap());
-        assert!(
-            !is_proxy_attributed_402("https://example.com/paywall", &headers),
-            "https 402 must NOT be proxy-attributed even with a proxy marker — \
-             Ok(402) on https can only come from the origin"
-        );
-    }
-
-    /// A: an http target with NO proxy marker must NOT be attributed to the
-    /// proxy — a bare 402 is a live origin status. Reverting the
-    /// `has_proxy_attribution_marker` gate makes this test fail (returns true
-    /// for http + no marker).
-    #[test]
-    fn a_http_402_without_marker_not_proxy_attributed() {
-        let headers = wreq::header::HeaderMap::new();
-        assert!(
-            !is_proxy_attributed_402("http://example.com/paywall", &headers),
-            "http 402 with no proxy marker must NOT be proxy-attributed — \
-             a bare 402 is a live origin status"
-        );
-    }
-
-    /// A: an http target WITH a proxy marker IS attributed to the proxy —
-    /// this is the Webshare quota-exhaustion path the fallback exists for.
-    /// Do not regress the feature this PR chain exists for.
-    #[test]
-    fn a_http_402_with_x_webshare_error_is_proxy_attributed() {
-        let mut headers = wreq::header::HeaderMap::new();
-        headers.insert("x-webshare-error", "402".parse().unwrap());
-        assert!(
-            is_proxy_attributed_402("http://example.com/test", &headers),
-            "http 402 with X-Webshare-Error must be proxy-attributed"
-        );
-    }
-
-    /// A: `Proxy-Authenticate` and `Proxy-Connection` are also accepted as
-    /// proxy-attribution markers (standard hop-by-hop proxy headers).
-    #[test]
-    fn a_http_402_with_proxy_authenticate_or_connection_attributed() {
-        let mut h1 = wreq::header::HeaderMap::new();
-        h1.insert(wreq::header::PROXY_AUTHENTICATE, "Basic".parse().unwrap());
-        assert!(is_proxy_attributed_402("http://example.com/", &h1));
-
-        let mut h2 = wreq::header::HeaderMap::new();
-        h2.insert("proxy-connection", "close".parse().unwrap());
-        assert!(is_proxy_attributed_402("http://example.com/", &h2));
     }
 
     /// Build a REAL `wreq::Error` from a dead proxy (reserve a port, drop it
