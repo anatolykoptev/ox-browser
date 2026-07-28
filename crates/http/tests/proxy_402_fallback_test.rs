@@ -18,10 +18,18 @@ use std::time::Duration;
 
 use ox_http::metrics::{PROXY_402_TOTAL, PROXY_DIAL_TOTAL, PROXY_USED_TOTAL};
 use ox_http::proxy_fallback::{PROXY_DIAL_FALLBACK_TOTAL, PROXY_FALLBACK_TOTAL};
-use ox_http::{HttpClient, HttpConfig};
+use ox_http::{HttpClient, HttpConfig, StaticPool};
 use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+
+/// Reserve a TCP port, then drop the listener so nothing accepts on it —
+/// connect attempts to the returned port get "connection refused". Extracted
+/// from the five hand-copied inline copies of this idiom in this PR.
+async fn dead_port() -> u16 {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    l.local_addr().unwrap().port()
+}
 
 /// Spawn a fake "proxy" that returns HTTP 402 to every request.
 async fn spawn_402_proxy() -> u16 {
@@ -237,10 +245,7 @@ async fn residential_only_config_falls_back_direct_on_402() {
 #[serial]
 async fn falls_back_direct_when_proxy_is_dead() {
     // Reserve a port, then drop the listener so nothing accepts -> connect refused.
-    let dead_port = {
-        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let dead_proxy_port = dead_port().await;
     let origin_port = spawn_ok_origin().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -248,7 +253,7 @@ async fn falls_back_direct_when_proxy_is_dead() {
     unsafe {
         std::env::set_var(
             "OX_HTTP_PRIVATE_ALLOWLIST",
-            format!("127.0.0.1:{dead_port},127.0.0.1:{origin_port}"),
+            format!("127.0.0.1:{dead_proxy_port},127.0.0.1:{origin_port}"),
         );
     }
 
@@ -257,7 +262,7 @@ async fn falls_back_direct_when_proxy_is_dead() {
 
     let config = HttpConfig {
         timeout: Duration::from_secs(5),
-        proxy_url: Some(format!("http://127.0.0.1:{dead_port}")),
+        proxy_url: Some(format!("http://127.0.0.1:{dead_proxy_port}")),
         max_redirects: 0,
         ..Default::default()
     };
@@ -332,10 +337,7 @@ async fn does_not_fallback_when_proxy_reachable_but_origin_unreachable() {
 
     // A dead origin port — nothing listens. The proxy's CONNECT to it fails,
     // so the proxy returns 502.
-    let dead_origin_port = {
-        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let dead_origin_port = dead_port().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
@@ -347,6 +349,11 @@ async fn does_not_fallback_when_proxy_reachable_but_origin_unreachable() {
     }
 
     let dial_before = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    // D: also capture PROXY_DIAL_TOTAL — a bump proves the error reached the
+    // classifier as a ProxyConnect (the metric arm gates on is_proxy_connect()
+    // alone, no scheme gate). Without this assertion the test passes vacuously
+    // if wreq stops mapping TunnelError::TunnelUnsuccessful to ProxyConnect.
+    let dial_total_before = PROXY_DIAL_TOTAL.load(Ordering::Relaxed);
 
     let config = HttpConfig {
         timeout: Duration::from_secs(5),
@@ -367,6 +374,16 @@ async fn does_not_fallback_when_proxy_reachable_but_origin_unreachable() {
         "reachable-proxy + unreachable-origin (HTTPS CONNECT 502) must surface \
          as an Err, not fall back to direct — got {:?}",
         result
+    );
+
+    // D: PROXY_DIAL_TOTAL must bump — proves the error was a ProxyConnect.
+    let dial_total_after = PROXY_DIAL_TOTAL.load(Ordering::Relaxed);
+    assert!(
+        dial_total_after > dial_total_before,
+        "PROXY_DIAL_TOTAL must bump — the error reached the classifier as a \
+         ProxyConnect (before={dial_total_before}, after={dial_total_after}). \
+         Without this assertion the test passes vacuously if wreq stops \
+         mapping TunnelError::TunnelUnsuccessful to ErrorKind::ProxyConnect."
     );
 
     let dial_after = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
@@ -506,10 +523,7 @@ async fn f1_residential_only_origin_402_not_treated_as_proxy_402() {
 #[tokio::test]
 #[serial]
 async fn f2_http_to_https_redirect_not_degraded() {
-    let dead_https_port = {
-        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let dead_https_port = dead_port().await;
 
     // The fake proxy: for a plain HTTP GET it returns 301 -> https dead target;
     // for a CONNECT it returns 502 (reachable proxy, origin unreachable).
@@ -555,6 +569,13 @@ async fn f2_http_to_https_redirect_not_degraded() {
     }
 
     let dial_fb_before = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    // D: also capture PROXY_DIAL_TOTAL — a bump proves the error reached the
+    // classifier as a ProxyConnect. Without this assertion the test passes
+    // vacuously: result.is_err() is non-discriminating (the direct GET would
+    // also follow the 301 to a dead https port and return Err), and
+    // PROXY_DIAL_FALLBACK_TOTAL being unchanged doesn't prove the classifier
+    // was ever evaluated on a qualifying error.
+    let dial_total_before = PROXY_DIAL_TOTAL.load(Ordering::Relaxed);
 
     // Default max_redirects = 10 — the classifier must refuse.
     let config = HttpConfig {
@@ -573,6 +594,16 @@ async fn f2_http_to_https_redirect_not_degraded() {
         "http→https redirect + reachable-proxy CONNECT 502 must surface as Err, \
          not degrade to direct — got {:?}",
         result
+    );
+
+    // D: PROXY_DIAL_TOTAL must bump — proves the error was a ProxyConnect.
+    let dial_total_after = PROXY_DIAL_TOTAL.load(Ordering::Relaxed);
+    assert!(
+        dial_total_after > dial_total_before,
+        "PROXY_DIAL_TOTAL must bump — the error reached the classifier as a \
+         ProxyConnect (before={dial_total_before}, after={dial_total_after}). \
+         Without this the test passes vacuously if wreq stops mapping \
+         TunnelError::TunnelUnsuccessful to ErrorKind::ProxyConnect."
     );
 
     let dial_fb_after = PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed);
@@ -597,10 +628,7 @@ async fn f2_http_to_https_redirect_not_degraded() {
 #[serial]
 async fn f4_https_dead_proxy_bumps_dial_total_not_fallback() {
     // Reserve a port, then drop it -> connect refused (dead proxy).
-    let dead_proxy_port = {
-        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let dead_proxy_port = dead_port().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
@@ -643,4 +671,341 @@ async fn f4_https_dead_proxy_bumps_dial_total_not_fallback() {
         "PROXY_DIAL_FALLBACK_TOTAL must NOT bump for an HTTPS target — \
          the degradation is refused (before={dial_fb_before}, after={dial_fb_after})"
     );
+}
+
+// ---------------------------------------------------------------------------
+// A: an http proxy returning a BARE 402 (no proxy-attribution marker) must
+// NOT degrade to direct. The gate requires X-Webshare-Error / Proxy-
+// Authenticate / Proxy-Connection to prove the 402 came from the proxy. A
+// bare 402 is a live origin status (metered APIs, x402) and degrading would
+// re-send the identical request from the real IP.
+// ---------------------------------------------------------------------------
+
+/// Spawn a fake proxy that returns a BARE 402 (no X-Webshare-Error marker).
+async fn spawn_bare_402_proxy() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                // Bare 402 — NO X-Webshare-Error, NO Proxy-Authenticate,
+                // NO Proxy-Connection. This is what an origin-side 402
+                // looks like when relayed by a healthy forward proxy.
+                let resp = "HTTP/1.1 402 Payment Required\r\n\
+                    Content-Length: 0\r\n\
+                    Connection: close\r\n\
+                    \r\n";
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            });
+        }
+    });
+    port
+}
+
+/// A: an http proxy returning a bare 402 (no proxy marker) must NOT degrade
+/// to direct. The 402 must surface to the caller, and neither
+/// `PROXY_402_TOTAL` nor `PROXY_FALLBACK_TOTAL` must bump. Reverting the
+/// `has_proxy_attribution_marker` gate makes this test fail (the 402
+/// degrades and PROXY_FALLBACK_TOTAL bumps).
+#[tokio::test]
+#[serial]
+async fn a_http_bare_402_not_degraded() {
+    let proxy_port = spawn_bare_402_proxy().await;
+    let origin_port = spawn_ok_origin().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{proxy_port},127.0.0.1:{origin_port}"),
+        );
+    }
+
+    let p402_before = PROXY_402_TOTAL.load(Ordering::Relaxed);
+    let fb_before = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
+
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        proxy_url: Some(format!("http://127.0.0.1:{proxy_port}")),
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    // Request to the origin through the proxy. The proxy returns a bare 402.
+    let target = format!("http://127.0.0.1:{origin_port}/paywall");
+    let resp = client.get(&target).await.expect("request should complete");
+
+    // The bare 402 must surface — NOT be replaced by a 200 from a direct
+    // sibling retry (which would duplicate the request and mask the real 402).
+    assert_eq!(
+        resp.status, 402,
+        "bare 402 (no proxy marker) must surface to the caller, not degrade to direct"
+    );
+
+    assert_eq!(
+        PROXY_402_TOTAL.load(Ordering::Relaxed),
+        p402_before,
+        "PROXY_402_TOTAL must NOT bump for a bare 402 — it is not proxy-attributed"
+    );
+    assert_eq!(
+        PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed),
+        fb_before,
+        "PROXY_FALLBACK_TOTAL must NOT bump — no fallback should occur for a bare 402"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// B: a proxy that fails to attach must fail CLOSED, not silently go direct.
+// ---------------------------------------------------------------------------
+
+/// B: an unparsable `req.proxy` must fail with an error, not silently drop
+/// the proxy and proceed direct. `PROXY_USED_TOTAL` must NOT bump (the proxy
+/// never attached). Reverting the fail-closed `?` (restoring the empty `Err`
+/// branch) makes this test fail (the request proceeds direct and returns 200
+/// from the origin).
+#[tokio::test]
+#[serial]
+async fn b_invalid_proxy_url_fails_closed() {
+    use ox_http::Request;
+
+    let origin_port = spawn_ok_origin().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin_port}"),
+        );
+    }
+
+    let used_before = PROXY_USED_TOTAL.load(Ordering::Relaxed);
+
+    // Residential-only config: NO proxy_url, NO proxy_pool. The base client
+    // has NO static proxy (build_wreq_client calls .no_proxy()), so if the
+    // per-request req.proxy is silently dropped, the request goes DIRECT and
+    // reaches the origin (200). direct_client is attached because
+    // needs_fallback covers residential_proxy.
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        residential_proxy: Some("http://127.0.0.1:9999".into()),
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    let req = Request {
+        method: "GET".into(),
+        url: format!("http://127.0.0.1:{origin_port}/test"),
+        headers: vec![],
+        body: None,
+        proxy: Some("not-a-valid-url".into()),
+    };
+    let result = client.execute(req).await;
+
+    assert!(
+        result.is_err(),
+        "invalid req.proxy must fail closed, not silently go direct — got {:?}",
+        result
+    );
+
+    assert_eq!(
+        PROXY_USED_TOTAL.load(Ordering::Relaxed),
+        used_before,
+        "PROXY_USED_TOTAL must NOT bump when the proxy failed to attach"
+    );
+}
+
+/// B: an empty/exhausted proxy pool must fail with an error, not silently go
+/// direct. `PROXY_USED_TOTAL` must NOT bump. Reverting the fail-closed
+/// `return Err` (restoring the silent `None` drop) makes this test fail (the
+/// request proceeds direct and returns 200 from the origin).
+#[tokio::test]
+#[serial]
+async fn b_empty_pool_fails_closed() {
+    let origin_port = spawn_ok_origin().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin_port}"),
+        );
+    }
+
+    let used_before = PROXY_USED_TOTAL.load(Ordering::Relaxed);
+
+    // Empty pool — pool.next() returns None.
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        proxy_pool: Some(Arc::new(StaticPool::new(vec![]))),
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    let target = format!("http://127.0.0.1:{origin_port}/test");
+    let result = client.get(&target).await;
+
+    assert!(
+        result.is_err(),
+        "empty proxy pool must fail closed, not silently go direct — got {:?}",
+        result
+    );
+
+    assert_eq!(
+        PROXY_USED_TOTAL.load(Ordering::Relaxed),
+        used_before,
+        "PROXY_USED_TOTAL must NOT bump when the pool is empty"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// C: an ambient HTTP_PROXY must NOT silently proxy the base client when
+// proxy_url is unset. build_wreq_client must call .no_proxy() in that case.
+// ---------------------------------------------------------------------------
+
+/// C: with `HTTP_PROXY` set to a dead port and no `proxy_url` configured,
+/// the base client must NOT honor the ambient proxy. If `.no_proxy()` is
+/// missing (the bug), the request tries the dead proxy and errors. With the
+/// fix, the request goes direct and succeeds. Reverting the `.no_proxy()`
+/// call makes this test fail (the request errors via the dead ambient proxy).
+#[tokio::test]
+#[serial]
+async fn c_ambient_http_proxy_not_honored() {
+    let dead_proxy_port = dead_port().await;
+    let origin_port = spawn_ok_origin().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin_port}"),
+        );
+        // Set ambient HTTP_PROXY to a dead port. wreq reads this at client
+        // build time via ProxyMatcher::system() when auto_sys_proxy is true.
+        std::env::set_var("HTTP_PROXY", format!("http://127.0.0.1:{dead_proxy_port}"));
+    }
+
+    // No proxy_url — the base client should go direct, NOT through the
+    // ambient HTTP_PROXY.
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    // Clean up the env var — wreq already read it at build time.
+    // SAFETY: no other thread reads HTTP_PROXY between here and the request
+    // (all tests in this file are #[serial]).
+    unsafe {
+        std::env::remove_var("HTTP_PROXY");
+    }
+
+    let target = format!("http://127.0.0.1:{origin_port}/test");
+    let result = client.get(&target).await;
+
+    // With .no_proxy(): request goes direct -> 200. Without: request tries
+    // the dead ambient proxy -> Err.
+    assert!(
+        result.is_ok(),
+        "ambient HTTP_PROXY must NOT silently proxy the base client when \
+         proxy_url is unset — got {:?}",
+        result
+    );
+    assert_eq!(
+        result.unwrap().status,
+        200,
+        "request should reach the origin directly, not via the ambient proxy"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// E: boundary test — max_redirects: 0 must block even the FIRST redirect.
+// The F2 safety claim depends on this: the dial-failure classifier gates on
+// max_redirects == 0, and the claim is that no redirect can occur at 0.
+// ---------------------------------------------------------------------------
+
+/// E: with `max_redirects: 0`, a 301 must NOT be followed. The ssrf_redirect
+/// policy checks `attempt.previous.len() > max_redirects`; on the first
+/// redirect `previous` includes the initial URI (len=1), so `1 > 0` blocks.
+/// If the redirect IS followed (200 from the target), that is a finding —
+/// the F2 safety claim is falsified.
+#[tokio::test]
+#[serial]
+async fn e_max_redirects_zero_blocks_first_redirect() {
+    let origin2_port = spawn_ok_origin().await;
+
+    // First origin returns 301 -> origin2.
+    let origin1_port = {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let target = format!("http://127.0.0.1:{origin2_port}/hop2");
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                let t = target.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    let resp = format!(
+                        "HTTP/1.1 301 Moved Permanently\r\n\
+                         Location: {t}\r\n\
+                         Content-Length: 0\r\n\
+                         \r\n"
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        port
+    };
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin1_port},127.0.0.1:{origin2_port}"),
+        );
+    }
+
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        max_redirects: 0,
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    let target = format!("http://127.0.0.1:{origin1_port}/seed");
+    let result = client.get(&target).await;
+
+    // The redirect must NOT be followed. With max_redirects=0, the policy
+    // blocks the first redirect (previous.len()=1 > 0). The result is either
+    // the 301 itself or an error (the policy returns Action::Error, not
+    // Action::Stop), but NOT a 200 from the redirect target.
+    match result {
+        Ok(resp) => {
+            assert_ne!(
+                resp.status, 200,
+                "max_redirects=0 must block the first redirect — got 200 \
+                 from the redirect target, the F2 safety claim is falsified"
+            );
+        }
+        Err(_) => {
+            // Error is acceptable — the policy blocks with Error, not Stop.
+            // The redirect was not followed.
+        }
+    }
 }

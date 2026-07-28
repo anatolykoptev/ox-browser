@@ -212,7 +212,7 @@ pub fn render() -> String {
         },
         Counter {
             name: "oxbrowser_proxy_dial_fallback_total",
-            help: "Direct-connection fallbacks taken because the upstream proxy could not be dialled.",
+            help: "Direct-connection fallbacks taken because the upstream proxy could not be dialled (HTTP targets + max_redirects==0 only; stays 0 under the shipped default max_redirects=10 — see issue #90).",
             value: PROXY_DIAL_FALLBACK_TOTAL.load(Ordering::Relaxed),
         },
         Counter {

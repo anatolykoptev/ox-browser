@@ -12,6 +12,26 @@
 //!
 //! Only triggered for HTTP 402. All other proxy errors (timeout, 5xx, network
 //! failure) propagate unchanged.
+//!
+//! ## SOCKS feature guard
+//!
+//! The dial-failure classifier [`looks_like_proxy_dial_failure`] relies on
+//! wreq's `is_proxy_connect()` being precise for HTTP-forward-proxy dial
+//! failures. That precision argument assumes the `socks` feature is NOT
+//! compiled: with socks enabled, socks-proxy connect errors also surface as
+//! `is_proxy_connect()`, falsifying the proxy-dial-failure classification
+//! and potentially degrading to direct on a socks-proxy error (origin
+//! unreachable). Enabling the `socks` feature on `ox-http` triggers a
+//! compile error below so the breakage is loud, not silent.
+
+#[cfg(feature = "socks")]
+compile_error!(
+    "ox-http: the `socks` feature is enabled. The proxy-fallback dial \
+     classifier (looks_like_proxy_dial_failure) assumes socks is NOT compiled \
+     — socks-proxy errors surface as is_proxy_connect() and would falsify the \
+     proxy-dial-failure classification, potentially leaking the real IP. \
+     Disable the `socks` feature or widen the classifier before enabling it."
+);
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -157,10 +177,47 @@ pub fn looks_like_proxy_dial_failure(err: &wreq::Error, url: &str, max_redirects
 /// anything else). Used to gate the dial-failure fallback to the provably
 /// precise forward-proxy path. A malformed URL returns `false` (conservative
 /// — never fall back on an unparseable target).
-fn is_http_target(url: &str) -> bool {
+pub(crate) fn is_http_target(url: &str) -> bool {
     url::Url::parse(url)
         .map(|u| u.scheme() == "http")
         .unwrap_or(false)
+}
+
+/// True iff an `Ok(402)` response should be attributed to the upstream proxy
+/// (Webshare quota exhaustion) rather than the origin, and is therefore safe
+/// to use as a direct-connection fallback trigger.
+///
+/// `402 Payment Required` is a live origin status (metered APIs, x402), so a
+/// bare 402 relayed by a healthy proxy is NOT proof of a proxy fault. We
+/// require BOTH:
+///
+/// 1. **`is_http_target(url)`** — for an `https://` target, an `Ok(_)`
+///    response traversed the CONNECT tunnel end-to-end, so it can only have
+///    originated at the ORIGIN. A proxy refusing CONNECT with 402 surfaces as
+///    `TunnelError::TunnelUnsuccessful` → `Err`, never `Ok`. Every `Ok(402)`
+///    on https is therefore origin-side and must NOT degrade.
+///
+/// 2. **A proxy-attributable response marker** — on http targets (where the
+///    proxy returns the response directly), we require a header that only a
+///    proxy would emit: `X-Webshare-Error` (the Webshare fingerprint), or
+///    `Proxy-Authenticate` / `Proxy-Connection` (standard hop-by-hop proxy
+///    headers). A bare 402 with no proxy marker is treated as origin-side.
+///
+/// Without this gate, any origin returning 402 through a healthy proxy
+/// triggers a one-request deanonymisation: the identical request is re-sent
+/// from the real IP via `build_direct_wreq_client` (`.no_proxy()`), to an
+/// origin that has already seen the proxy IP for that exact request.
+pub(crate) fn is_proxy_attributed_402(url: &str, headers: &wreq::header::HeaderMap) -> bool {
+    is_http_target(url) && has_proxy_attribution_marker(headers)
+}
+
+/// True if the response headers carry a marker that only an upstream proxy
+/// would emit — proving the 402 came from the proxy, not the origin.
+fn has_proxy_attribution_marker(headers: &wreq::header::HeaderMap) -> bool {
+    use wreq::header::PROXY_AUTHENTICATE;
+    headers.contains_key("x-webshare-error")
+        || headers.contains_key(PROXY_AUTHENTICATE)
+        || headers.contains_key("proxy-connection")
 }
 
 /// True if the chained-error string carries the Webshare 402 fingerprint.
@@ -257,6 +314,61 @@ mod tests {
         assert!(!is_http_target("https://example.com/"));
         assert!(!is_http_target("not a url"));
         assert!(!is_http_target("ftp://example.com/"));
+    }
+
+    /// A: an https target with a proxy marker must NOT be attributed to the
+    /// proxy — every `Ok(402)` on https traversed the CONNECT tunnel and
+    /// originated at the origin. Reverting the `is_http_target` gate makes
+    /// this test fail (returns true for https + marker).
+    #[test]
+    fn a_https_402_with_marker_not_proxy_attributed() {
+        let mut headers = wreq::header::HeaderMap::new();
+        headers.insert("x-webshare-error", "402".parse().unwrap());
+        assert!(
+            !is_proxy_attributed_402("https://example.com/paywall", &headers),
+            "https 402 must NOT be proxy-attributed even with a proxy marker — \
+             Ok(402) on https can only come from the origin"
+        );
+    }
+
+    /// A: an http target with NO proxy marker must NOT be attributed to the
+    /// proxy — a bare 402 is a live origin status. Reverting the
+    /// `has_proxy_attribution_marker` gate makes this test fail (returns true
+    /// for http + no marker).
+    #[test]
+    fn a_http_402_without_marker_not_proxy_attributed() {
+        let headers = wreq::header::HeaderMap::new();
+        assert!(
+            !is_proxy_attributed_402("http://example.com/paywall", &headers),
+            "http 402 with no proxy marker must NOT be proxy-attributed — \
+             a bare 402 is a live origin status"
+        );
+    }
+
+    /// A: an http target WITH a proxy marker IS attributed to the proxy —
+    /// this is the Webshare quota-exhaustion path the fallback exists for.
+    /// Do not regress the feature this PR chain exists for.
+    #[test]
+    fn a_http_402_with_x_webshare_error_is_proxy_attributed() {
+        let mut headers = wreq::header::HeaderMap::new();
+        headers.insert("x-webshare-error", "402".parse().unwrap());
+        assert!(
+            is_proxy_attributed_402("http://example.com/test", &headers),
+            "http 402 with X-Webshare-Error must be proxy-attributed"
+        );
+    }
+
+    /// A: `Proxy-Authenticate` and `Proxy-Connection` are also accepted as
+    /// proxy-attribution markers (standard hop-by-hop proxy headers).
+    #[test]
+    fn a_http_402_with_proxy_authenticate_or_connection_attributed() {
+        let mut h1 = wreq::header::HeaderMap::new();
+        h1.insert(wreq::header::PROXY_AUTHENTICATE, "Basic".parse().unwrap());
+        assert!(is_proxy_attributed_402("http://example.com/", &h1));
+
+        let mut h2 = wreq::header::HeaderMap::new();
+        h2.insert("proxy-connection", "close".parse().unwrap());
+        assert!(is_proxy_attributed_402("http://example.com/", &h2));
     }
 
     /// Build a REAL `wreq::Error` from a dead proxy (reserve a port, drop it

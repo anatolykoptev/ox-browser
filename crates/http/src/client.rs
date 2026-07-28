@@ -219,6 +219,20 @@ impl HttpClient {
             let proxy =
                 wreq::Proxy::all(proxy_url).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
             builder = builder.proxy(proxy);
+        } else {
+            // C: wreq's `ClientBuilder` defaults `auto_sys_proxy: true`,
+            // which installs a `ProxyMatcher::system()` that reads
+            // `HTTP_PROXY` / `http_proxy` (and the macOS dynamic store) at
+            // build time. Without `.no_proxy()`, an ambient `HTTP_PROXY` —
+            // routine in Docker images and CI runners — silently proxies the
+            // base client while `client_has_static_proxy` reads false. That
+            // breaks the iff the `WreqHandler::new` docstring asserts: every
+            // proxy counter under-reports, and both the 402 and dial
+            // fallbacks are skipped (used_proxy is false), so a dead ambient
+            // proxy hard-fails every read instead of degrading. Calling
+            // `.no_proxy()` clears `auto_sys_proxy`, making the flag a true
+            // iff and preventing unlogged ambient-proxy attribution.
+            builder = builder.no_proxy();
         }
 
         // Browser emulation for Chrome-identical TLS/HTTP2 fingerprints.

@@ -10,8 +10,8 @@ use wreq::Client;
 
 use crate::middleware::{Handler, Request};
 use crate::proxy_fallback::{
-    looks_like_proxy_402, looks_like_proxy_dial_failure, record_proxy_dial_fallback,
-    record_webshare_402_fallback,
+    is_proxy_attributed_402, looks_like_proxy_402, looks_like_proxy_dial_failure,
+    record_proxy_dial_fallback, record_webshare_402_fallback,
 };
 use crate::proxy_pool::ProxyPool;
 use crate::{HttpError, HttpResponse, Result};
@@ -60,8 +60,13 @@ impl WreqHandler {
     ///
     /// `client_has_static_proxy` must be `true` iff the client was built with a
     /// static `proxy_url` baked in (so the FIRST attempt is proxied even when
-    /// `req.proxy` is `None` and no pool is set). `max_redirects` is the
-    /// configured redirect limit, used to gate the dial-failure classifier.
+    /// `req.proxy` is `None` and no pool is set). This iff is established by
+    /// `build_wreq_client`, which calls `.proxy(...)` when `proxy_url` is
+    /// `Some` and `.no_proxy()` when it is `None` — clearing wreq's
+    /// `auto_sys_proxy` default so an ambient `HTTP_PROXY` cannot silently
+    /// proxy the base client while the flag reads false. `max_redirects` is
+    /// the configured redirect limit, used to gate the dial-failure
+    /// classifier.
     pub fn new(client: Client, client_has_static_proxy: bool, max_redirects: usize) -> Self {
         Self {
             client,
@@ -119,14 +124,34 @@ impl WreqHandler {
 
         if !skip_proxy {
             if let Some(ref proxy_url) = req.proxy {
-                if let Ok(proxy) = wreq::Proxy::all(proxy_url) {
-                    builder = builder.proxy(proxy);
-                }
-            } else if let Some(ref pool) = self.proxy_pool
-                && let Some(proxy_url) = pool.next()
-                && let Ok(proxy) = wreq::Proxy::all(&proxy_url)
-            {
+                // B: fail closed — an unparsable `req.proxy` is a
+                // misconfiguration, not a silent downgrade to direct. Going
+                // direct here would egress from the real IP with no proxy and
+                // no counter, contradicting the invariant this file protects.
+                let proxy = wreq::Proxy::all(proxy_url)
+                    .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
                 builder = builder.proxy(proxy);
+                crate::metrics::record_proxy_used();
+            } else if let Some(ref pool) = self.proxy_pool {
+                // B: an empty/exhausted pool is a routine runtime state, not a
+                // silent downgrade. Fail closed so the operator sees the error
+                // rather than a 100%-proxied dashboard while requests egress
+                // from the real IP.
+                let Some(proxy_url) = pool.next() else {
+                    return Err(HttpError::ProxyPool(
+                        "proxy pool exhausted — no proxy available, refusing to \
+                         degrade to a direct connection"
+                            .into(),
+                    ));
+                };
+                let proxy = wreq::Proxy::all(&proxy_url)
+                    .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+                builder = builder.proxy(proxy);
+                crate::metrics::record_proxy_used();
+            } else if self.client_has_static_proxy {
+                // The proxy is baked into the base client — no per-request
+                // attachment, but the request IS proxied.
+                crate::metrics::record_proxy_used();
             }
         }
 
@@ -189,10 +214,13 @@ impl WreqHandler {
 impl Handler for WreqHandler {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
         let used_proxy = self.first_attempt_uses_proxy(&req);
-        if used_proxy {
-            crate::metrics::record_proxy_used();
-        }
 
+        // B: `record_proxy_used()` is now called inside `execute_with` ONLY on
+        // the branch that actually attached a proxy (or when the base client
+        // has a static proxy baked in). Previously it fired here based on
+        // `first_attempt_uses_proxy`, which returned true even when the proxy
+        // failed to attach — the dashboard read 100% proxied while the request
+        // egressed on the real IP.
         let primary = self.execute_with(&self.client, &req, false).await;
 
         // Detect an upstream-proxy 402 regardless of whether a direct fallback
@@ -200,7 +228,7 @@ impl Handler for WreqHandler {
         // can see 402s that did NOT degrade (fallback gap).
         let is_proxy_402 = used_proxy
             && match &primary {
-                Ok(resp) if resp.status == 402 => true,
+                Ok(resp) if resp.status == 402 => is_proxy_attributed_402(&req.url, &resp.headers),
                 Err(HttpError::Request(e)) if looks_like_proxy_402(e) => true,
                 _ => false,
             };
@@ -238,7 +266,11 @@ impl Handler for WreqHandler {
 
         match primary {
             // Webshare 402 surfaced as a real HTTP response from the proxy.
-            Ok(resp) if resp.status == 402 => {
+            // Gated on `is_proxy_attributed_402`: a bare 402 or an https 402
+            // is origin-side (see proxy_fallback::is_proxy_attributed_402) and
+            // must NOT degrade — re-sending from the real IP would be a
+            // one-request deanonymisation any target can trigger.
+            Ok(resp) if resp.status == 402 && is_proxy_attributed_402(&req.url, &resp.headers) => {
                 record_webshare_402_fallback(&req.url);
                 self.execute_with(direct, &req, true).await
             }
