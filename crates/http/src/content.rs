@@ -2,7 +2,6 @@
 //!
 //! No HTTP, no async. Takes HTML string, returns clean content.
 
-use readabilityrs::Readability;
 use serde::{Deserialize, Serialize};
 
 /// Output format for content extraction.
@@ -113,85 +112,88 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
         };
     }
 
-    // Extract JSON-LD, og:image, and article metadata before readability strips meta tags.
+    // Extract JSON-LD, og:image, and article metadata before content extraction.
     let json_ld = crate::json_ld::extract_json_ld(html);
     let og_image = extract_og_image(html);
     let meta = extract_article_meta(html, &json_ld);
 
-    let article = Readability::new(html, Some(url), None)
-        .ok()
-        .and_then(|r| r.parse());
+    // Parse the document once — reused by extractor and SPA recovery.
+    let doc = dom_query::Document::from(html);
+    let base_url = url::Url::parse(url).ok();
 
-    match article {
-        Some(a) => {
-            let raw = a.content.unwrap_or_default();
-            let mut content = match format {
-                ContentFormat::Text => {
-                    let tc = collapse_whitespace(&a.text_content.unwrap_or_default());
-                    if tc.is_empty() {
-                        html_to_plain(&raw)
-                    } else {
-                        tc
-                    }
-                }
-                ContentFormat::Llm | ContentFormat::Markdown => {
-                    convert_format(&raw, ContentFormat::Markdown)
-                }
-                ContentFormat::Html => convert_format(&raw, format),
-            };
+    // Run the extractor: scores candidate nodes, picks the best, returns HTML.
+    let extracted = crate::extractor::extract_content_html(&doc, base_url.as_ref());
 
-            // SPA content recovery: if DOM extraction is sparse, try data islands
-            // and JS eval to recover content embedded in <script> tags.
-            // Only applies to text/markdown/llm formats — HTML format is raw.
-            if matches!(
-                format,
-                ContentFormat::Text | ContentFormat::Markdown | ContentFormat::Llm
-            ) {
-                recover_spa_content(html, &mut content);
-            }
-
-            let length = content.len();
-            let title = a.title.unwrap_or_else(|| extract_title_from_html(html));
-            ExtractedContent {
-                title,
-                content,
-                author: a.byline.unwrap_or_default(),
-                excerpt: a.excerpt.unwrap_or_default(),
-                length,
-                json_ld,
-                og_image,
-                meta,
+    // Convert the content node HTML to the requested format.
+    let mut content = match format {
+        ContentFormat::Text => {
+            let plain = html_to_plain(&extracted.html);
+            if plain.is_empty() {
+                html_to_plain(html)
+            } else {
+                plain
             }
         }
-        None => {
-            let mut content = match format {
-                ContentFormat::Llm | ContentFormat::Markdown => {
-                    convert_format(html, ContentFormat::Markdown)
-                }
-                _ => convert_format(html, format),
-            };
-
-            // SPA content recovery for the no-readability branch too.
-            if matches!(
-                format,
-                ContentFormat::Text | ContentFormat::Markdown | ContentFormat::Llm
-            ) {
-                recover_spa_content(html, &mut content);
-            }
-
-            let length = content.len();
-            let title = extract_title_from_html(html);
-            ExtractedContent {
-                title,
-                content,
-                author: String::new(),
-                excerpt: String::new(),
-                length,
-                json_ld,
-                og_image,
-                meta,
-            }
+        ContentFormat::Llm | ContentFormat::Markdown => {
+            let mut md = html_to_fit_markdown(&extracted.html);
+            // Run recovery passes on markdown output (H1, hero, announcements,
+            // section headings, footer CTA, footer sitemap).
+            let mut links = Vec::new();
+            crate::extractor::recover_content(
+                &doc,
+                base_url.as_ref(),
+                &mut md,
+                &extracted.recovered_h1,
+                &mut links,
+            );
+            md
         }
+        ContentFormat::Html => extracted.html.clone(),
+    };
+
+    // SPA content recovery: if DOM extraction is sparse, try data islands
+    // and JS eval to recover content embedded in <script> tags.
+    // Only applies to text/markdown/llm formats — HTML format is raw.
+    if matches!(
+        format,
+        ContentFormat::Text | ContentFormat::Markdown | ContentFormat::Llm
+    ) {
+        recover_spa_content(html, &mut content);
+    }
+
+    let length = content.len();
+
+    // Title: og:title → twitter:title → <title> tag (webclaw priority).
+    // The recovered H1 is part of the content (prepended as a heading by
+    // recover_content), not the page title — using it as title caused
+    // wrong titles on pages where the H1 is a section heading or dialog
+    // header (e.g., GitHub's "Provide feedback" h1).
+    let title = extract_meta_content(html, "og:title")
+        .or_else(|| extract_meta_content(html, "twitter:title"))
+        .or_else(|| Some(extract_title_from_html(html)))
+        .unwrap_or_default();
+
+    // Byline: extract from JSON-LD author or meta tags.
+    let author = json_ld_string(&json_ld, "author")
+        .or_else(|| extract_meta_content(html, "author"))
+        .or_else(|| extract_meta_content(html, "article:author"))
+        .unwrap_or_default();
+
+    // Excerpt: extract from meta description or JSON-LD description.
+    let excerpt = extract_meta_content(html, "description")
+        .or_else(|| extract_meta_content(html, "og:description"))
+        .or_else(|| json_ld_string(&json_ld, "description"))
+        .unwrap_or_default();
+
+    ExtractedContent {
+        title,
+        content,
+        author,
+        excerpt,
+        length,
+        json_ld,
+        og_image,
+        meta,
     }
 }
 
@@ -261,14 +263,6 @@ fn extract_og_image(html: &str) -> String {
         }
     }
     String::new()
-}
-
-fn convert_format(html: &str, format: ContentFormat) -> String {
-    match format {
-        ContentFormat::Text => html_to_plain(html),
-        ContentFormat::Markdown | ContentFormat::Llm => html_to_fit_markdown(html),
-        ContentFormat::Html => html.to_string(),
-    }
 }
 
 /// Large HTML + tiny extracted text = likely anti-bot page.

@@ -145,7 +145,9 @@ fn recovers_spa_content_from_js_eval() {
 
     let result = extract_content(html, "https://example.com", ContentFormat::Markdown);
     assert!(
-        result.content.contains("Understanding Rust Ownership and Borrowing"),
+        result
+            .content
+            .contains("Understanding Rust Ownership and Borrowing"),
         "should recover title from JS eval. Got: {}",
         result.content
     );

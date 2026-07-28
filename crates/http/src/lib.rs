@@ -8,6 +8,7 @@ pub mod cookie_provider;
 #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
 pub mod data_island;
 mod error;
+pub mod extractor;
 pub mod handler_reqwest;
 #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
 pub mod js_eval;
