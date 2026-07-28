@@ -236,19 +236,30 @@ pub(crate) fn is_noise(node: &NodeRef) -> bool {
             }
             return true;
         }
-        // Cookie consent platform IDs (prefix match)
+        // Cookie consent platform IDs (prefix match) — with safety valve:
+        // malformed HTML can leave a cookie container unclosed, causing it
+        // to absorb page content. Same NOISE_TEXT_LIMIT guard as exact IDs.
+        let text_len = node.text().len();
         for prefix in COOKIE_CONSENT_PREFIXES {
             if id_lower.starts_with(prefix) {
+                if text_len > NOISE_TEXT_LIMIT {
+                    return false;
+                }
                 return true;
             }
         }
     }
 
     // 5. Cookie consent class detection (prefix/substring match for platform classes)
+    // — with safety valve: same NOISE_TEXT_LIMIT guard as ID prefix match.
     if let Some(class) = node.class() {
         let class_lower = class.to_lowercase();
+        let text_len = node.text().len();
         for prefix in COOKIE_CONSENT_PREFIXES {
             if class_lower.contains(prefix) {
+                if text_len > NOISE_TEXT_LIMIT {
+                    return false;
+                }
                 return true;
             }
         }

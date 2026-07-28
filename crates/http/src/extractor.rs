@@ -718,7 +718,14 @@ fn find_content_position(markdown: &str, needle: &str) -> Option<usize> {
         if !is_inside_image_syntax(markdown, abs_pos) {
             return Some(abs_pos);
         }
+        // Advance past this match. needle.len() is a byte length — if the
+        // needle contains multibyte chars, abs_pos + needle.len() may land
+        // mid-UTF-8 char, and the next markdown[search_from..] slice would
+        // panic. Snap to the next char boundary.
         search_from = abs_pos + needle.len();
+        while search_from < markdown.len() && !markdown.is_char_boundary(search_from) {
+            search_from += 1;
+        }
     }
     None
 }
@@ -880,6 +887,23 @@ mod tests {
         assert!(pos.is_some());
         let pos = pos.unwrap();
         assert!(md.is_char_boundary(pos));
+    }
+
+    #[test]
+    fn find_content_position_multibyte_needle_no_panic() {
+        // A multibyte needle (Cyrillic) where the first match is inside an
+        // image alt and the second is the real content. The byte-length
+        // advance past the first match must snap to a char boundary or the
+        // next slice panics. Regression test for the medium BUG found by
+        // pr-review-council.
+        let md = "![Заголовок](a.png) Ещё текст Заголовок here";
+        let pos = find_content_position(md, "Заголовок");
+        assert!(pos.is_some(), "should find the content occurrence, not the image alt");
+        let pos = pos.unwrap();
+        assert!(md.is_char_boundary(pos));
+        // The found position must be the second occurrence (after the image),
+        // not the one inside ![...].
+        assert!(pos > md.find(']').unwrap(), "should skip the image alt occurrence");
     }
 
     #[test]
