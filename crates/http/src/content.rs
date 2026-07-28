@@ -125,6 +125,14 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
     let extracted = crate::extractor::extract_content_html(&doc, base_url.as_ref());
 
     // Convert the content node HTML to the requested format.
+    //
+    // NOTE: ContentFormat::Text does NOT get recovery passes (H1, hero
+    // paragraph, announcements, section headings, footer CTA/sitemap).
+    // These passes insert markdown-specific syntax (`# heading`, `**bold**`,
+    // `[link](url)`) that has no plain-text equivalent. Text format gets
+    // the raw content node converted to plain text — users who need the
+    // recovered content should use Markdown or LLM format instead.
+    // (Issue #73: documented asymmetry, intentional.)
     let mut content = match format {
         ContentFormat::Text => {
             let plain = html_to_plain(&extracted.html);
