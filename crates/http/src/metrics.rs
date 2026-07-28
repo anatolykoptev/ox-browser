@@ -33,13 +33,15 @@ pub static PROXY_USED_TOTAL: AtomicU64 = AtomicU64::new(0);
 pub static PROXY_402_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Times an upstream proxy was unreachable at the dial step (connect
-/// refused / timeout / DNS / TLS handshake to the proxy host) for an HTTP
-/// target — the trigger condition for the dial-failure fallback. Compare
-/// against `oxbrowser_proxy_dial_fallback_total` to confirm every detected
-/// dial failure degraded. A scrape where this rises but the fallback total
-/// does not means dial failures are occurring that did NOT degrade (notably
-/// HTTPS targets, where the classifier is deliberately conservative — see
-/// `proxy_fallback::looks_like_proxy_dial_failure`).
+/// refused / timeout / DNS / TLS handshake to the proxy host) for ANY target
+/// scheme. This is the trigger condition for the dial-failure fallback, but
+/// the fallback itself is gated more narrowly (HTTP targets + `max_redirects
+/// == 0` only — see `proxy_fallback::looks_like_proxy_dial_failure`). Compare
+/// against `oxbrowser_proxy_dial_fallback_total` to see dial failures that
+/// did NOT degrade (notably HTTPS targets, where the classifier is
+/// deliberately conservative — issue #86). A scrape where this rises but the
+/// fallback total does not means dial failures are occurring that did NOT
+/// degrade — the one signal #86 says needs watching.
 pub static PROXY_DIAL_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Record a fetch attempt (any outcome). Call once per top-level fetch/read.
@@ -63,7 +65,7 @@ pub fn record_proxy_402() {
 }
 
 /// Record an upstream-proxy dial failure (proxy host unreachable) detected
-/// for an HTTP target. Mirrors [`record_proxy_402`]: counts the trigger
+/// for ANY target scheme. Mirrors [`record_proxy_402`]: counts the trigger
 /// condition regardless of whether a direct fallback was wired/applied, so a
 /// gap between this and `oxbrowser_proxy_dial_fallback_total` is visible.
 pub fn record_proxy_dial() {
@@ -205,7 +207,7 @@ pub fn render() -> String {
         },
         Counter {
             name: "oxbrowser_proxy_dial_total",
-            help: "Upstream-proxy dial failures (proxy host unreachable) detected for HTTP targets.",
+            help: "Upstream-proxy dial failures (proxy host unreachable) detected for any target scheme.",
             value: PROXY_DIAL_TOTAL.load(Ordering::Relaxed),
         },
         Counter {

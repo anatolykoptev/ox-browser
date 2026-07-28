@@ -122,8 +122,28 @@ pub fn looks_like_proxy_402(err: &wreq::Error) -> bool {
 /// "proxy" could in principle contribute — but it is the existing 402 path
 /// and is NOT extended here. The dial classifier deliberately uses the typed
 /// predicate instead, because the IP-exposure stakes are higher.
-pub fn looks_like_proxy_dial_failure(err: &wreq::Error, url: &str) -> bool {
-    err.is_proxy_connect() && is_http_target(url)
+///
+/// ## F2 — redirect safety (why `max_redirects == 0` is required)
+///
+/// Both call sites pass `&req.url` — the ORIGINAL caller URL — while the
+/// client follows redirects internally (`client.rs` ssrf_redirect_policy,
+/// default `max_redirects = 10`). `is_http_target` therefore measures the
+/// scheme of the PRE-redirect URL. A seed `http://a/…` that 301s to
+/// `https://b/…` opens a CONNECT tunnel on hop 2; a reachable proxy that
+/// cannot reach the origin answers non-2xx → `TunnelError::TunnelUnsuccessful`
+/// → `ErrorKind::ProxyConnect`. `is_http_target("http://a/…")` is still true,
+/// so without the redirect guard the classifier would fire and degrade to
+/// direct — verbatim the case this doc refuses, a real-IP leak.
+///
+/// We CANNOT gate on the scheme of the hop that actually failed: `wreq::Error::uri()`
+/// carries the ORIGINAL request URI, not the redirect target (verified
+/// empirically — the outer `Pending` future in `client/future.rs` overwrites
+/// the uri with the original request's uri when the connector error has none).
+/// So when `max_redirects > 0` the failing hop's scheme is unobservable from
+/// outside wreq, and we refuse to classify at all. A missing fallback is
+/// strictly better than one that leaks.
+pub fn looks_like_proxy_dial_failure(err: &wreq::Error, url: &str, max_redirects: usize) -> bool {
+    err.is_proxy_connect() && is_http_target(url) && max_redirects == 0
 }
 
 /// True iff `url` parses with scheme exactly `http` (not `https`, not
@@ -140,9 +160,17 @@ fn is_http_target(url: &str) -> bool {
 ///
 /// We require both a "402" token AND a phrase indicating it came from a proxy
 /// connect step (Webshare returns the status during the CONNECT handshake).
+///
+/// F5: the `/402` disjunct was removed — it matched a URL *path* segment
+/// (`/402`) in the error's Display string (which includes the request URI),
+/// so any target URL containing `/402` was misclassified as a proxy-402
+/// before the typed dial arm was reached. The remaining `" 402"` and
+/// `"status: 402"` disjuncts require a space / "status:" prefix and do not
+/// match URL paths; they still match the legitimate proxy-402 Display forms
+/// ("proxy returned 402", "HTTP/1.1 402").
 pub(crate) fn contains_402_marker(s: &str) -> bool {
     let lc = s.to_ascii_lowercase();
-    let has_402 = lc.contains(" 402") || lc.contains("status: 402") || lc.contains("/402");
+    let has_402 = lc.contains(" 402") || lc.contains("status: 402");
     let has_payment = lc.contains("payment required");
     let proxy_context = lc.contains("proxy") || lc.contains("connect") || lc.contains("tunnel");
     (has_402 || has_payment) && proxy_context
@@ -178,6 +206,24 @@ mod tests {
         assert!(!contains_402_marker(
             "HTTP/1.1 503 Service Unavailable via proxy"
         ));
+    }
+
+    /// F5: a target URL containing `/402` as a path segment must NOT be
+    /// misclassified as a proxy-402. The error Display string includes the
+    /// request URI, so the old `/402` disjunct matched the URL path. With the
+    /// disjunct removed, only a real " 402" / "status: 402" / "payment
+    /// required" token in a proxy context classifies.
+    #[test]
+    fn ignores_402_in_url_path() {
+        // The full Display chain wreq produces for a proxy connect error to a
+        // URL whose path contains /402 — before F5 this matched via the
+        // "/402" disjunct + "connect" proxy-context.
+        let display = "error sending request for uri \
+            (http://example.com/orders/402): client error (ProxyConnect)";
+        assert!(
+            !contains_402_marker(display),
+            "a URL path containing /402 must NOT be treated as a proxy-402"
+        );
     }
 
     #[test]
@@ -226,7 +272,7 @@ mod tests {
     }
 
     /// HTTP target + dead proxy: forward-proxy path, `is_proxy_connect()` is
-    /// precisely a proxy-dial failure -> classifier fires.
+    /// precisely a proxy-dial failure -> classifier fires (with `max_redirects == 0`).
     #[tokio::test]
     async fn detects_real_dead_proxy_http_target() {
         let err = dead_proxy_error("http://example.com/").await;
@@ -235,8 +281,8 @@ mod tests {
             "sanity: wreq reports a ProxyConnect for a dead HTTP proxy"
         );
         assert!(
-            looks_like_proxy_dial_failure(&err, "http://example.com/"),
-            "HTTP + dead proxy must be classified as a proxy-dial failure"
+            looks_like_proxy_dial_failure(&err, "http://example.com/", 0),
+            "HTTP + dead proxy + no redirects must be classified as a proxy-dial failure"
         );
     }
 
@@ -253,9 +299,27 @@ mod tests {
             "sanity: wreq still reports ProxyConnect for a dead HTTPS proxy"
         );
         assert!(
-            !looks_like_proxy_dial_failure(&err, "https://example.com/"),
+            !looks_like_proxy_dial_failure(&err, "https://example.com/", 0),
             "HTTPS targets must NOT trigger the dial fallback — is_proxy_connect \
              is ambiguous for the tunnel path"
+        );
+    }
+
+    /// F2: when `max_redirects > 0` the classifier MUST refuse even for an
+    /// HTTP target — the scheme of the failing hop is unobservable (a redirect
+    /// from http to https makes `is_http_target` measure the pre-redirect URL),
+    /// so degrading could leak the real IP through a healthy proxy.
+    #[tokio::test]
+    async fn does_not_classify_when_redirects_enabled() {
+        let err = dead_proxy_error("http://example.com/").await;
+        assert!(
+            err.is_proxy_connect(),
+            "sanity: wreq reports a ProxyConnect for a dead HTTP proxy"
+        );
+        assert!(
+            !looks_like_proxy_dial_failure(&err, "http://example.com/", 10),
+            "with max_redirects > 0 the classifier must refuse — the failing \
+             hop's scheme is unobservable after a redirect"
         );
     }
 }

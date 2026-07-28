@@ -47,15 +47,29 @@ impl HttpClient {
         let needs_fallback = config.proxy_url.is_some()
             || config.proxy_pool.is_some()
             || config.residential_proxy.is_some();
+        let client_has_static_proxy = config.proxy_url.is_some();
+        let max_redirects = config.max_redirects;
         let base: Arc<dyn Handler> = if let Some(ref pool) = config.proxy_pool {
             Arc::new(
-                WreqHandler::with_proxy_pool(client, Arc::clone(pool))
-                    .with_direct_fallback(direct_client),
+                WreqHandler::with_proxy_pool(
+                    client,
+                    Arc::clone(pool),
+                    client_has_static_proxy,
+                    max_redirects,
+                )
+                .with_direct_fallback(direct_client),
             )
         } else if needs_fallback {
-            Arc::new(WreqHandler::new(client).with_direct_fallback(direct_client))
+            Arc::new(
+                WreqHandler::new(client, client_has_static_proxy, max_redirects)
+                    .with_direct_fallback(direct_client),
+            )
         } else {
-            Arc::new(WreqHandler::new(client))
+            Arc::new(WreqHandler::new(
+                client,
+                client_has_static_proxy,
+                max_redirects,
+            ))
         };
 
         let mut middlewares: Vec<MiddlewareFn> = Vec::new();

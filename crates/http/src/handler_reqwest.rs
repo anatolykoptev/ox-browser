@@ -30,15 +30,42 @@ pub struct WreqHandler {
     proxy_pool: Option<Arc<dyn ProxyPool>>,
     /// Sibling client with no proxy. When `Some`, we retry on Webshare 402.
     direct_client: Option<Client>,
+    /// Whether the base `client` was built with a static `proxy_url` baked in
+    /// (see `HttpConfig::proxy_url`). Distinct from `direct_client.is_some()`,
+    /// which is ALSO true for a residential-only config whose base client has
+    /// NO proxy — the residential proxy is injected per-request by the
+    /// residential middleware on a CF retry, not at the client level. Deriving
+    /// "this attempt is proxied" from `direct_client.is_some()` therefore
+    /// falsely reported every un-challenged first attempt of a residential-only
+    /// config as proxied (F1).
+    client_has_static_proxy: bool,
+    /// `HttpConfig::max_redirects` — the client follows up to this many
+    /// redirects internally. The dial-failure classifier is only safe when no
+    /// redirect can have occurred (`max_redirects == 0`): the classifier gates
+    /// on the scheme of `req.url` (the ORIGINAL caller URL), but a redirect
+    /// from `http://` to `https://` makes the failing hop's scheme
+    /// unobservable from outside wreq (`Error::uri()` carries the original
+    /// URL, not the redirect target — verified empirically). So when redirects
+    /// are enabled, an `is_proxy_connect()` hit may be a CONNECT-tunnel failure
+    /// for an HTTPS origin through a HEALTHY proxy (origin unreachable), which
+    /// must NOT degrade. See F2 / `looks_like_proxy_dial_failure`.
+    max_redirects: usize,
 }
 
 impl WreqHandler {
     /// Wrap an already-configured wreq client.
-    pub fn new(client: Client) -> Self {
+    ///
+    /// `client_has_static_proxy` must be `true` iff the client was built with a
+    /// static `proxy_url` baked in (so the FIRST attempt is proxied even when
+    /// `req.proxy` is `None` and no pool is set). `max_redirects` is the
+    /// configured redirect limit, used to gate the dial-failure classifier.
+    pub fn new(client: Client, client_has_static_proxy: bool, max_redirects: usize) -> Self {
         Self {
             client,
             proxy_pool: None,
             direct_client: None,
+            client_has_static_proxy,
+            max_redirects,
         }
     }
 
@@ -46,11 +73,18 @@ impl WreqHandler {
     ///
     /// Each request picks the next proxy from the pool via
     /// wreq's per-request `RequestBuilder::proxy()`.
-    pub fn with_proxy_pool(client: Client, pool: Arc<dyn ProxyPool>) -> Self {
+    pub fn with_proxy_pool(
+        client: Client,
+        pool: Arc<dyn ProxyPool>,
+        client_has_static_proxy: bool,
+        max_redirects: usize,
+    ) -> Self {
         Self {
             client,
             proxy_pool: Some(pool),
             direct_client: None,
+            client_has_static_proxy,
+            max_redirects,
         }
     }
 
@@ -136,12 +170,15 @@ impl WreqHandler {
     }
 
     /// True if the first attempt would route through *some* proxy (per-request
-    /// override, rotating pool, or static client-level proxy via the parent
-    /// `HttpConfig`). The static-client case is implicitly true whenever
-    /// `direct_client` is `Some` — `HttpClient::new` only attaches the direct
-    /// fallback when a proxy is configured.
+    /// override, rotating pool, or static client-level proxy baked into the
+    /// base `client` via `HttpConfig::proxy_url`). The static-client case is
+    /// determined by [`Self::client_has_static_proxy`] — NOT by
+    /// `direct_client.is_some()`, which is also true for a residential-only
+    /// config whose base client has no proxy (the residential proxy is injected
+    /// per-request on a CF retry, so an un-challenged first attempt is NOT
+    /// proxied even though a direct sibling exists).
     fn first_attempt_uses_proxy(&self, req: &Request) -> bool {
-        req.proxy.is_some() || self.proxy_pool.is_some() || self.direct_client.is_some()
+        req.proxy.is_some() || self.proxy_pool.is_some() || self.client_has_static_proxy
     }
 }
 
@@ -173,8 +210,14 @@ impl Handler for WreqHandler {
         // real event so the operator sees dial failures that did NOT degrade
         // (notably HTTPS targets, where the classifier is deliberately
         // conservative — see proxy_fallback::looks_like_proxy_dial_failure).
-        let is_proxy_dial = used_proxy
-            && matches!(&primary, Err(HttpError::Request(e)) if looks_like_proxy_dial_failure(e, &req.url));
+        //
+        // F4: the metric is gated on `is_proxy_connect()` ALONE (not the
+        // scheme), so an HTTPS dead-proxy request bumps this counter even
+        // though the degradation decision below refuses it. The gap between
+        // this and `PROXY_DIAL_FALLBACK_TOTAL` is the signal #86 says needs
+        // watching. The scheme gate lives ONLY on the degradation decision.
+        let is_proxy_dial =
+            used_proxy && matches!(&primary, Err(HttpError::Request(e)) if e.is_proxy_connect());
         if is_proxy_dial {
             crate::metrics::record_proxy_dial();
         }
@@ -207,7 +250,13 @@ impl Handler for WreqHandler {
             // proxy_fallback::looks_like_proxy_dial_failure for why HTTPS is
             // deliberately excluded (the tunnel error surface is ambiguous
             // between proxy-dial and origin-unreachable-through-proxy).
-            Err(HttpError::Request(ref e)) if looks_like_proxy_dial_failure(e, &req.url) => {
+            // F2: additionally gated on `max_redirects == 0` — when redirects
+            // are enabled, the scheme of the failing hop is unobservable
+            // (Error::uri() carries the original URL, verified empirically),
+            // so an http→https redirect makes the classifier unsafe.
+            Err(HttpError::Request(ref e))
+                if looks_like_proxy_dial_failure(e, &req.url, self.max_redirects) =>
+            {
                 record_proxy_dial_fallback(&req.url);
                 self.execute_with(direct, &req, true).await
             }
