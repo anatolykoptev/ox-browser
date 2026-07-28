@@ -334,10 +334,12 @@ fn recover_h1(doc: &Document, _content_html: &str) -> String {
     // — these are accessibility chrome, not visible page headings. GitHub's
     // search dialog has <h1 class="sr-only">Search code...</h1> which is not
     // a visible heading and should not become the page title.
+    // Also skip h1 inside dialog/modal containers (aria-modal, role="dialog")
+    // — GitHub's "Provide feedback" h1 is a dialog title, not the page heading.
     let h1 = h1_sel
         .nodes()
         .iter()
-        .find(|h1| !crate::noise::is_noise(h1));
+        .find(|h1| !crate::noise::is_noise(h1) && !is_inside_dialog(h1));
 
     let Some(h1) = h1 else {
         return String::new();
@@ -774,7 +776,24 @@ fn is_inside_image_syntax(markdown: &str, pos: usize) -> bool {
     false
 }
 
-/// Check if an element is inside a structural noise tag (nav, aside, footer, header).
+/// Check if an element is inside a dialog/modal container.
+/// Detects `aria-modal="true"` and `role="dialog"` on any ancestor.
+fn is_inside_dialog(el: &NodeRef<'_>) -> bool {
+    for ancestor in el.ancestors(None) {
+        if let Some(role) = ancestor.attr("role")
+            && role.as_ref() == "dialog"
+        {
+            return true;
+        }
+        if let Some(modal) = ancestor.attr("aria-modal")
+            && modal.as_ref() == "true"
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_inside_structural_noise(el: &NodeRef<'_>) -> bool {
     for ancestor in el.ancestors(None) {
         if let Some(tag) = ancestor.node_name().map(|n| n.to_lowercase()) {
