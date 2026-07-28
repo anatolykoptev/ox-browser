@@ -47,7 +47,7 @@ use std::time::Duration;
 
 use ox_http::{
     BUILTIN_PROFILES, BrowserProfile, HttpClient, HttpConfig, profile_to_emulation,
-    tls::{FP_BUCKET_B, classify_fingerprint_diffs},
+    tls::{FP_BUCKET_B, FingerprintVerdict, classify_fingerprint_diffs, reference_exhibits_gap},
 };
 use serde::{Deserialize, Serialize};
 
@@ -649,6 +649,64 @@ fn preview_json(v: &serde_json::Value) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| format!("{:?}", v))
 }
 
+// ── Bucket-B comparability helpers (F2/F3) ────────────────────────────
+
+/// Reference value for a bucket-B field. Exhaustive over [`FP_BUCKET_B`]:
+/// the `_` arm PANICS naming the offending field — a desync between
+/// `FP_BUCKET_B` (in `crates/http/src/tls.rs`) and this match cannot be
+/// silent (F2). Adding a field to `FP_BUCKET_B` without an arm here fails
+/// loudly, never green. Do NOT "fix" this with a comment telling
+/// contributors to keep the lists in sync; the panic IS the sync guard.
+fn reference_value_for<'a>(field: &str, reference: &'a Reference) -> &'a str {
+    match field {
+        "ja3n_hash" => &reference.tls.ja3n_hash,
+        "ja4" => &reference.tls.ja4,
+        "peetprint_hash" => &reference.tls.peetprint_hash,
+        _ => panic!(
+            "reference_value_for: unknown bucket-B field {:?} — FP_BUCKET_B in \
+             crates/http/src/tls.rs lists a field with no matching arm in \
+             crates/http/tests/fingerprint_oracle_test.rs. Add the arm; this \
+             panic is the desync guard required by F2.",
+            field
+        ),
+    }
+}
+
+/// F2b: every bucket-B field must have a non-empty reference value, so its
+/// self-expiry stays armed. A reference capture that drops a bucket-B field
+/// silently disables that field's expiry while the run stays green. Called
+/// from `test_reference_provenance`; extracted so the guard itself is
+/// unit-testable (see `f2b_empty_bucket_b_field_fails_provenance`).
+fn assert_bucket_b_provenance(r: &Reference, name: &str) {
+    for field in FP_BUCKET_B {
+        let val = reference_value_for(field, r);
+        assert!(
+            !val.is_empty(),
+            "{}: bucket-B field {} has an empty reference value — its self-expiry is \
+             silently disabled. Re-capture the reference with the field populated.",
+            name,
+            field
+        );
+    }
+}
+
+/// F1: build the failure panic message naming BOTH the hard-failure count
+/// and the closed-gap count — neither class may mask the other. When both
+/// lists are non-empty, both counts appear so the operator sees the full
+/// picture (the old `else if` chain let the gap_closed arm swallow the
+/// hard_failures arm, printing a "gap CLOSED" instruction for a defect the
+/// report never showed).
+fn fingerprint_fail_message(verdict: &FingerprintVerdict, major: &str) -> String {
+    format!(
+        "fingerprint mismatch for Chrome {}: {} hard failure(s), {} closed gap(s). \
+         See FIELD lines above for hard failures (profile is wrong) and GAP-CLOSED \
+         lines for bucket-B fields that now match (remove them from FP_BUCKET_B).",
+        major,
+        verdict.hard_failures.len(),
+        verdict.gap_closed.len(),
+    )
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────
 
 /// The fingerprint oracle: for each Chrome/linux profile, build an ox-browser
@@ -699,17 +757,50 @@ async fn test_fingerprint_oracle() {
             .iter()
             .map(|d| (d.field.clone(), d.expected.clone(), d.observed.clone()))
             .collect();
-        // comparable_b = bucket-B fields actually measured on both sides
-        // (reference non-empty). Only these can meaningfully "match" — a
-        // field with no reference value is absent, not matching.
+        // comparable_b = bucket-B fields that are actually comparable. Two
+        // gates, both required so a desync or a version mismatch can never
+        // silently disable self-expiry:
+        //   (F2) the field has a non-empty reference value — a field with no
+        //     reference value is absent, not matching. reference_value_for
+        //     panics on an unknown field (F2a), so a new FP_BUCKET_B entry with
+        //     no arm here is loud, never silently `_ => false`.
+        //   (F3) the reference EXHIBITS the trust_anchors gap — its own
+        //     ClientHello sends extension 51764. References from Chrome
+        //     versions that do NOT send it (131/133 — 16 extensions) have a
+        //     correct 16-extension ClientHello by construction; for those a
+        //     match is CORRECT and must NOT be reported as a closed gap.
+        // For each field filtered out, eprintln why (F2c) — never silent.
+        let gap_exhibited = reference_exhibits_gap(&reference.tls.ja3);
+        if !gap_exhibited {
+            eprintln!(
+                "  NOTE reference (Chrome {}) does not exhibit the trust_anchors gap \
+                 (no extension 51764 in JA3) — bucket-B self-expiry disabled for ALL fields; \
+                 a match is correct, not a closed gap",
+                major
+            );
+        }
         let comparable_b: Vec<&str> = FP_BUCKET_B
             .iter()
             .copied()
-            .filter(|f| match *f {
-                "ja3n_hash" => !reference.tls.ja3n_hash.is_empty(),
-                "ja4" => !reference.tls.ja4.is_empty(),
-                "peetprint_hash" => !reference.tls.peetprint_hash.is_empty(),
-                _ => false,
+            .filter(|f| {
+                let val = reference_value_for(f, &reference);
+                if val.is_empty() {
+                    eprintln!(
+                        "  NOTE bucket-B field {} self-expiry disabled — no reference \
+                         value (field cannot match, so it cannot signal a closed gap)",
+                        f
+                    );
+                    return false;
+                }
+                if !gap_exhibited {
+                    eprintln!(
+                        "  NOTE bucket-B field {} self-expiry disabled — reference does \
+                         not exhibit the trust_anchors gap (no 51764 in JA3)",
+                        f
+                    );
+                    return false;
+                }
+                true
             })
             .collect();
         let verdict = classify_fingerprint_diffs(&diff_tuples, &comparable_b);
@@ -722,6 +813,34 @@ async fn test_fingerprint_oracle() {
         }
         for f in &verdict.tolerated_b {
             eprintln!("  KNOWN-GAP {} (bucket B: trust_anchors gap, issue #81)", f);
+        }
+
+        // F1: print each failure class independently. No `else if` may mask a
+        // non-empty list. `FingerprintVerdict::is_ok()` is
+        // `hard_failures.is_empty() && gap_closed.is_empty()`, so when BOTH
+        // are non-empty the old `else if !verdict.gap_closed.is_empty()` arm
+        // swallowed the `else` printing hard_failures — a genuine profile
+        // regression printed as "fingerprint gap CLOSED … remove them from
+        // FP_BUCKET_B", instructing the operator to DELETE suppression
+        // entries in response to a defect the report never showed. Now both
+        // classes print unconditionally, and exactly ONE panic at the end
+        // names BOTH counts.
+        if !verdict.hard_failures.is_empty() {
+            for d in &verdict.hard_failures {
+                eprintln!(
+                    "  FIELD {}\n    expected (real Chrome {}): {}\n    observed (ox-browser): {}",
+                    d.0, reference.browser_version, d.1, d.2
+                );
+            }
+        }
+        if !verdict.gap_closed.is_empty() {
+            for f in &verdict.gap_closed {
+                eprintln!(
+                    "  GAP-CLOSED {} — bucket-B field now matches the reference; \
+                     remove it from FP_BUCKET_B in tls.rs",
+                    f
+                );
+            }
         }
 
         if verdict.is_ok() && diffs.is_empty() {
@@ -743,47 +862,8 @@ async fn test_fingerprint_oracle() {
                     "fields"
                 },
             );
-        } else if !verdict.gap_closed.is_empty() {
-            for f in &verdict.gap_closed {
-                eprintln!(
-                    "  GAP-CLOSED {} — bucket-B field now matches the reference; \
-                     remove it from FP_BUCKET_B in tls.rs",
-                    f
-                );
-            }
-            panic!(
-                "fingerprint gap CLOSED for Chrome {}: {} bucket-B field(s) now match ({}). \
-                 The trust_anchors gap (issue #81) appears resolved — remove them from \
-                 FP_BUCKET_B so the suppression list does not go stale.",
-                major,
-                verdict.gap_closed.len(),
-                verdict.gap_closed.join(", "),
-            );
         } else {
-            for d in &verdict.hard_failures {
-                eprintln!(
-                    "  FIELD {}\n    expected (real Chrome {}): {}\n    observed (ox-browser): {}",
-                    d.0, reference.browser_version, d.1, d.2
-                );
-            }
-            panic!(
-                "fingerprint mismatch for Chrome {}: {} fixable field(s) differ \
-                 ({} bucket-A policy {}, {} bucket-B gap {} tolerated)",
-                major,
-                verdict.hard_failures.len(),
-                verdict.tolerated_a.len(),
-                if verdict.tolerated_a.len() == 1 {
-                    "field"
-                } else {
-                    "fields"
-                },
-                verdict.tolerated_b.len(),
-                if verdict.tolerated_b.len() == 1 {
-                    "field"
-                } else {
-                    "fields"
-                },
-            );
+            panic!("{}", fingerprint_fail_message(&verdict, &major));
         }
     }
 }
@@ -869,6 +949,14 @@ fn test_reference_provenance() {
                 name, r.tls.ja3_hash, r.tls.ja4, r.http2_akamai_fingerprint
             );
         }
+
+        // F2b: every bucket-B field must have a non-empty reference value, so
+        // its self-expiry stays armed. A future capture that drops a bucket-B
+        // field (e.g. ja3n_hash or peetprint_hash, which had no such guard
+        // before) would silently disable that field's expiry while the run
+        // stays green. reference_value_for also panics on an unknown field
+        // (F2a), so a desync between FP_BUCKET_B and this file is loud.
+        assert_bucket_b_provenance(&r, &name);
     }
 
     assert!(
@@ -924,5 +1012,161 @@ async fn different_browsers_produce_different_fingerprints() {
     eprintln!(
         "Chrome JA4: {} ≠ Firefox JA4: {} ✓",
         chrome_ja4, firefox_ja4
+    );
+}
+
+// ── F1/F2 falsification tests (no network; local fixtures only) ────────
+//
+// These exercise the F1 (reporting) and F2 (comparability) mechanisms
+// directly, without the live echo endpoints. Run with:
+//   cargo test --features fingerprint --test fingerprint_oracle_test f1_
+//   cargo test --features fingerprint --test fingerprint_oracle_test f2_
+
+// F1: when BOTH hard_failures and gap_closed are non-empty, the failure
+// message must name BOTH counts — neither class may mask the other. This is
+// the load-bearing invariant of the restructured reporting block: the old
+// `else if` chain let the gap_closed arm swallow hard_failures, so a genuine
+// profile regression printed as "gap CLOSED". The message helper encodes the
+// "name both counts" contract; the reporting block calls it for the single
+// panic.
+#[test]
+fn f1_fail_message_names_both_counts_when_both_nonempty() {
+    let mut v = FingerprintVerdict::default();
+    v.hard_failures
+        .push(("http2_akamai".to_string(), "x".to_string(), "y".to_string()));
+    v.gap_closed.push("ja4".to_string());
+    let msg = fingerprint_fail_message(&v, "148");
+    assert!(
+        msg.contains("1 hard failure(s)"),
+        "message must name the hard-failure count: {msg}"
+    );
+    assert!(
+        msg.contains("1 closed gap(s)"),
+        "message must name the closed-gap count: {msg}"
+    );
+}
+
+// F1: when only hard_failures are present, the message names the
+// hard-failure count and a zero closed-gap count (not just one number).
+#[test]
+fn f1_fail_message_names_hard_only() {
+    let mut v = FingerprintVerdict::default();
+    v.hard_failures
+        .push(("http2_akamai".to_string(), "x".to_string(), "y".to_string()));
+    let msg = fingerprint_fail_message(&v, "148");
+    assert!(msg.contains("1 hard failure(s)"), "{msg}");
+    assert!(msg.contains("0 closed gap(s)"), "{msg}");
+}
+
+// F1: when only gap_closed is present, the message names the closed-gap
+// count and a zero hard-failure count.
+#[test]
+fn f1_fail_message_names_gap_only() {
+    let mut v = FingerprintVerdict::default();
+    v.gap_closed.push("ja4".to_string());
+    let msg = fingerprint_fail_message(&v, "148");
+    assert!(msg.contains("0 hard failure(s)"), "{msg}");
+    assert!(msg.contains("1 closed gap(s)"), "{msg}");
+}
+
+// F2a: an unknown bucket-B field must PANIC, not silently return a default.
+// This is the desync guard — adding a field to FP_BUCKET_B without an arm in
+// reference_value_for fails loudly, never green. Mutation: change the `_`
+// arm to `=> ""` and this test fails (no panic).
+#[test]
+#[should_panic(expected = "reference_value_for: unknown bucket-B field")]
+fn f2a_unknown_bucket_b_field_panics() {
+    let r = load_reference("148");
+    reference_value_for("bogus_field", &r);
+}
+
+// F2b: a reference with an empty bucket-B field must FAIL provenance, so a
+// future capture that drops a field cannot silently disable its expiry.
+// Mutation: remove the `assert!(!val.is_empty())` from
+// assert_bucket_b_provenance and this test fails (no panic).
+#[test]
+#[should_panic(expected = "bucket-B field ja3n_hash has an empty reference value")]
+fn f2b_empty_bucket_b_field_fails_provenance() {
+    let mut r = load_reference("148");
+    r.tls.ja3n_hash.clear();
+    assert_bucket_b_provenance(&r, "reference_chrome_148.json");
+}
+
+// F2b (positive): every committed reference passes the bucket-B provenance
+// guard — all bucket-B fields are populated. This confirms the guard does
+// not flap on real fixtures.
+#[test]
+fn f2b_all_references_pass_bucket_b_provenance() {
+    let dir = fixture_dir();
+    let entries = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("read fixtures dir {}: {e}", dir.display()));
+    let mut count = 0;
+    for entry in entries {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("reference_chrome_") || !name.ends_with(".json") {
+            continue;
+        }
+        count += 1;
+        let r: Reference = serde_json::from_str(
+            &std::fs::read_to_string(entry.path())
+                .unwrap_or_else(|e| panic!("read {}: {e}", entry.path().display())),
+        )
+        .unwrap_or_else(|e| panic!("parse {}: {e}", entry.path().display()));
+        assert_bucket_b_provenance(&r, &name);
+    }
+    assert!(count > 0, "no reference fixtures found");
+}
+
+// F3: the version-scoping gate is wired into the oracle's comparable_b
+// construction. A reference that does NOT exhibit the gap (no 51764 in JA3)
+// must yield an empty comparable_b, so no bucket-B field can be reported as
+// gap_closed. Uses a real Chrome 131 fixture (16 extensions, no 51764).
+#[test]
+fn f3_chrome131_reference_yields_no_comparable_b() {
+    let reference = load_reference("131");
+    assert!(
+        !reference_exhibits_gap(&reference.tls.ja3),
+        "Chrome 131 JA3 must NOT contain 51764"
+    );
+    // Reproduce the oracle's comparable_b gate (F2+F3) against the fixture.
+    let gap_exhibited = reference_exhibits_gap(&reference.tls.ja3);
+    let comparable_b: Vec<&str> = FP_BUCKET_B
+        .iter()
+        .copied()
+        .filter(|f| {
+            let val = reference_value_for(f, &reference);
+            !val.is_empty() && gap_exhibited
+        })
+        .collect();
+    assert!(
+        comparable_b.is_empty(),
+        "Chrome 131 (no 51764) must yield NO comparable bucket-B fields, got: {:?}",
+        comparable_b
+    );
+}
+
+// F3: a reference that DOES exhibit the gap (51764 in JA3) yields all
+// populated bucket-B fields as comparable. Uses a real Chrome 148 fixture.
+#[test]
+fn f3_chrome148_reference_yields_all_comparable_b() {
+    let reference = load_reference("148");
+    assert!(
+        reference_exhibits_gap(&reference.tls.ja3),
+        "Chrome 148 JA3 must contain 51764"
+    );
+    let gap_exhibited = reference_exhibits_gap(&reference.tls.ja3);
+    let comparable_b: Vec<&str> = FP_BUCKET_B
+        .iter()
+        .copied()
+        .filter(|f| {
+            let val = reference_value_for(f, &reference);
+            !val.is_empty() && gap_exhibited
+        })
+        .collect();
+    assert_eq!(
+        comparable_b.len(),
+        FP_BUCKET_B.len(),
+        "Chrome 148 (has 51764, all fields populated) must yield ALL bucket-B fields comparable"
     );
 }

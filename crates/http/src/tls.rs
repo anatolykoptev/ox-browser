@@ -528,6 +528,29 @@ pub fn classify_with(
     v
 }
 
+/// F3: does the reference's own ClientHello exhibit the `trust_anchors` gap?
+///
+/// A bucket-B field is only comparable if the reference EXHIBITS the gap —
+/// i.e. the reference's own ClientHello sends extension `51764`
+/// (`trust_anchors`, 0xca34 = draft-ietf-tls-trust-anchor-ids). References
+/// captured from Chrome versions that do NOT send it (e.g. Chrome 131/133 —
+/// 16 extensions, no 51764) have a correct 16-extension ClientHello by
+/// construction; for those, a match is CORRECT and must NOT be reported as a
+/// closed gap, or the operator would be told to delete suppression entries
+/// in response to a correct result (which would then break Chrome 148).
+///
+/// The reference's JA3 string carries the full extension list as its third
+/// `-`-joined component (`<version>,<ciphers>,<extensions>,<sigalgs>,<version>`).
+/// Returns `false` if the JA3 string is absent or unparseable — never assume
+/// the gap is exhibited.
+pub fn reference_exhibits_gap(ja3: &str) -> bool {
+    let parts: Vec<&str> = ja3.split(',').collect();
+    if parts.len() < 3 || parts[2].is_empty() {
+        return false;
+    }
+    parts[2].split('-').any(|e| e == "51764")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,5 +687,42 @@ mod tests {
         let v = classify_with(TEST_A, TEST_B, &[], &["ja4"]);
         assert!(!v.is_ok());
         assert_eq!(v.gap_closed, vec!["ja4"]);
+    }
+
+    // F3: a reference whose ClientHello sends extension 51764 (trust_anchors)
+    // exhibits the gap — bucket-B fields ARE comparable for it. Chrome 148,
+    // 144, 146 all send 51764 (17 extensions).
+    #[test]
+    fn reference_exhibits_gap_chrome148_true() {
+        let ja3 = "771,4865-4866-4867-49195,10-0-23-65281-65037-45-27-11-51764-43-35-5-18-17613-13-16-51,4588-29-23-24,0";
+        assert!(reference_exhibits_gap(ja3));
+    }
+
+    // F3: a reference whose ClientHello does NOT send 51764 does NOT exhibit
+    // the gap — bucket-B fields are NOT comparable (a match is correct, not a
+    // closed gap). Chrome 131/133 send 16 extensions, no 51764.
+    #[test]
+    fn reference_exhibits_gap_chrome131_false() {
+        let ja3 = "771,4865-4866-4867-49195,18-45-16-11-51-13-65281-17613-0-23-5-27-35-43-65037-10,4588-29-23-24,0";
+        assert!(!reference_exhibits_gap(ja3));
+    }
+
+    // F3: an absent or unparseable JA3 string must NOT be assumed to exhibit
+    // the gap — return false so the field is treated as not comparable.
+    #[test]
+    fn reference_exhibits_gap_empty_ja3_false() {
+        assert!(!reference_exhibits_gap(""));
+    }
+
+    #[test]
+    fn reference_exhibits_gap_malformed_ja3_false() {
+        // Only two components — no extension list to inspect.
+        assert!(!reference_exhibits_gap("771,4865-4866"));
+    }
+
+    #[test]
+    fn reference_exhibits_gap_empty_extension_list_false() {
+        // Third component present but empty.
+        assert!(!reference_exhibits_gap("771,4865-4866,,4588-29-23-24,0"));
     }
 }
