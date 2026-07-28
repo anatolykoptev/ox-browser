@@ -162,6 +162,67 @@ async fn no_fallback_when_no_proxy_configured() {
     assert_eq!(after, before, "counter must NOT bump when no proxy is set");
 }
 
+/// Fix 1: a residential-only config (no `proxy_url`, no `proxy_pool`) must
+/// still attach the direct fallback. The residential middleware injects its
+/// proxy per-request on a CF retry (`middleware_residential.rs:60` sets
+/// `retry_req.proxy = Some(self.proxy_url)`), so a 402 during that retry flows
+/// through `WreqHandler` with `req.proxy` set. We simulate that post-retry
+/// state directly by building a `Request` whose `proxy` is already set to a
+/// fake 402 proxy — what `ResidentialHandler` does on a CF retry. With the
+/// fallback wired, the 402 degrades to the direct origin; without it (the
+/// May-outage state) `needs_fallback` was false, `direct_client` was `None`,
+/// and the 402 hard-failed.
+#[tokio::test]
+#[serial]
+async fn residential_only_config_falls_back_direct_on_402() {
+    use ox_http::Request;
+
+    let proxy_port = spawn_402_proxy().await;
+    let origin_port = spawn_ok_origin().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // SAFETY: see note in falls_back_direct_when_proxy_returns_402.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{proxy_port},127.0.0.1:{origin_port}"),
+        );
+    }
+
+    let before = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
+
+    // Residential-only: NO proxy_url, NO proxy_pool, ONLY residential_proxy.
+    // Before Fix 1 this left needs_fallback=false -> no direct sibling.
+    let config = HttpConfig {
+        timeout: Duration::from_secs(5),
+        residential_proxy: Some(format!("http://127.0.0.1:{proxy_port}")),
+        ..Default::default()
+    };
+    let client = HttpClient::new(config).expect("build client");
+
+    // Simulate the post-CF-retry state: residential middleware has already
+    // set req.proxy. (ResidentialHandler passes through unchanged when
+    // req.proxy is already set, so this exercises the exact path a
+    // residential CF-retry 402 takes through WreqHandler.)
+    let req = Request {
+        method: "GET".into(),
+        url: format!("http://127.0.0.1:{origin_port}/test"),
+        headers: vec![],
+        body: None,
+        proxy: Some(format!("http://127.0.0.1:{proxy_port}")),
+    };
+    let resp = client.execute(req).await.expect("fallback should succeed");
+
+    assert_eq!(resp.status, 200, "fallback should return target's 200");
+    assert_eq!(resp.body, "direct-success", "body should come from origin");
+
+    let after = PROXY_FALLBACK_TOTAL.load(Ordering::Relaxed);
+    assert!(
+        after > before,
+        "fallback counter must increment (before={before}, after={after})"
+    );
+}
+
 // Keep `Arc` referenced so a dead-code lint doesn't trip future maintainers.
 #[allow(dead_code)]
 fn _arc_marker() -> Arc<()> {
