@@ -293,6 +293,7 @@ pub fn build_output(
             tags: ext.meta.tags.clone(),
             language: ext.meta.language.clone(),
             error: None,
+            extraction_note: ext.extraction_note.clone(),
         };
         c = crate::llm::to_llm_text(&raw_output);
     }
@@ -320,6 +321,7 @@ pub fn build_output(
         tags: ext.meta.tags,
         language: ext.meta.language,
         error: None,
+        extraction_note: ext.extraction_note,
     }
 }
 
@@ -343,6 +345,7 @@ pub fn build_error_output(params: &ReadParams, method: &str, ms: u64, msg: &str)
         tags: Vec::new(),
         language: String::new(),
         error: Some(msg.into()),
+        extraction_note: None,
     }
 }
 

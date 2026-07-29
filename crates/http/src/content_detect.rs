@@ -61,7 +61,20 @@ pub fn needs_js_rendering(html: &str) -> bool {
 
 /// Count visible non-whitespace text length without allocating.
 /// Skips content inside `<script>` and `<style>` tags.
+///
+/// Public so the post-extraction sanity gate (`content::extraction_gate_trips`,
+/// issue #110) can measure visible text on the same basis as this detector —
+/// comparing extracted bytes to raw bytes makes the ratio a function of markup
+/// bloat, so both sides are reduced to visible text first.
+pub fn visible_text_len(html: &str) -> usize {
+    strip_tags_len_impl(html)
+}
+
 fn strip_tags_len(html: &str) -> usize {
+    strip_tags_len_impl(html)
+}
+
+fn strip_tags_len_impl(html: &str) -> usize {
     let mut len = 0;
     let mut in_tag = false;
     let mut in_invisible = 0u8; // depth: >0 means inside script/style

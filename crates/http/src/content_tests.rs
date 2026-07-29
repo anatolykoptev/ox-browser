@@ -180,3 +180,101 @@ fn does_not_recover_when_dom_has_enough_content() {
         "should NOT recover data island when DOM has enough content"
     );
 }
+
+// ─── Post-extraction sanity gate (issue #110) — pure-function unit tests ──────
+//
+// The gate has two independent conditions (absolute floor + ratio). Each test
+// pins one boundary so the mutation probes (remove ratio / remove floor) fail
+// the right test:
+//   - remove the ratio condition → `gate_trips_on_low_ratio_above_floor` still
+//     passes but the craigslist fixture test catches it (no trip → no
+//     fallback → no listings). This unit test is the sharp boundary for the
+//     ratio alone.
+//   - remove the floor → `gate_does_not_trip_below_floor` fails (a thin page
+//     with extreme ratio would trip).
+
+#[test]
+fn gate_trips_on_low_ratio_above_floor() {
+    // Source well above the floor; extracted holds far less than the fraction.
+    let src = "<html><body>".to_string()
+        + &"listing item text here. ".repeat(200) // ~5000 visible chars
+        + "</body></html>";
+    let ext = "<div>loading reading writing</div>"; // ~30 visible chars
+    assert!(
+        crate::content_detect::visible_text_len(&src) >= EXTRACTION_GATE_SOURCE_FLOOR,
+        "fixture setup: src visible text must be above floor"
+    );
+    assert_eq!(
+        extraction_gate_trips(&src, ext),
+        Some(EXTRACTION_GATE_REASON),
+        "low ratio above floor must trip"
+    );
+}
+
+#[test]
+fn gate_does_not_trip_below_floor_even_with_extreme_ratio() {
+    // Source below the floor (a genuinely thin page): must NOT trip no matter
+    // how small the extraction is. The ratio here is extreme (2 / 100 = 0.02,
+    // well below the 0.10 fraction) so WITHOUT the floor condition this would
+    // trip — this is the test that fails if the absolute floor is removed.
+    let src = format!("<html><body>{}</body></html>", "a".repeat(100)); // 100 visible
+    let ext = "xy"; // 2 visible → ratio 0.02 < fraction
+    assert!(
+        crate::content_detect::visible_text_len(&src) < EXTRACTION_GATE_SOURCE_FLOOR,
+        "fixture setup: src visible text must be below floor"
+    );
+    assert!(
+        (crate::content_detect::visible_text_len(ext) as f64)
+            < (crate::content_detect::visible_text_len(&src) as f64)
+                * EXTRACTION_GATE_TEXT_FRACTION,
+        "fixture setup: ratio must be below fraction (so only the floor prevents a trip)"
+    );
+    assert_eq!(
+        extraction_gate_trips(&src, ext),
+        None,
+        "below-floor source must never trip, regardless of ratio"
+    );
+}
+
+#[test]
+fn gate_does_not_trip_when_extraction_captures_enough() {
+    // Source above floor; extraction captures more than the fraction → accept.
+    let src =
+        "<html><body>".to_string() + &"real article body text. ".repeat(200) + "</body></html>";
+    // ext is ~60% of src visible text — above the 10% fraction.
+    let ext = &"real article body text. ".repeat(120);
+    assert_eq!(
+        extraction_gate_trips(&src, ext),
+        None,
+        "extraction above the fraction must not trip"
+    );
+}
+
+#[test]
+fn gate_floor_is_strict_threshold() {
+    // At exactly the floor, the page IS gated (the exempt condition is
+    // `src < FLOOR`, so src == FLOOR proceeds to the ratio check).
+    let mut src = String::new();
+    // Pad visible text to exactly EXTRACTION_GATE_SOURCE_FLOOR chars.
+    for _ in 0..EXTRACTION_GATE_SOURCE_FLOOR {
+        src.push('a');
+    }
+    assert_eq!(
+        crate::content_detect::visible_text_len(&src),
+        EXTRACTION_GATE_SOURCE_FLOOR,
+        "fixture setup: src visible text must equal floor exactly"
+    );
+    // ext well below fraction → trips (floor does not exempt at equality).
+    assert_eq!(
+        extraction_gate_trips(&src, "z"),
+        Some(EXTRACTION_GATE_REASON),
+        "src == floor must be gated, not exempt"
+    );
+    // One char below the floor → exempt.
+    let src_below: String = "a".repeat(EXTRACTION_GATE_SOURCE_FLOOR - 1);
+    assert_eq!(
+        extraction_gate_trips(&src_below, "z"),
+        None,
+        "src == floor-1 must be exempt"
+    );
+}

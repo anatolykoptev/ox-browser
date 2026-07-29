@@ -109,6 +109,16 @@ pub fn record_body_cap_rejection() {
     BODY_CAP_REJECTIONS_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a post-extraction sanity-gate rejection (the extracted subtree was
+/// discarded and the whole document returned instead). Mirrors the
+/// `record_body_cap_rejection` pattern — each bump is also a
+/// `tracing::info!` in `content::extract_content` with the bounded
+/// `reason` token, and the response carries the same token in
+/// `ReadOutput::extraction_note`.
+pub fn record_read_extraction_rejected() {
+    READ_EXTRACTION_REJECTED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
 /// One counter row in the registry: metric name, help text, current value.
 struct Counter {
     name: &'static str,
@@ -200,6 +210,20 @@ pub static FRONTIER_DROPPED_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// Compare against `oxbrowser_fetch_total` to measure the cap-rejection rate.
 pub static BODY_CAP_REJECTIONS_TOTAL: AtomicU64 = AtomicU64::new(0);
 
+/// Times the post-extraction sanity gate rejected the extracted subtree and
+/// `extract_content` fell back to the whole document (issue #110). The gate
+/// fires when the source page's visible text is above an absolute floor AND
+/// the extracted subtree's visible text is below a fixed fraction of the
+/// source — the readability-style extractor picks a wrong container on
+/// list/index pages (e.g. a hidden loading curtain) and discards the real
+/// content. Each bump is also a `tracing::info!` with `reason=
+/// extraction_rejected_low_text_ratio`, and the response carries the same
+/// token in `ReadOutput::extraction_note`. Compare against
+/// `oxbrowser_fetch_total` for the rejection rate; a sustained non-zero
+/// rate on a given route means the extractor is mis-selecting on that site
+/// shape (which the fallback masks, so this counter is the only signal).
+pub static READ_EXTRACTION_REJECTED_TOTAL: AtomicU64 = AtomicU64::new(0);
+
 /// Set a gauge's value. Thin convenience wrapper so call sites don't have to
 /// import `Ordering` — mirrors the ergonomics of the `record_*` counter helpers.
 pub fn set_gauge(gauge: &AtomicU64, value: u64) {
@@ -270,6 +294,11 @@ pub fn render() -> String {
             name: "oxbrowser_body_cap_rejections_total",
             help: "Responses rejected because the body exceeded the per-call byte cap (header or stream stage).",
             value: BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
+            name: "oxbrowser_read_extraction_rejected_total",
+            help: "Reads where the post-extraction sanity gate rejected the extracted subtree (visible-text ratio below threshold) and fell back to the whole document (issue #110).",
+            value: READ_EXTRACTION_REJECTED_TOTAL.load(Ordering::Relaxed),
         },
     ];
 
@@ -396,6 +425,7 @@ mod tests {
             "oxbrowser_crawler_dedup_evicted_total",
             "oxbrowser_frontier_dropped_total",
             "oxbrowser_body_cap_rejections_total",
+            "oxbrowser_read_extraction_rejected_total",
         ] {
             assert!(
                 body.contains(&format!("# TYPE {series} counter")),

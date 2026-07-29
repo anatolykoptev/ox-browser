@@ -69,6 +69,7 @@ pub async fn try_reddit_json(
         json_ld: vec![],
         og_image: String::new(),
         meta: crate::content::ArticleMeta::default(),
+        extraction_note: None,
     };
     Some(build_output(ext, params, "reddit-json", elapsed(start)))
 }
