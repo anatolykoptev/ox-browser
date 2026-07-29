@@ -79,7 +79,7 @@ impl OxMcpServer {
 impl OxMcpServer {
     #[tool(
         name = "fetch",
-        description = "Stealth HTTP fetch via wreq+BoringSSL with TLS fingerprint impersonation. Returns status, headers, body, and Cloudflare detection info."
+        description = "Stealth HTTP fetch via wreq+BoringSSL with TLS fingerprint impersonation. Supports GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE. Method defaults to GET (or POST when a body is supplied). Returns status, headers, body, and Cloudflare detection info."
     )]
     async fn fetch(
         &self,

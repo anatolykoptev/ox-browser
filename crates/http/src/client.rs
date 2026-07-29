@@ -97,76 +97,14 @@ impl HttpClient {
             ))
         };
 
-        let mut middlewares: Vec<MiddlewareFn> = Vec::new();
-
-        // Outermost: SSRF protection (before any other processing).
-        middlewares.push(ssrf_middleware());
-
-        // Logging (only when debug enabled).
-        if config.debug {
-            middlewares.push(logging_middleware());
-        }
-
-        // Rate limiting (before retry, so retries also respect limits).
-        if let Some(ref limiter) = config.rate_limiter {
-            middlewares.push(rate_limit_middleware(Arc::clone(limiter)));
-        }
-
-        // Retry with exponential backoff.
-        if let Some(ref retry_cfg) = config.retry {
-            middlewares.push(retry_middleware(retry_cfg.clone()));
-        }
-
-        // CF solver (between retry and cloudflare_detect).
-        // Use the shared negcache when available so read_pipeline can check is_blocked()
-        // and set RenderMode::GiveUp instead of retrying doomed solve attempts.
-        if let (Some(provider), Some(cache)) = (&config.cookie_provider, &config.cookie_cache) {
-            if let Some(ref nc) = config.solver_negcache {
-                middlewares.push(solver_middleware_with_negcache(
-                    Arc::clone(provider),
-                    Arc::clone(cache),
-                    Arc::clone(nc),
-                ));
-            } else {
-                middlewares.push(solver_middleware(Arc::clone(provider), Arc::clone(cache)));
-            }
-        }
-
-        // Residential proxy retry (between solver and cloudflare_detect).
-        // On CF error, retries once with residential IP before falling back to solver.
-        if let Some(ref proxy) = config.residential_proxy {
-            middlewares.push(residential_proxy_middleware(proxy.clone()));
-        }
-
-        // Cloudflare detection (inside retry so CF triggers auto-retry).
-        if config.cloudflare_detect {
-            middlewares.push(cloudflare_detect_middleware());
-        }
-
-        // Quality check: convert anti-bot 200s and non-CF errors (401/403/429/503)
-        // to CF challenge errors so the solver middleware can handle them.
-        if config.quality_check {
-            middlewares.push(crate::middleware_quality::quality_check_middleware());
-        }
-
-        // Innermost middleware: auto-inject client hints.
-        // ONLY when no profile is set — when a profile is set, `browser_headers()`
-        // in `build_request()` provides the complete, coherent header set
-        // (including sec-ch-ua). The middleware must not add headers the
-        // profile didn't include (e.g. sec-ch-ua-full-version-list, which
-        // real Chrome doesn't send on top-level navigation).
-        if config.profile.is_none() {
-            middlewares.push(client_hints_middleware());
-        }
-
+        let middlewares = build_middlewares(&config);
         let handler = chain(middlewares, base);
         Ok(Self { handler, config })
     }
 
     /// Execute a GET request.
     pub async fn get(&self, url: &str) -> Result<HttpResponse> {
-        let req = self.build_request("GET", url, None, None);
-        self.handler.handle(req).await
+        self.request("GET", url, None, None, &[]).await
     }
 
     /// Execute a GET request with extra headers appended after the defaults.
@@ -175,11 +113,7 @@ impl HttpClient {
         url: &str,
         extra_headers: &[(&str, &str)],
     ) -> Result<HttpResponse> {
-        let mut req = self.build_request("GET", url, None, None);
-        for &(k, v) in extra_headers {
-            req.headers.push((k.to_owned(), v.to_owned()));
-        }
-        self.handler.handle(req).await
+        self.request("GET", url, None, None, extra_headers).await
     }
 
     /// Execute a pre-built Request through the middleware chain.
@@ -191,12 +125,48 @@ impl HttpClient {
 
     /// Execute a POST request with a text body and content type.
     pub async fn post(&self, url: &str, body: &str, content_type: &str) -> Result<HttpResponse> {
-        let req = self.build_request(
+        self.request(
             "POST",
             url,
             Some(body.as_bytes().to_vec()),
             Some(content_type),
-        );
+            &[],
+        )
+        .await
+    }
+
+    /// Execute a request with a custom method, optional body, optional
+    /// content type, and extra headers appended after the profile defaults.
+    ///
+    /// This is the general seam — [`get`](Self::get),
+    /// [`get_with_headers`](Self::get_with_headers), and
+    /// [`post`](Self::post) all delegate here. Callers that need a method
+    /// other than GET or POST (PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE)
+    /// use this directly.
+    ///
+    /// `content_type` is added as a `content-type` header ONLY when `body`
+    /// is `Some`. If the caller also passes a `content-type` in
+    /// `extra_headers`, the caller's value wins and exactly one
+    /// `content-type` reaches the handler — `request` resolves the conflict
+    /// itself (F6).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn request(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<Vec<u8>>,
+        content_type: Option<&str>,
+        extra_headers: &[(&str, &str)],
+    ) -> Result<HttpResponse> {
+        let mut req = self.build_request(method, url, body, content_type);
+        for &(k, v) in extra_headers {
+            req.headers.push((k.to_owned(), v.to_owned()));
+        }
+        // F6: resolve duplicate content-type. `build_request` may have added
+        // one from `content_type`; `extra_headers` may append another. Keep
+        // exactly one, with the caller's `extra_headers` value winning (the
+        // explicit override). Preserves the position of the first entry.
+        dedup_content_type(&mut req.headers);
         self.handler.handle(req).await
     }
 
@@ -276,6 +246,128 @@ impl HttpClient {
     #[cfg(test)]
     pub fn with_handler(handler: Arc<dyn Handler>, config: HttpConfig) -> Self {
         Self { handler, config }
+    }
+
+    /// Test-only constructor: build the middleware chain from `config` (same
+    /// [`build_middlewares`] path as [`HttpClient::new`]) but with a custom
+    /// base handler instead of a real wreq client. This lets tests prove the
+    /// config→chain wiring is correct without network calls — e.g. that
+    /// `cloudflare_detect: false, quality_check: true` raises a genuine CF
+    /// challenge as an error, not as content (F-A).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_chain(base: Arc<dyn Handler>, config: HttpConfig) -> Self {
+        let middlewares = build_middlewares(&config);
+        let handler = chain(middlewares, base);
+        Self { handler, config }
+    }
+}
+
+/// Build the middleware stack from config, in chain order (outermost first):
+/// `[ssrf] -> [logging?] -> [rate_limit?] -> [retry?] -> [solver?] ->
+/// [residential?] -> [cloudflare_detect?] -> [quality_check?] ->
+/// [client_hints?]`.
+///
+/// Extracted from [`HttpClient::new`] so test constructors can build the
+/// real config→chain wiring with a mock base handler (`with_chain`).
+fn build_middlewares(config: &HttpConfig) -> Vec<MiddlewareFn> {
+    let mut middlewares: Vec<MiddlewareFn> = Vec::new();
+
+    // Outermost: SSRF protection (before any other processing).
+    middlewares.push(ssrf_middleware());
+
+    // Logging (only when debug enabled).
+    if config.debug {
+        middlewares.push(logging_middleware());
+    }
+
+    // Rate limiting (before retry, so retries also respect limits).
+    if let Some(ref limiter) = config.rate_limiter {
+        middlewares.push(rate_limit_middleware(Arc::clone(limiter)));
+    }
+
+    // Retry with exponential backoff.
+    if let Some(ref retry_cfg) = config.retry {
+        middlewares.push(retry_middleware(retry_cfg.clone()));
+    }
+
+    // CF solver (between retry and cloudflare_detect).
+    // Use the shared negcache when available so read_pipeline can check is_blocked()
+    // and set RenderMode::GiveUp instead of retrying doomed solve attempts.
+    if let (Some(provider), Some(cache)) = (&config.cookie_provider, &config.cookie_cache) {
+        if let Some(ref nc) = config.solver_negcache {
+            middlewares.push(solver_middleware_with_negcache(
+                Arc::clone(provider),
+                Arc::clone(cache),
+                Arc::clone(nc),
+            ));
+        } else {
+            middlewares.push(solver_middleware(Arc::clone(provider), Arc::clone(cache)));
+        }
+    }
+
+    // Residential proxy retry (between solver and cloudflare_detect).
+    // On CF error, retries once with residential IP before falling back to solver.
+    if let Some(ref proxy) = config.residential_proxy {
+        middlewares.push(residential_proxy_middleware(proxy.clone()));
+    }
+
+    // Cloudflare detection (inside retry so CF triggers auto-retry).
+    if config.cloudflare_detect {
+        middlewares.push(cloudflare_detect_middleware());
+    }
+
+    // Quality check: convert anti-bot 200s and non-CF errors (401/403/429/503)
+    // to CF challenge errors so the solver middleware can handle them.
+    if config.quality_check {
+        middlewares.push(crate::middleware_quality::quality_check_middleware());
+    }
+
+    // Innermost middleware: auto-inject client hints.
+    // ONLY when no profile is set — when a profile is set, `browser_headers()`
+    // in `build_request()` provides the complete, coherent header set
+    // (including sec-ch-ua). The middleware must not add headers the
+    // profile didn't include (e.g. sec-ch-ua-full-version-list, which
+    // real Chrome doesn't send on top-level navigation).
+    if config.profile.is_none() {
+        middlewares.push(client_hints_middleware());
+    }
+
+    middlewares
+}
+
+/// Ensure exactly one `content-type` header in the vector, with the last
+/// value (the caller's `extra_headers` override) winning. Preserves the
+/// position of the first `content-type` entry so header ordering for
+/// fingerprinting is not disrupted (F6).
+fn dedup_content_type(headers: &mut Vec<(String, String)>) {
+    // Find the last content-type value (extra_headers wins over build_request's).
+    let last_ct = headers
+        .iter()
+        .rev()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.clone());
+    let Some(value) = last_ct else {
+        return;
+    };
+    // Keep the first content-type position, drop the rest, set the winner's value.
+    let mut seen = false;
+    headers.retain(|(k, _)| {
+        if k.eq_ignore_ascii_case("content-type") {
+            if !seen {
+                seen = true;
+                true
+            } else {
+                false
+            }
+        } else {
+            true
+        }
+    });
+    if let Some(entry) = headers
+        .iter_mut()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+    {
+        entry.1 = value;
     }
 }
 
@@ -371,4 +463,192 @@ pub fn build_profiled_wreq_client(
         Some(proxy_url)
     };
     wreq_transport_core(timeout, max_redirects, emulation.as_ref(), proxy, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::middleware::Request;
+    use std::sync::Mutex;
+
+    /// What the handler received: method, body, content-type.
+    struct Captured {
+        method: String,
+        body: Option<Vec<u8>>,
+        content_type: Option<String>,
+    }
+
+    /// Captures the method, body, and content-type of the request that
+    /// reaches the handler, then returns a 200.
+    struct CapturingHandler {
+        captured: Mutex<Option<Captured>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Handler for CapturingHandler {
+        async fn handle(&self, req: Request) -> Result<HttpResponse> {
+            let ct = req
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                .map(|(_, v)| v.clone());
+            *self.captured.lock().unwrap() = Some(Captured {
+                method: req.method,
+                body: req.body,
+                content_type: ct,
+            });
+            Ok(HttpResponse {
+                status: 200,
+                url: req.url,
+                headers: wreq::header::HeaderMap::new(),
+                body: String::new(),
+            })
+        }
+    }
+
+    fn capture_client() -> (HttpClient, std::sync::Arc<CapturingHandler>) {
+        let h = std::sync::Arc::new(CapturingHandler {
+            captured: Mutex::new(None),
+        });
+        let client = HttpClient::with_handler(h.clone(), HttpConfig::default());
+        (client, h)
+    }
+
+    /// A POST with a body reaches the handler with the correct method,
+    /// body bytes, and content-type (issue #114).
+    #[tokio::test]
+    async fn post_with_body_reaches_handler() {
+        let (client, handler) = capture_client();
+        let body = br#"{"a":1}"#.to_vec();
+        client
+            .request(
+                "POST",
+                "https://example.com/api",
+                Some(body.clone()),
+                Some("application/json"),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(captured.method, "POST");
+        assert_eq!(captured.body.as_deref(), Some(body.as_slice()));
+        assert_eq!(captured.content_type.as_deref(), Some("application/json"));
+    }
+
+    /// A GET with no method/body is byte-identical to the pre-#114 path —
+    /// method is GET, body is None, no content-type header.
+    #[tokio::test]
+    async fn get_default_is_byte_identical() {
+        let (client, handler) = capture_client();
+        client.get("https://example.com").await.unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(captured.method, "GET");
+        assert!(captured.body.is_none(), "no body on default GET");
+        assert!(
+            captured.content_type.is_none(),
+            "no content-type on default GET"
+        );
+    }
+
+    /// `request` with extra headers appends them after the profile defaults.
+    #[tokio::test]
+    async fn request_appends_extra_headers() {
+        struct HeaderCheckHandler;
+        #[async_trait::async_trait]
+        impl Handler for HeaderCheckHandler {
+            async fn handle(&self, req: Request) -> Result<HttpResponse> {
+                assert!(req.header("x-custom").is_some());
+                assert_eq!(req.header("x-custom"), Some("val"));
+                Ok(HttpResponse {
+                    status: 200,
+                    url: req.url,
+                    headers: wreq::header::HeaderMap::new(),
+                    body: String::new(),
+                })
+            }
+        }
+        let client = HttpClient::with_handler(
+            std::sync::Arc::new(HeaderCheckHandler),
+            HttpConfig::default(),
+        );
+        let resp = client
+            .request(
+                "GET",
+                "https://example.com",
+                None,
+                None,
+                &[("x-custom", "val")],
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status, 200);
+    }
+
+    /// `post` delegates to `request` — same body and content-type arrive.
+    #[tokio::test]
+    async fn post_delegates_to_request() {
+        let (client, handler) = capture_client();
+        client
+            .post("https://example.com", "{\"x\":42}", "text/plain")
+            .await
+            .unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(captured.method, "POST");
+        assert_eq!(captured.body.as_deref(), Some(b"{\"x\":42}".as_slice()));
+        assert_eq!(captured.content_type.as_deref(), Some("text/plain"));
+    }
+
+    /// F6: when both `content_type` and a `content-type` in `extra_headers`
+    /// are supplied, exactly one reaches the handler and the `extra_headers`
+    /// value wins. A warning is not a mechanism — `request` resolves the
+    /// conflict itself.
+    #[tokio::test]
+    async fn duplicate_content_type_extra_headers_wins() {
+        let (client, handler) = capture_client();
+        client
+            .request(
+                "POST",
+                "https://example.com/api",
+                Some(b"{}".to_vec()),
+                Some("application/json"),
+                &[("content-type", "text/xml")],
+            )
+            .await
+            .unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(
+            captured.content_type.as_deref(),
+            Some("text/xml"),
+            "extra_headers content-type must win over content_type arg"
+        );
+    }
+
+    /// F6: when only `content_type` is supplied (no override in
+    /// `extra_headers`), exactly one content-type reaches the handler.
+    #[tokio::test]
+    async fn single_content_type_no_duplicate() {
+        let (client, handler) = capture_client();
+        client
+            .request(
+                "POST",
+                "https://example.com/api",
+                Some(b"{}".to_vec()),
+                Some("application/json"),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(
+            captured.content_type.as_deref(),
+            Some("application/json"),
+            "content_type arg must reach the handler when no extra_headers override"
+        );
+    }
 }

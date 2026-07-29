@@ -13,10 +13,28 @@ use serde::{Deserialize, Serialize};
 use super::OxMcpServer;
 
 /// Input parameters for the `fetch` tool.
+///
+/// Parity with the REST `/fetch` endpoint and the CLI `fetch` subcommand:
+/// `method` defaults to GET (or POST when a `body` is supplied, curl
+/// `--data` convention). A `body` with an explicit `method: "GET"` is
+/// rejected. `content_type` defaults to `application/json` when a body is
+/// present.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FetchInput {
     /// The URL to fetch.
     pub url: String,
+    /// HTTP method. Defaults to GET (or POST when a body is supplied).
+    /// Supported: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// Request body (raw text). Implies POST when `method` is unset.
+    /// Rejected when `method` is explicitly GET.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Content-Type for the body. Defaults to `application/json` when a
+    /// body is present. Ignored when no body.
+    #[serde(default)]
+    pub content_type: Option<String>,
 }
 
 /// Input parameters for the `fetch_smart` tool.
@@ -62,10 +80,67 @@ struct FetchSmartResult {
 
 impl OxMcpServer {
     /// Stealth HTTP fetch via wreq+BoringSSL.
+    ///
+    /// Parity with the REST `/fetch` endpoint: method defaults to GET (or
+    /// POST when a body is supplied), body with explicit GET is rejected,
+    /// content_type defaults to `application/json` when a body is present.
     pub(crate) async fn do_fetch(&self, input: FetchInput) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
         let elapsed = || start.elapsed().as_millis() as u64;
-        match self.http_client.get(&input.url).await {
+
+        // Resolve method: default to POST when a body is supplied (curl
+        // --data convention), GET otherwise.
+        let body_bytes = input.body.as_deref().map(|b| b.as_bytes().to_vec());
+        let method = input
+            .method
+            .as_deref()
+            .map(|m| m.to_string())
+            .unwrap_or_else(|| {
+                if body_bytes.is_some() {
+                    "POST".into()
+                } else {
+                    "GET".into()
+                }
+            });
+
+        // Reject body with explicit GET — a body on a GET is a caller mistake.
+        if body_bytes.is_some() && method.eq_ignore_ascii_case("GET") {
+            let result = FetchResult {
+                status: 0,
+                headers: HashMap::new(),
+                body: String::new(),
+                cf_detected: false,
+                cf_type: None,
+                elapsed_ms: elapsed(),
+                error: Some("body is not allowed with method GET".into()),
+            };
+            let json =
+                serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
+            return Ok(CallToolResult::error(vec![Content::text(json)]));
+        }
+
+        // Content type: explicit > default application/json (when body present).
+        let content_type = if body_bytes.is_some() {
+            Some(
+                input
+                    .content_type
+                    .unwrap_or_else(|| "application/json".to_string()),
+            )
+        } else {
+            None
+        };
+
+        match self
+            .http_client
+            .request(
+                &method,
+                &input.url,
+                body_bytes,
+                content_type.as_deref(),
+                &[],
+            )
+            .await
+        {
             Ok(resp) => {
                 let cf = detect_cloudflare(&resp);
                 let headers: HashMap<String, String> = resp

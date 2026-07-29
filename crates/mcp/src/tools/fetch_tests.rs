@@ -9,6 +9,10 @@ fn fetch_input_required_url() {
     let json = r#"{"url": "https://example.com"}"#;
     let input: FetchInput = serde_json::from_str(json).unwrap();
     assert_eq!(input.url, "https://example.com");
+    // F5: method/body/content_type default to None (GET, no body).
+    assert!(input.method.is_none());
+    assert!(input.body.is_none());
+    assert!(input.content_type.is_none());
 }
 
 #[test]
@@ -16,6 +20,29 @@ fn fetch_input_missing_url_fails() {
     let json = r#"{}"#;
     let result: Result<FetchInput, _> = serde_json::from_str(json);
     assert!(result.is_err());
+}
+
+#[test]
+fn fetch_input_with_method_and_body() {
+    let json = r#"{"url": "https://example.com", "method": "POST", "body": "{\"a\":1}"}"#;
+    let input: FetchInput = serde_json::from_str(json).unwrap();
+    assert_eq!(input.method.as_deref(), Some("POST"));
+    assert_eq!(input.body.as_deref(), Some("{\"a\":1}"));
+}
+
+#[test]
+fn fetch_input_body_without_method_defaults_to_post() {
+    let json = r#"{"url": "https://example.com", "body": "hello"}"#;
+    let input: FetchInput = serde_json::from_str(json).unwrap();
+    assert!(input.method.is_none());
+    assert!(input.body.is_some());
+}
+
+#[test]
+fn fetch_input_with_content_type() {
+    let json = r#"{"url": "https://example.com", "method": "POST", "body": "x", "content_type": "text/xml"}"#;
+    let input: FetchInput = serde_json::from_str(json).unwrap();
+    assert_eq!(input.content_type.as_deref(), Some("text/xml"));
 }
 
 // ── FetchSmartInput ───────────────────────────────────────────────────────────

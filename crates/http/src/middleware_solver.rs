@@ -10,6 +10,7 @@ use crate::cookie_cache::CookieCache;
 use crate::cookie_provider::{CookieProvider, SolvedChallenge};
 use crate::error::HttpError;
 use crate::middleware::{Handler, MiddlewareFn, Request};
+use crate::middleware_retry::is_idempotent;
 use crate::solver_negcache::{SolverNegCache, record_solver_giveup};
 use crate::{HttpResponse, Result};
 
@@ -51,6 +52,65 @@ struct SolverHandler {
     negcache: Arc<SolverNegCache>,
 }
 
+impl SolverHandler {
+    /// Solve a CF challenge and retry the request once with the solution.
+    /// Used for both genuine CF challenges (any method — CF intercepted the
+    /// request, the origin never saw it) and inferred challenges (idempotent
+    /// methods only — the caller gates the non-idempotent case before
+    /// reaching here).
+    async fn solve_and_retry(
+        &self,
+        mut req: Request,
+        domain: &str,
+        challenge_type: ChallengeType,
+    ) -> Result<HttpResponse> {
+        // Retry-storm guard: if this domain is on cooldown after repeated
+        // solve failures, skip the 15-25s solver and surface the CF error
+        // immediately. A success below clears the cooldown.
+        if self.negcache.is_blocked(domain) {
+            record_solver_giveup(domain);
+            // Return ProxyPool (not Cloudflare) — this is a solver decision,
+            // not a fresh CF challenge. Consistent with the N failures before
+            // cooldown trips; the GiveUp gate in read_pipeline fast-fails either way.
+            return Err(HttpError::ProxyPool(format!(
+                "solver negcache: domain {domain} on cooldown"
+            )));
+        }
+
+        debug!(domain = %domain, challenge = %challenge_type, "solver: solving challenge");
+        let solution = match self.provider.solve(&req.url, challenge_type).await {
+            Ok(s) => s,
+            Err(e) => {
+                // NOTE: we count all solver errors (including transient
+                // 502/timeout) toward the cooldown. A go-browser blip trips
+                // a 5-min per-domain cooldown which auto-recovers — acceptable
+                // trade-off vs. the 20-143× retry storm that results from NOT
+                // rate-limiting doomed solve attempts.
+                self.negcache.record_failure(domain);
+                return Err(HttpError::ProxyPool(format!("solver failed: {e}")));
+            }
+        };
+        self.cache.put(domain, solution.clone());
+        // A real solution ends any storm for this domain.
+        self.negcache.record_success(domain);
+
+        // If solver returned the page body directly, use it (avoids IP mismatch on retry)
+        if let Some(ref body) = solution.body {
+            debug!(domain = %domain, "solver: using body from solve response");
+            return Ok(HttpResponse {
+                status: 200,
+                url: req.url.clone(),
+                headers: wreq::header::HeaderMap::new(),
+                body: body.clone(),
+            });
+        }
+
+        // No body — retry with cookies + UA
+        inject_solution(&mut req, &solution);
+        self.next.handle(req).await
+    }
+}
+
 /// Extract the domain (host) from a URL string (delegates to [`crate::url_util::extract_domain`]).
 fn domain_from_url(url: &str) -> String {
     crate::url_util::extract_domain(url).unwrap_or_default()
@@ -82,6 +142,9 @@ impl Handler for SolverHandler {
         let domain = domain_from_url(&req.url);
 
         // Check cache first — inject cookies if we have a prior solution.
+        // This is the first (and only) send of the request with cached
+        // cookies — not a re-send of a failed attempt, so the F1
+        // idempotency gate does not apply here.
         if let Some(solution) = self.cache.get(&domain) {
             debug!(domain = %domain, "solver: using cached cookies");
             inject_solution(&mut req, &solution);
@@ -94,52 +157,29 @@ impl Handler for SolverHandler {
             Err(HttpError::Cloudflare(ChallengeType::Block, status, ray)) => {
                 Err(HttpError::Cloudflare(ChallengeType::Block, status, ray))
             }
-            // Solvable CF challenge — call provider, cache, retry once.
+            // F1: inferred-from-status challenge on a non-idempotent method.
+            // The origin MAY have processed the request — do not re-send.
+            // Return the original response so the caller sees the real
+            // status + body instead of a synthesised empty error.
+            Err(HttpError::CloudflareInferred(_, resp)) if !is_idempotent(&req.method) => {
+                debug!(
+                    domain = %domain,
+                    method = %req.method,
+                    "solver: inferred challenge on non-idempotent method — returning original response, not re-sending"
+                );
+                Ok(*resp)
+            }
+            // Genuine CF challenge (any method) — solve and retry once.
+            // CF intercepted the request; the origin never saw it, so
+            // re-sending is safe even for POST.
             Err(HttpError::Cloudflare(challenge_type, _status, _ray)) => {
-                // Retry-storm guard: if this domain is on cooldown after repeated
-                // solve failures, skip the 15-25s solver and surface the CF error
-                // immediately. A success below clears the cooldown.
-                if self.negcache.is_blocked(&domain) {
-                    record_solver_giveup(&domain);
-                    // Return ProxyPool (not Cloudflare) — this is a solver decision,
-                    // not a fresh CF challenge. Consistent with the N failures before
-                    // cooldown trips; the GiveUp gate in read_pipeline fast-fails either way.
-                    return Err(HttpError::ProxyPool(format!(
-                        "solver negcache: domain {domain} on cooldown"
-                    )));
-                }
-
-                debug!(domain = %domain, challenge = %challenge_type, "solver: solving challenge");
-                let solution = match self.provider.solve(&req.url, challenge_type).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        // NOTE: we count all solver errors (including transient
-                        // 502/timeout) toward the cooldown. A go-browser blip trips
-                        // a 5-min per-domain cooldown which auto-recovers — acceptable
-                        // trade-off vs. the 20-143× retry storm that results from NOT
-                        // rate-limiting doomed solve attempts.
-                        self.negcache.record_failure(&domain);
-                        return Err(HttpError::ProxyPool(format!("solver failed: {e}")));
-                    }
-                };
-                self.cache.put(&domain, solution.clone());
-                // A real solution ends any storm for this domain.
-                self.negcache.record_success(&domain);
-
-                // If solver returned the page body directly, use it (avoids IP mismatch on retry)
-                if let Some(ref body) = solution.body {
-                    debug!(domain = %domain, "solver: using body from solve response");
-                    return Ok(HttpResponse {
-                        status: 200,
-                        url: req.url.clone(),
-                        headers: wreq::header::HeaderMap::new(),
-                        body: body.clone(),
-                    });
-                }
-
-                // No body — retry with cookies + UA
-                inject_solution(&mut req, &solution);
-                self.next.handle(req).await
+                self.solve_and_retry(req, &domain, challenge_type).await
+            }
+            // Inferred challenge on an idempotent method — solve as a
+            // JsChallenge (the quality_check default) and retry once.
+            Err(HttpError::CloudflareInferred(_, _)) => {
+                self.solve_and_retry(req, &domain, ChallengeType::JsChallenge)
+                    .await
             }
             // Everything else passes through.
             other => other,

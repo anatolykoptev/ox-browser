@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use crate::cloudflare::ChallengeType;
 use crate::error::HttpError;
 use crate::middleware::{Handler, MiddlewareFn, Request};
+use crate::middleware_retry::is_idempotent;
 use crate::{HttpResponse, Result};
 
 /// Returns a middleware that retries CF-blocked requests with a residential proxy.
@@ -49,12 +50,35 @@ impl Handler for ResidentialHandler {
             Err(HttpError::Cloudflare(ChallengeType::ManagedChallenge, s, r)) => {
                 Err(HttpError::Cloudflare(ChallengeType::ManagedChallenge, s, r))
             }
-            // Any other CF challenge — retry once with residential proxy.
+            // F1: inferred-from-status challenge on a non-idempotent method.
+            // The origin MAY have processed the request — do not re-send
+            // with a residential proxy. Return the original response so the
+            // caller sees the real status + body.
+            Err(HttpError::CloudflareInferred(_, resp)) if !is_idempotent(&req.method) => {
+                tracing::info!(
+                    url = %req.url,
+                    method = %req.method,
+                    "inferred CF on non-idempotent method — returning original response, not re-sending"
+                );
+                Ok(*resp)
+            }
+            // Any other CF challenge (genuine, or inferred idempotent) —
+            // retry once with residential proxy.
             Err(HttpError::Cloudflare(ct, _s, _r)) => {
                 tracing::info!(
                     url = %req.url,
                     challenge = %ct,
                     "CF detected, retrying with residential proxy"
+                );
+                let mut retry_req = req;
+                retry_req.proxy = Some(self.proxy_url.clone());
+                self.next.handle(retry_req).await
+            }
+            Err(HttpError::CloudflareInferred(_, _)) => {
+                tracing::info!(
+                    url = %req.url,
+                    challenge = %ChallengeType::JsChallenge,
+                    "inferred CF, retrying with residential proxy"
                 );
                 let mut retry_req = req;
                 retry_req.proxy = Some(self.proxy_url.clone());

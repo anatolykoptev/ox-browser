@@ -150,7 +150,7 @@ mod tests {
     use std::time::Duration;
     use tower::ServiceExt;
 
-    struct MockProvider;
+    pub struct MockProvider;
 
     #[async_trait]
     impl CookieProvider for MockProvider {

@@ -20,6 +20,11 @@ fingerprint = []
 # `is_proxy_connect()` and would falsify the "proxy-dial failure" classification.
 # Enabling this feature triggers a compile_error in proxy_fallback.rs.
 socks = ["wreq/socks"]
+# Exposes test-only constructors (`HttpClient::with_chain`) so downstream
+# crates (ox-js) can build an HttpClient with the real config→chain wiring
+# but a mock base handler. Enabled only in dev-dependencies; does not leak
+# into production builds.
+test-utils = []
 
 [dependencies]
 wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli", "zstd", "stream"] }

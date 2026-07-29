@@ -1,6 +1,11 @@
 //! Shared read pipeline — async fetch + extract via middleware chain.
 //!
 //! Called by both MCP and REST layers.
+//!
+//! The read pipeline always fetches with GET — the extraction stage
+//! assumes a document retrieved by a navigation-style GET. Method/body
+//! support lives on `/fetch` and the CLI `fetch` subcommand only (issue
+//! #114); it is intentionally NOT inherited here.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -153,10 +158,13 @@ async fn read_page_inner(
     let resp = match http.get(&params.url).await {
         Ok(r) => r,
         Err(e) => {
-            // On Cloudflare error → check negcache; if domain is on cooldown set
-            // GiveUp so the next request fast-fails before reaching chrome_fallback.
-            if matches!(e, crate::HttpError::Cloudflare(_, _, _))
-                && let (Some(cache), Some(url)) = (&render_cache, &chrome_url)
+            // On Cloudflare error (genuine or inferred) → check negcache; if
+            // domain is on cooldown set GiveUp so the next request fast-fails
+            // before reaching chrome_fallback.
+            if matches!(
+                e,
+                crate::HttpError::Cloudflare(_, _, _) | crate::HttpError::CloudflareInferred(_, _)
+            ) && let (Some(cache), Some(url)) = (&render_cache, &chrome_url)
             {
                 let negcache_blocked = http
                     .config()

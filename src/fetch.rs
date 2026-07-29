@@ -21,6 +21,15 @@ pub struct FetchArgs {
     pub profile: Option<String>,
     pub proxy: Option<String>,
     pub debug: bool,
+    /// HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE).
+    /// Defaults to GET, or POST when `--data` is supplied (curl convention).
+    pub method: Option<String>,
+    /// Request body. Implies POST when `--method` is not set. Rejected when
+    /// `--method GET` is explicit.
+    pub data: Option<String>,
+    /// Content-Type for the body. Defaults to `application/json` when a
+    /// body is present. Ignored when no body.
+    pub content_type: Option<String>,
 }
 
 /// Run the `fetch` subcommand.
@@ -45,8 +54,39 @@ pub async fn run(args: FetchArgs) -> anyhow::Result<()> {
         cfg.proxy_pool = Some(Arc::new(pool));
     }
 
+    // Resolve method: --method > (POST when --data, else GET).
+    let body_bytes = args.data.as_deref().map(|d| d.as_bytes().to_vec());
+    let method = args
+        .method
+        .as_deref()
+        .map(|m| m.to_string())
+        .unwrap_or_else(|| {
+            if body_bytes.is_some() {
+                "POST".into()
+            } else {
+                "GET".into()
+            }
+        });
+
+    // Reject body with explicit GET.
+    if body_bytes.is_some() && method.eq_ignore_ascii_case("GET") {
+        anyhow::bail!("--data is not allowed with method GET");
+    }
+
+    // Content type: --content-type > default application/json (when body).
+    let content_type = if body_bytes.is_some() {
+        Some(
+            args.content_type
+                .unwrap_or_else(|| "application/json".to_string()),
+        )
+    } else {
+        None
+    };
+
     let browser = Browser::new(cfg)?;
-    let page = browser.page(&args.url).await?;
+    let page = browser
+        .request(&method, &args.url, body_bytes, content_type.as_deref())
+        .await?;
 
     if let Some(selector) = args.css {
         let sel = page.select(&selector);
