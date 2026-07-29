@@ -100,6 +100,12 @@ make lint     # cargo clippy -- -D warnings
 make check    # fmt + lint + test
 ```
 
+## Releasing
+
+Releases are automated via [release-please](https://github.com/googleapis/release-please). Conventional commits (`feat:`, `fix:`, `perf:`, etc.) on `main` trigger a release PR that bumps the version and updates the changelog. **Merge the release PR to cut a release** — release-please creates the tag and GitHub Release, then `release.yml` builds and attaches the x86_64/aarch64 binaries.
+
+**Never `git tag` by hand** — a manual tag desyncs `.release-please-manifest.json` from the actual released version and breaks the automated changelog baseline.
+
 ## License
 
 [MIT](LICENSE)
