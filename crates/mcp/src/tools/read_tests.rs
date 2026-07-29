@@ -1,4 +1,8 @@
 use ox_http::content::{ReadOutput, ReadParams};
+use ox_http::deadline::resolve_timeout;
+use std::time::Duration;
+
+use super::ReadInput;
 
 #[test]
 fn read_params_defaults() {
@@ -61,4 +65,42 @@ fn read_output_includes_error() {
     };
     let json = serde_json::to_value(&out).unwrap();
     assert_eq!(json["error"], "fail");
+}
+
+// ── WIRE-NAME PARITY (issue #139 follow-up) ───────────────────────────────────
+//
+// The MCP `read` tool's `ReadInput` shares the unified `timeout` field name
+// with `/fetch`, `/read`, and the CLI `--timeout` flag, and accepts the
+// legacy `timeout_secs` spelling via a serde alias. These assert the RESOLVED
+// deadline after the `From<ReadInput> for ReadParams` mapping — not merely
+// that deserialization succeeded (an unknown field deserializes fine and is
+// dropped, so an Ok(_) assertion would pass on the pre-rename code).
+
+/// MCP `read` accepts the canonical `{"timeout": 5}` and maps it through to
+/// a 5 s resolved deadline. RED on the pre-rename code: `timeout` is an
+/// unknown field on `ReadInput` (whose field was `timeout_secs`) → dropped
+/// → `resolve_timeout(None)` = 8 s ≠ 5 s.
+#[test]
+fn read_input_timeout_canonical_name_resolves() {
+    let input: ReadInput = serde_json::from_str(r#"{"url":"https://x.com","timeout":5}"#).unwrap();
+    let params: ReadParams = input.into();
+    assert_eq!(
+        resolve_timeout(params.timeout),
+        Duration::from_secs(5),
+        "canonical `timeout` must resolve to 5s, not the 8s default"
+    );
+}
+
+/// MCP `read` still accepts the legacy `{"timeout_secs": 5}` via the alias
+/// and maps it to a 5 s resolved deadline. Regression guard for the alias.
+#[test]
+fn read_input_timeout_secs_alias_resolves() {
+    let input: ReadInput =
+        serde_json::from_str(r#"{"url":"https://x.com","timeout_secs":5}"#).unwrap();
+    let params: ReadParams = input.into();
+    assert_eq!(
+        resolve_timeout(params.timeout),
+        Duration::from_secs(5),
+        "alias `timeout_secs` must resolve to 5s"
+    );
 }

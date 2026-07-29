@@ -47,8 +47,10 @@ pub struct FetchRequest {
     /// `[1, deadline::MAX_CALL_TIMEOUT_SECS]`. Bounds the WHOLE call
     /// (retry loop + solver escalation + rate-limit wait), not one
     /// attempt — issue #139. Same field/name/units/ceiling as `/read`'s
-    /// `timeout_secs`, the MCP `fetch`/`read` tools, and the CLI
-    /// `--timeout` flag.
+    /// `timeout`, the MCP `fetch`/`read` tools, and the CLI
+    /// `--timeout` flag. The legacy `timeout_secs` spelling is accepted
+    /// via a serde alias but is not the canonical name.
+    #[serde(default, alias = "timeout_secs")]
     pub timeout: Option<u64>,
 }
 
@@ -335,6 +337,45 @@ mod tests {
         assert!(req.method.is_none());
         assert!(req.body.is_none());
         assert!(req.content_type.is_none());
+    }
+
+    // ── WIRE-NAME PARITY (issue #139 follow-up) ───────────────────────────
+    //
+    // `timeout` is the canonical per-call deadline field on every surface.
+    // `timeout_secs` is accepted via a serde alias so a caller guessing the
+    // go-wowa-style spelling does not silently get the 8 s default. These
+    // assert the RESOLVED deadline (resolve_timeout), not merely Ok(_) — an
+    // unknown field deserializes fine and is dropped, so an Ok(_) assertion
+    // would pass on the pre-alias code.
+
+    /// `/fetch` accepts the canonical `{"timeout": 1}` and resolves to 1 s
+    /// (not the 8 s default). GREEN before and after the alias was added.
+    #[test]
+    fn fetch_request_timeout_canonical_name_resolves() {
+        use ox_http::deadline::resolve_timeout;
+        let req: FetchRequest =
+            serde_json::from_str(r#"{"url":"https://x.com","timeout":1}"#).unwrap();
+        assert_eq!(
+            resolve_timeout(req.timeout),
+            std::time::Duration::from_secs(1),
+            "canonical `timeout` must resolve to 1s"
+        );
+    }
+
+    /// `/fetch` accepts the legacy `{"timeout_secs": 1}` via the alias and
+    /// resolves to 1 s. RED on the pre-alias code: `timeout_secs` is an
+    /// unknown field on `FetchRequest` → dropped → `req.timeout` is `None`
+    /// → `resolve_timeout(None)` = 8 s ≠ 1 s.
+    #[test]
+    fn fetch_request_timeout_secs_alias_resolves() {
+        use ox_http::deadline::resolve_timeout;
+        let req: FetchRequest =
+            serde_json::from_str(r#"{"url":"https://x.com","timeout_secs":1}"#).unwrap();
+        assert_eq!(
+            resolve_timeout(req.timeout),
+            std::time::Duration::from_secs(1),
+            "alias `timeout_secs` must resolve to 1s, not the 8s default"
+        );
     }
 
     #[test]

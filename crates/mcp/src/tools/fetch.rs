@@ -40,8 +40,10 @@ pub struct FetchInput {
     /// Per-call deadline in seconds. `None` → seam default; `Some(s)` →
     /// clamped to `[1, MAX_CALL_TIMEOUT_SECS]`. Bounds the whole call,
     /// not one attempt. Same field/units/ceiling as `/fetch`, `/read`,
-    /// MCP `read`, and the CLI `--timeout` flag (issue #139).
-    #[serde(default)]
+    /// MCP `read`, and the CLI `--timeout` flag (issue #139). The legacy
+    /// `timeout_secs` spelling is accepted via a serde alias but is not
+    /// the canonical name.
+    #[serde(default, alias = "timeout_secs")]
     pub timeout: Option<u64>,
 }
 
