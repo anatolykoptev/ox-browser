@@ -72,6 +72,17 @@ pub struct ReadOutput {
     pub language: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Bounded token naming what happened during extraction, or `None` when
+    /// extraction was accepted cleanly. Currently the only value is
+    /// `extraction_rejected_low_text_ratio`: the post-extraction sanity gate
+    /// (issue #110) found the extracted subtree held far less of the page's
+    /// visible text than the source and rejected it, so `content` is the whole
+    /// document converted to the requested format instead of the extracted
+    /// subtree. Lets a caller distinguish a clean read from a gate fallback
+    /// (the silent-200 failure mode). The rate is also exported as
+    /// `oxbrowser_read_extraction_rejected_total`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extraction_note: Option<String>,
 }
 
 /// Article metadata extracted from HTML meta tags and JSON-LD.
@@ -95,6 +106,110 @@ pub struct ExtractedContent {
     pub json_ld: Vec<serde_json::Value>,
     pub og_image: String,
     pub meta: ArticleMeta,
+    /// Set when the post-extraction sanity gate rejected the extracted
+    /// subtree and `content` was rebuilt from the whole document instead
+    /// (issue #110). A bounded token (`extraction_rejected_low_text_ratio`)
+    /// naming what happened, or `None` when extraction was accepted. Threaded
+    /// through to `ReadOutput::extraction_note` so the caller can distinguish
+    /// a clean extraction from a gate fallback — the silent-200 failure mode
+    /// the issue is about.
+    pub extraction_note: Option<String>,
+}
+
+// ─── Post-extraction sanity gate (issue #110) ───────────────────────────────
+//
+// Readability-style extraction assumes an *article*. On a list/index page
+// there is no article, and the scorer settles on whatever scores least badly
+// — empirically a hidden loading curtain on craigslist list pages, which
+// carries ~50 chars of "loading reading writing saving searching" while the
+// real 115+ listings sit in a sibling `<ol>` the extractor never selects.
+// The caller gets HTTP 200, a plausible title, non-empty body, and no signal
+// that 99% of the document was discarded.
+//
+// The gate compares visible text (not bytes — byte ratios are a function of
+// markup bloat) of the source and the extracted subtree. A drastic shortfall
+// means extraction discarded the real content; the whole document, converted
+// to the requested format, is returned instead. On a list/index page the
+// document *is* the content — the article abstraction does not apply and
+// there is nothing better to select.
+//
+// Thresholds were chosen empirically against the fixtures in
+// `crates/http/tests/fixtures/` (measured 2026-07-29 via
+// `content_detect::visible_text_len`, char-based — see issue #110 L1):
+//
+//   fixture                          src_vis  ext_vis  ratio
+//   craigslist.org_sfbay_fbh           17791       51  0.0029  ← trips
+//   github.com_torvalds                 3589     1296  0.3611  ← nearest non-trip (Latin)
+//   news.ycombinator.com_38765228        521      165  0.3167  ← critical band, non-trip
+//   vercel.com                          3110     1443  0.4640
+//   ja.wikipedia.org_buffett             845      563  0.6663  ← non-Latin, non-trip
+//   www.bbc.com_news                    8965     6006  0.6699
+//   nextjs.org                          6081     5909  0.9717
+//   thin_page                            128      108  0.8438  ← below floor
+//
+// FRACTION = 0.10: craigslist (0.0029) is at 2.9% of the threshold (35× below,
+// margin 0.097); the nearest non-tripping fixture, github.com_torvalds
+// (0.3611), is 3.6× above (margin 0.261). The critical band [0.10, 0.36) is
+// covered by news.ycombinator.com_38765228 (0.3167) — a real short page where
+// the extractor captures a legitimate subset. Both margins are wide.
+// FLOOR = 500 (char-based): thin_page (128) is at 25.6% of the floor (3.9×
+// below, exempt); craigslist (17791) is 36× above (gated). A genuinely thin
+// page (two paragraphs) never trips no matter what the ratio says. A non-Latin
+// page crosses the floor at 500 codepoints, not 500 bytes — without char-based
+// counting a CJK page would cross at ~167 chars (issue #110 L1).
+
+/// Source visible text below this never trips the gate — a genuinely thin
+/// page extracts normally regardless of the ratio. Measured margin: the
+/// thin-page fixture (two paragraphs) has 128 visible chars, 3.9× below this.
+///
+/// # The floor is NOT redundant — do not delete it
+///
+/// An earlier draft of the PR body claimed the floor was unreachable because
+/// `score_node` (extractor.rs) skips nodes under 50 chars, so a selected
+/// subtree is always ≥ ~50 visible chars and `ext < src × 0.10` already
+/// implies `src > 500`. That reasoning is wrong: `score_node` gates the
+/// **extracted** node at 50 **bytes** (`text.len()`, extractor.rs:245-248),
+/// not the source, and not visible chars. A sub-500-char source whose
+/// extractor selects a ≥50-byte node whose visible text is under 10% of the
+/// source would trip without the floor. The floor is reachable in principle;
+/// what is missing is a fixture that exercises it, not the floor itself. Keep
+/// it as defence against a future extractor change that returns smaller
+/// subtrees, and against a source that is short but not thin-page-short.
+const EXTRACTION_GATE_SOURCE_FLOOR: usize = 500;
+
+/// Extracted visible text must be at least this fraction of source visible
+/// text, or the gate trips. Measured margin: the bug fixture (craigslist
+/// list page) extracts 0.29% of source (35× below this); the nearest
+/// legitimate extraction (github.com_torvalds) captures 36% (3.6× above);
+/// the critical band [0.10, 0.36) is covered by the HN thread fixture
+/// (0.3167, non-trip).
+const EXTRACTION_GATE_TEXT_FRACTION: f64 = 0.10;
+
+/// Token placed in `ExtractedContent::extraction_note` / `ReadOutput::
+/// extraction_note` when the gate trips. Bounded (not a free string) so it
+/// is stable for metrics/log matching.
+const EXTRACTION_GATE_REASON: &str = "extraction_rejected_low_text_ratio";
+
+/// Post-extraction sanity gate (issue #110). Returns `Some(reason)` when the
+/// extracted subtree holds far less of the page's visible text than the
+/// source and the source is above the absolute floor — meaning extraction
+/// discarded the real content and the caller should fall back to the whole
+/// document. Returns `None` when extraction is accepted.
+///
+/// Both inputs are reduced to visible text (non-whitespace, excluding
+/// `<script>`/`<style>`) via [`crate::content_detect::visible_text_len`];
+/// comparing bytes would make the ratio a function of markup bloat and trip
+/// on a well-extracted article inside a heavy page.
+fn extraction_gate_trips(source_html: &str, extracted_html: &str) -> Option<&'static str> {
+    let src = crate::content_detect::visible_text_len(source_html);
+    if src < EXTRACTION_GATE_SOURCE_FLOOR {
+        return None;
+    }
+    let ext = crate::content_detect::visible_text_len(extracted_html);
+    if (ext as f64) < (src as f64) * EXTRACTION_GATE_TEXT_FRACTION {
+        return Some(EXTRACTION_GATE_REASON);
+    }
+    None
 }
 
 /// Extract clean content from HTML.
@@ -109,6 +224,7 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
             json_ld: Vec::new(),
             og_image: String::new(),
             meta: ArticleMeta::default(),
+            extraction_note: None,
         };
     }
 
@@ -124,7 +240,33 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
     // Run the extractor: scores candidate nodes, picks the best, returns HTML.
     let extracted = crate::extractor::extract_content_html(&doc, base_url.as_ref());
 
-    // Convert the content node HTML to the requested format.
+    // Post-extraction sanity gate (issue #110): on a list/index page the
+    // extractor picks a wrong container (e.g. a hidden loading curtain). If
+    // the extracted subtree holds far less visible text than the source, reject
+    // it and convert the whole document instead. One gate, one fallback, one
+    // code path — applies to text/markdown/llm/html and to both the direct and
+    // chrome-render fetch paths (both call this function).
+    let (content_source_html, recovered_h1, extraction_note): (
+        String,
+        String,
+        Option<&'static str>,
+    ) = match extraction_gate_trips(html, &extracted.html) {
+        Some(reason) => {
+            crate::metrics::record_read_extraction_rejected();
+            tracing::info!(
+                reason = reason,
+                "read extraction gate rejected subtree — falling back to whole document"
+            );
+            // Whole document: H1 recovery is unnecessary (the H1 is in the doc
+            // and survives noise filtering for markdown, or is in the raw HTML
+            // for the html format).
+            (html.to_string(), String::new(), Some(reason))
+        }
+        None => (extracted.html, extracted.recovered_h1, None),
+    };
+
+    // Convert the content node HTML (or the whole document, on gate fallback)
+    // to the requested format.
     //
     // NOTE: ContentFormat::Text does NOT get recovery passes (H1, hero
     // paragraph, announcements, section headings, footer CTA/sitemap).
@@ -135,7 +277,7 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
     // (Issue #73: documented asymmetry, intentional.)
     let mut content = match format {
         ContentFormat::Text => {
-            let plain = html_to_plain(&extracted.html);
+            let plain = html_to_plain(&content_source_html);
             if plain.is_empty() {
                 html_to_plain(html)
             } else {
@@ -143,7 +285,7 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
             }
         }
         ContentFormat::Llm | ContentFormat::Markdown => {
-            let mut md = html_to_fit_markdown(&extracted.html);
+            let mut md = html_to_fit_markdown(&content_source_html);
             // Run recovery passes on markdown output (H1, hero, announcements,
             // section headings, footer CTA, footer sitemap).
             let mut links = Vec::new();
@@ -151,17 +293,20 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
                 &doc,
                 base_url.as_ref(),
                 &mut md,
-                &extracted.recovered_h1,
+                &recovered_h1,
                 &mut links,
             );
             md
         }
-        ContentFormat::Html => extracted.html.clone(),
+        ContentFormat::Html => content_source_html.clone(),
     };
 
     // SPA content recovery: if DOM extraction is sparse, try data islands
     // and JS eval to recover content embedded in <script> tags.
     // Only applies to text/markdown/llm formats — HTML format is raw.
+    // On a gate fallback the content is the whole document (not sparse), so
+    // the internal word-count gate in recover_spa_content skips it — no
+    // change needed here.
     if matches!(
         format,
         ContentFormat::Text | ContentFormat::Markdown | ContentFormat::Llm
@@ -202,6 +347,7 @@ pub fn extract_content(html: &str, url: &str, format: ContentFormat) -> Extracte
         json_ld,
         og_image,
         meta,
+        extraction_note: extraction_note.map(str::to_owned),
     }
 }
 
@@ -304,12 +450,27 @@ fn extract_title_from_html(html: &str) -> String {
 
 pub fn html_to_plain(html: &str) -> String {
     let doc = dom_query::Document::from(html);
+    // Strip tags whose text content is never visible to a reader (inline JS,
+    // CSS, `<noscript>` fallback). Without this, `body.text()` collects every
+    // `NodeData::Text` descendant with no tag filter — so when the extraction
+    // gate falls back to the whole document (issue #110), the Text output
+    // carries inline script/style source. Markdown already strips these via
+    // the same [`INVISIBLE_TAG_SELECTORS`] list; Text must too. One list, no
+    // drift. (Nav/footer/header text IS visible to a reader and stays — only
+    // the invisible tags are stripped here, unlike markdown which also drops
+    // chrome via [`NOISE_SELECTORS`].)
+    for sel in INVISIBLE_TAG_SELECTORS {
+        doc.select(sel).remove();
+    }
     let text = doc.select("body").text().to_string();
     collapse_whitespace(&text)
 }
 
 pub fn html_to_fit_markdown(html: &str) -> String {
     let doc = dom_query::Document::from(html);
+    for sel in INVISIBLE_TAG_SELECTORS {
+        doc.select(sel).remove();
+    }
     for sel in NOISE_SELECTORS {
         doc.select(sel).remove();
     }
@@ -319,6 +480,15 @@ pub fn html_to_fit_markdown(html: &str) -> String {
     crate::noise::remove_noise(&doc);
     htmd::convert(&doc.html()).unwrap_or_default()
 }
+
+/// Tags whose text content is never visible to a reader — inline JS (`script`),
+/// CSS (`style`), and `<noscript>` fallback. dom_query's `text_of` collects
+/// every `NodeData::Text` descendant with no tag filter, so without stripping
+/// these, `html_to_plain` leaks inline script/style source when the extraction
+/// gate falls back to the whole document (issue #110). Shared by
+/// `html_to_plain` and `html_to_fit_markdown` so the two formats cannot drift
+/// on which invisible tags they strip.
+const INVISIBLE_TAG_SELECTORS: &[&str] = &["script", "style", "noscript"];
 
 fn collapse_whitespace(s: &str) -> String {
     let mut r = String::with_capacity(s.len());
@@ -337,6 +507,9 @@ fn collapse_whitespace(s: &str) -> String {
     r.trim().to_string()
 }
 
+/// Boilerplate/chrome selectors stripped by `html_to_fit_markdown` (in
+/// addition to [`INVISIBLE_TAG_SELECTORS`]). Not applied to plain-text output
+/// — nav/footer/header text is visible to a reader and belongs in Text.
 pub const NOISE_SELECTORS: &[&str] = &[
     "nav",
     "footer",
@@ -354,9 +527,6 @@ pub const NOISE_SELECTORS: &[&str] = &[
     "[role=navigation]",
     "[role=banner]",
     "[role=contentinfo]",
-    "script",
-    "style",
-    "noscript",
     "iframe",
 ];
 

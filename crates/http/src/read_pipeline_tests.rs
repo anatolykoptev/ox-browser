@@ -66,6 +66,7 @@ fn build_output_populates_all_fields() {
         json_ld: vec![],
         og_image: String::new(),
         meta: crate::content::ArticleMeta::default(),
+        extraction_note: None,
     };
     let p = params("https://x.com");
     let out = build_output(ext, &p, "direct", 42);
@@ -95,6 +96,7 @@ fn truncation_applied_when_max_length_set() {
         json_ld: vec![],
         og_image: String::new(),
         meta: crate::content::ArticleMeta::default(),
+        extraction_note: None,
     };
     let p = ReadParams {
         url: "https://x.com".into(),
@@ -255,6 +257,7 @@ async fn site_handler_success_increments_fetch_success_total() {
                     json_ld: vec![],
                     og_image: String::new(),
                     meta: crate::content::ArticleMeta::default(),
+                    extraction_note: None,
                 },
                 &p,
                 "site",

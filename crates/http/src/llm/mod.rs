@@ -196,6 +196,7 @@ mod tests {
             tags: vec![],
             language: "en".into(),
             error: None,
+            extraction_note: None,
         }
     }
 
@@ -325,6 +326,7 @@ mod tests {
             tags: vec![],
             language: String::new(),
             error: None,
+            extraction_note: None,
         };
 
         let out = to_llm_text(&result);
