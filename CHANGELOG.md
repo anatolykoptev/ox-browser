@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.6](https://github.com/anatolykoptev/ox-browser/compare/v0.8.5...v0.8.6) (2026-07-29)
+
+
+### Fixed
+
+* cap unbounded response bodies on four neighbour paths ([#122](https://github.com/anatolykoptev/ox-browser/issues/122)) ([8bd7db4](https://github.com/anatolykoptev/ox-browser/commit/8bd7db47cab3eb170990257327019453bbd77424))
+* **doctor:** probe internal endpoints without the SSRF guard ([#124](https://github.com/anatolykoptev/ox-browser/issues/124)) ([e60916a](https://github.com/anatolykoptev/ox-browser/commit/e60916a2cfd3a263701c6ed829a19ace5e89f352))
+
 ## [0.8.5](https://github.com/anatolykoptev/ox-browser/compare/v0.8.4...v0.8.5) (2026-07-29)
 
 
