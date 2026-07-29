@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.8](https://github.com/anatolykoptev/ox-browser/compare/v0.8.7...v0.8.8) (2026-07-29)
+
+
+### Added
+
+* **http:** bound every outbound call and meter /fetch ([#140](https://github.com/anatolykoptev/ox-browser/issues/140)) ([7b48c58](https://github.com/anatolykoptev/ox-browser/commit/7b48c5836b1f8edb3bdfd1d2d3ad2c6f2e385454))
+
+
+### Fixed
+
+* **api:** unify per-call deadline field to `timeout` on all read/fetch surfaces ([#144](https://github.com/anatolykoptev/ox-browser/issues/144)) ([bb7cf4e](https://github.com/anatolykoptev/ox-browser/commit/bb7cf4e511ea13aa4d7c62e746f046f3cc07238e))
+* **read:** reject a wrong-container extraction instead of returning it as content ([#138](https://github.com/anatolykoptev/ox-browser/issues/138)) ([405a542](https://github.com/anatolykoptev/ox-browser/commit/405a542c4363c07d54440f4feeb081a12dfa3170))
+
 ## [0.8.7](https://github.com/anatolykoptev/ox-browser/compare/v0.8.6...v0.8.7) (2026-07-29)
 
 
