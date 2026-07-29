@@ -72,7 +72,7 @@ async fn do_graphql_get(
         ("x-twitter-active-user", "yes"),
         ("x-twitter-client-language", "en"),
         ("content-type", "application/json"),
-        ("user-agent", crate::TWITTER_USER_AGENT),
+        ("user-agent", crate::tw_http::twitter_user_agent()),
         ("accept", "*/*"),
         ("accept-language", "en-US,en;q=0.9"),
         ("referer", "https://twitter.com/"),
@@ -131,7 +131,7 @@ async fn activate_guest_token() -> Result<String, String> {
             ("content-type".to_string(), "application/json".to_string()),
             (
                 "user-agent".to_string(),
-                crate::TWITTER_USER_AGENT.to_string(),
+                crate::tw_http::twitter_user_agent().to_string(),
             ),
         ],
         body: None,

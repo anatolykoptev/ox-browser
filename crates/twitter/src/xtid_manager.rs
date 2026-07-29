@@ -79,7 +79,7 @@ impl XtidManager {
             .get_with_headers(
                 url,
                 &[
-                    ("user-agent", crate::TWITTER_USER_AGENT),
+                    ("user-agent", crate::tw_http::twitter_user_agent()),
                     (
                         "accept",
                         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
