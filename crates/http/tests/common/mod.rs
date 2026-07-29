@@ -465,9 +465,16 @@ pub fn reference_source_for<'a>(field: &str, reference: &'a Reference) -> &'a st
 /// raw value comparison of unknown provenance (the same asymmetry Fix C
 /// closed on the value side, here closed on the provenance side). Both
 /// stay green without these asserts.
+///
+/// `bucket_b` is an explicit parameter (not the production `FP_BUCKET_B`)
+/// so the `should_panic` provenance tests can pass a literal non-empty
+/// bucket and keep the guard mechanism exercised even when `FP_BUCKET_B` is
+/// empty (the trust_anchors gap is closed, issue #81). This mirrors the F7
+/// pattern in `tls.rs::tests` (literal `TEST_B` decoupled from the
+/// production const). Production callers pass `FP_BUCKET_B` directly.
 #[allow(dead_code)] // only called from the offline test target
-pub fn assert_bucket_b_provenance(r: &Reference, name: &str) {
-    for field in FP_BUCKET_B {
+pub fn assert_bucket_b_provenance(r: &Reference, name: &str, bucket_b: &[&str]) {
+    for field in bucket_b {
         let val = reference_value_for(field, r);
         assert!(
             !val.is_empty(),

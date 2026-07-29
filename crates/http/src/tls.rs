@@ -798,4 +798,48 @@ mod tests {
         // Third component present but empty.
         assert!(!reference_exhibits_gap("771,4865-4866,,4588-29-23-24,0"));
     }
+
+    // ── trust_anchors emission guards (issue #81) ───────────────────────
+    //
+    // Both production lines (`chrome_extensions` listing 51764 AND
+    // `chrome_tls` calling `.requested_trust_anchors(...)`) are load-bearing
+    // and independently removable: BoringSSL emits the extension from the
+    // SSL config, and 51764 is already in its internal table, so keeping the
+    // list entry while dropping the setter is silently accepted and emits
+    // nothing. These two tests make `make preflight` (no feature flag, no
+    // network) fail if either line is deleted. Mutation-probed: see the
+    // report — deleting the list entry REDS `chrome_extensions_has_17`,
+    // deleting the setter REDS `chrome_tls_requests_trust_anchors`.
+
+    // The extension list must carry exactly 17 entries (real Chrome 148's
+    // ClientHello count). A bare count would pass if another extension were
+    // swapped in, so the 51764 membership is asserted separately.
+    #[test]
+    fn chrome_extensions_has_17() {
+        let exts = chrome_extensions();
+        assert_eq!(
+            exts.len(),
+            17,
+            "Chrome 148 sends 17 ClientHello extensions; got {}",
+            exts.len()
+        );
+        assert!(
+            exts.contains(&ExtensionType::from(51764)),
+            "extension list must contain trust_anchors (0xca34 = 51764)"
+        );
+    }
+
+    // The TLS builder must actually carry a requested-trust-anchors value.
+    // The field is `Option<Cow<'static, [u8]>>` on the patched `TlsOptions`;
+    // `None` means the setter was dropped and BoringSSL emits nothing, even
+    // though 51764 stays in the extension list (it only fixes wire order).
+    #[test]
+    fn chrome_tls_requests_trust_anchors() {
+        let tls = chrome_tls();
+        assert!(
+            tls.requested_trust_anchors.is_some(),
+            "chrome_tls must set requested_trust_anchors; None means the \
+             extension is listed but never emitted"
+        );
+    }
 }
