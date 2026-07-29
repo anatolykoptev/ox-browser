@@ -15,12 +15,12 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::Result;
 use crate::cloudflare::detect_cloudflare;
 use crate::deadline::CallOutcome;
 use crate::error::HttpError;
 use crate::proxy_fallback::PROXY_DIAL_FALLBACK_TOTAL;
 use crate::response::HttpResponse;
-use crate::Result;
 
 /// Total read-path attempts entering `read_page_inner` (`/read`, MCP `read`,
 /// CLI `read`). Renamed from `oxbrowser_fetch_total` (issue #128): the old
@@ -880,11 +880,9 @@ mod tests {
 
     #[test]
     fn classify_inferred_cloudflare_as_challenge() {
-        let outcome: CallOutcome<Result<HttpResponse>> =
-            CallOutcome::Ok(Err(HttpError::CloudflareInferred(
-                403,
-                Box::new(ok_resp(403)),
-            )));
+        let outcome: CallOutcome<Result<HttpResponse>> = CallOutcome::Ok(Err(
+            HttpError::CloudflareInferred(403, Box::new(ok_resp(403))),
+        ));
         assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::Challenge);
     }
 
@@ -892,14 +890,20 @@ mod tests {
     fn classify_generic_error_as_upstream_error() {
         let outcome: CallOutcome<Result<HttpResponse>> =
             CallOutcome::Ok(Err(HttpError::Timeout(Duration::from_secs(20))));
-        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::UpstreamError);
+        assert_eq!(
+            classify_fetch_outcome(&outcome),
+            FetchOutcome::UpstreamError
+        );
     }
 
     #[test]
     fn classify_5xx_retryable_as_upstream_error() {
         let outcome: CallOutcome<Result<HttpResponse>> =
             CallOutcome::Ok(Err(HttpError::RetryableStatus(503)));
-        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::UpstreamError);
+        assert_eq!(
+            classify_fetch_outcome(&outcome),
+            FetchOutcome::UpstreamError
+        );
     }
 
     // ── in-flight gauge test (issue #128/#139) ────────────────────────────
@@ -935,11 +939,10 @@ mod tests {
     async fn outbound_inflight_gauge_decrements_on_deadline_exceeded() {
         let _guard = GAUGE_TEST_LOCK.lock().unwrap();
         let baseline = OUTBOUND_INFLIGHT.load(Ordering::Relaxed);
-        let outcome: CallOutcome<()> =
-            crate::deadline::bounded(Duration::from_millis(10), async {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            })
-            .await;
+        let outcome: CallOutcome<()> = crate::deadline::bounded(Duration::from_millis(10), async {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        })
+        .await;
         assert!(matches!(outcome, CallOutcome::DeadlineExceeded { .. }));
         assert_eq!(
             OUTBOUND_INFLIGHT.load(Ordering::Relaxed),

@@ -116,7 +116,10 @@ mod tests {
 
     #[test]
     fn resolve_timeout_none_uses_default() {
-        assert_eq!(resolve_timeout(None), Duration::from_secs(DEFAULT_CALL_TIMEOUT_SECS));
+        assert_eq!(
+            resolve_timeout(None),
+            Duration::from_secs(DEFAULT_CALL_TIMEOUT_SECS)
+        );
     }
 
     #[test]
@@ -128,8 +131,14 @@ mod tests {
     fn resolve_timeout_clamps_to_ceiling() {
         // A caller asking for 600 s gets the ceiling, not 600 s — the
         // field is attacker-influenced.
-        assert_eq!(resolve_timeout(Some(600)), Duration::from_secs(MAX_CALL_TIMEOUT_SECS));
-        assert_eq!(resolve_timeout(Some(MAX_CALL_TIMEOUT_SECS)), Duration::from_secs(MAX_CALL_TIMEOUT_SECS));
+        assert_eq!(
+            resolve_timeout(Some(600)),
+            Duration::from_secs(MAX_CALL_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            resolve_timeout(Some(MAX_CALL_TIMEOUT_SECS)),
+            Duration::from_secs(MAX_CALL_TIMEOUT_SECS)
+        );
     }
 
     #[test]
@@ -146,11 +155,10 @@ mod tests {
 
     #[tokio::test]
     async fn bounded_returns_deadline_exceeded_when_future_slow() {
-        let outcome: CallOutcome<()> =
-            bounded(Duration::from_millis(10), async {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            })
-            .await;
+        let outcome: CallOutcome<()> = bounded(Duration::from_millis(10), async {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        })
+        .await;
         match outcome {
             CallOutcome::DeadlineExceeded { secs } => assert_eq!(secs, 0),
             other => panic!("expected DeadlineExceeded, got {other:?}"),

@@ -575,7 +575,11 @@ async fn read_page_default_timeout_does_not_fire_on_fast_response() {
 
     let out = read_page(&http, &p, &[]).await;
 
-    assert!(out.error.is_none(), "expected success, got error: {:?}", out.error);
+    assert!(
+        out.error.is_none(),
+        "expected success, got error: {:?}",
+        out.error
+    );
     assert_eq!(handler_calls.load(Ordering::SeqCst), 1);
     assert!(!out.content.is_empty());
 }
