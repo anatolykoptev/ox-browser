@@ -41,3 +41,63 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # release-please bumps Cargo.toml (extra-files) but NOT Cargo.lock — the
+      # lockfile is a generated file that cargo rewrites wholesale, so an
+      # `# x-release-please-version` annotation inside it is unwinnable (any
+      # `cargo build` strips it). Instead we regenerate the lock on the release
+      # PR itself, so the lock is always DERIVED from the bumped version rather
+      # than patched in parallel with it.
+      #
+      # `pr` (root component output) is a JSON PullRequest object whose
+      # `headBranchName` is the release PR branch. `prs_created` guards the
+      # whole step so it is a no-op when no release PR was opened/updated.
+      - name: Read release PR branch
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        id: relpr
+        env:
+          PR_JSON: ${{ steps.release.outputs.pr }}
+        run: |
+          branch=$(printf '%s' "$PR_JSON" | jq -r '.headBranchName // empty')
+          if [ -z "$branch" ]; then
+            echo "no release PR branch in output; skipping lockfile regeneration"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout release PR branch
+        if: ${{ steps.relpr.outputs.skip != 'true' }}
+        uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ steps.relpr.outputs.branch }}
+
+      - name: Install Rust toolchain
+        if: ${{ steps.relpr.outputs.skip != 'true' }}
+        uses: dtolnay/rust-toolchain@1.97
+
+      - name: Regenerate Cargo.lock on the release PR
+        if: ${{ steps.relpr.outputs.skip != 'true' }}
+        env:
+          BRANCH: ${{ steps.relpr.outputs.branch }}
+        run: |
+          # `cargo update --workspace --offline` updates ONLY the workspace
+          # member versions and touches no third-party dependency versions
+          # (offline => no newer compatible versions can be discovered). It
+          # needs the [patch.crates-io] git deps + registry index cached, so
+          # prime them with a network `cargo fetch`, then restore the
+          # committed (pre-bump) lock and re-resolve offline.
+          cargo fetch
+          git checkout -- Cargo.lock
+          cargo update --workspace --offline
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock already matches Cargo.toml; nothing to commit"
+          else
+            git add Cargo.lock
+            git commit -m "chore: regenerate Cargo.lock for release"
+            # Push with the krolik-release-bot App token: an App push re-triggers
+            # the PR's CI checks (a GITHUB_TOKEN push would NOT), so the PR is
+            # validated against the corrected lock rather than its stale state.
+            git push origin HEAD:"$BRANCH"
+          fi
