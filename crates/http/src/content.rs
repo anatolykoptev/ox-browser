@@ -134,33 +134,55 @@ pub struct ExtractedContent {
 // there is nothing better to select.
 //
 // Thresholds were chosen empirically against the fixtures in
-// `crates/http/tests/fixtures/` (measured 2026-07-28 via
-// `content_detect::visible_text_len`):
+// `crates/http/tests/fixtures/` (measured 2026-07-29 via
+// `content_detect::visible_text_len`, char-based — see issue #110 L1):
 //
-//   fixture                     src_vis  ext_vis  ratio
-//   craigslist.org_sfbay_fbh      17948       51  0.0028  ← trips
-//   github.com_torvalds            3596     1301  0.3618  ← nearest non-trip
-//   vercel.com                     3142     1463  0.4656
-//   www.bbc.com_news               9189     6007  0.6537
-//   nextjs.org                     6104     5924  0.9705
-//   thin_page                       128      108  0.8438  ← below floor
+//   fixture                          src_vis  ext_vis  ratio
+//   craigslist.org_sfbay_fbh           17791       51  0.0029  ← trips
+//   github.com_torvalds                 3589     1296  0.3611  ← nearest non-trip (Latin)
+//   news.ycombinator.com_38765228        521      165  0.3167  ← critical band, non-trip
+//   vercel.com                          3110     1443  0.4640
+//   ja.wikipedia.org_buffett             845      563  0.6663  ← non-Latin, non-trip
+//   www.bbc.com_news                    8965     6006  0.6699
+//   nextjs.org                          6081     5909  0.9717
+//   thin_page                            128      108  0.8438  ← below floor
 //
-// FRACTION = 0.10: craigslist (0.0028) is at 2.8% of the threshold (35× below,
+// FRACTION = 0.10: craigslist (0.0029) is at 2.9% of the threshold (35× below,
 // margin 0.097); the nearest non-tripping fixture, github.com_torvalds
-// (0.3618), is 3.6× above (margin 0.262). Both margins are wide.
-// FLOOR = 500: thin_page (128) is at 25.6% of the floor (3.9× below, exempt);
-// craigslist (17948) is 36× above (gated). A genuinely thin page (two
-// paragraphs) never trips no matter what the ratio says.
+// (0.3611), is 3.6× above (margin 0.261). The critical band [0.10, 0.36) is
+// covered by news.ycombinator.com_38765228 (0.3167) — a real short page where
+// the extractor captures a legitimate subset. Both margins are wide.
+// FLOOR = 500 (char-based): thin_page (128) is at 25.6% of the floor (3.9×
+// below, exempt); craigslist (17791) is 36× above (gated). A genuinely thin
+// page (two paragraphs) never trips no matter what the ratio says. A non-Latin
+// page crosses the floor at 500 codepoints, not 500 bytes — without char-based
+// counting a CJK page would cross at ~167 chars (issue #110 L1).
 
 /// Source visible text below this never trips the gate — a genuinely thin
 /// page extracts normally regardless of the ratio. Measured margin: the
 /// thin-page fixture (two paragraphs) has 128 visible chars, 3.9× below this.
+///
+/// # The floor is NOT redundant — do not delete it
+///
+/// An earlier draft of the PR body claimed the floor was unreachable because
+/// `score_node` (extractor.rs) skips nodes under 50 chars, so a selected
+/// subtree is always ≥ ~50 visible chars and `ext < src × 0.10` already
+/// implies `src > 500`. That reasoning is wrong: `score_node` gates the
+/// **extracted** node at 50 **bytes** (`text.len()`, extractor.rs:245-248),
+/// not the source, and not visible chars. A sub-500-char source whose
+/// extractor selects a ≥50-byte node whose visible text is under 10% of the
+/// source would trip without the floor. The floor is reachable in principle;
+/// what is missing is a fixture that exercises it, not the floor itself. Keep
+/// it as defence against a future extractor change that returns smaller
+/// subtrees, and against a source that is short but not thin-page-short.
 const EXTRACTION_GATE_SOURCE_FLOOR: usize = 500;
 
 /// Extracted visible text must be at least this fraction of source visible
 /// text, or the gate trips. Measured margin: the bug fixture (craigslist
-/// list page) extracts 0.28% of source (35× below this); the nearest
-/// legitimate extraction (github.com_torvalds) captures 36% (3.6× above).
+/// list page) extracts 0.29% of source (35× below this); the nearest
+/// legitimate extraction (github.com_torvalds) captures 36% (3.6× above);
+/// the critical band [0.10, 0.36) is covered by the HN thread fixture
+/// (0.3167, non-trip).
 const EXTRACTION_GATE_TEXT_FRACTION: f64 = 0.10;
 
 /// Token placed in `ExtractedContent::extraction_note` / `ReadOutput::
