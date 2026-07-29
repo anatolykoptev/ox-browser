@@ -1,4 +1,5 @@
 mod config;
+mod read;
 mod serve;
 
 use std::path::PathBuf;
@@ -6,7 +7,59 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use ox_core::{Browser, BrowserConfig};
-use ox_http::{ProfileFilter, StaticPool, random_profile};
+use ox_http::{BrowserProfile, HttpClient, HttpConfig, ProfileFilter, StaticPool, random_profile};
+
+/// Select a builtin browser profile matching the host OS for the given
+/// browser name. Shared by `fetch` and `read` (and future CLI subcommands)
+/// so the CLI and service select the same profile for the same name
+/// (Issue #81: one identity). Behaviour is identical to the previous inline
+/// `fetch` logic — extracted, not changed.
+fn select_profile(browser_name: &str) -> &'static BrowserProfile {
+    let filter = ProfileFilter {
+        browser: Some(browser_name.to_string()),
+        os: Some(std::env::consts::OS.to_string()),
+        mobile: Some(false),
+    };
+    random_profile(&filter)
+}
+
+/// Build a one-shot [`HttpClient`] for CLI subcommands from the profile/proxy
+/// knobs shared across `fetch`/`read`/future `crawl`/`analyze`. The second
+/// consumer is a one-line call, not a second copy of the plumbing.
+///
+/// No cookie cache / render cache / solver negcache / proxy pool are wired
+/// (a one-shot CLI read has no cross-request state to share); every one of
+/// those is `Option`-guarded in `read_page_inner`, so their absence degrades
+/// gracefully. `GO_BROWSER_URL` is honoured so JS-heavy pages escalate to
+/// chrome render the same way as the server when that env var is set.
+pub(crate) fn build_cli_http_client(
+    profile: Option<&str>,
+    proxy: Option<String>,
+    debug: bool,
+) -> anyhow::Result<HttpClient> {
+    let mut cfg = HttpConfig::default();
+
+    if let Some(browser_name) = profile {
+        cfg.profile = Some(select_profile(browser_name));
+    }
+
+    if !config::proxy_disabled()
+        && let Some(proxy_url) = proxy
+    {
+        let pool = StaticPool::new(vec![proxy_url]);
+        cfg.proxy_pool = Some(Arc::new(pool));
+    }
+
+    if let Ok(url) = std::env::var("GO_BROWSER_URL")
+        && !url.is_empty()
+    {
+        cfg.chrome_render_url = Some(format!("{url}/api/v1/chrome/interact"));
+    }
+
+    cfg.debug = debug;
+
+    Ok(HttpClient::new(cfg)?)
+}
 
 #[derive(Parser)]
 #[command(name = "ox-browser", version, about = "Lightweight headless browser")]
@@ -33,6 +86,31 @@ enum Commands {
         /// Proxy URL (e.g. http://user:pass@host:port)
         #[arg(long)]
         proxy: Option<String>,
+        /// Enable debug logging for HTTP requests
+        #[arg(long)]
+        debug: bool,
+    },
+    /// Read a URL through the content-extraction pipeline (readability,
+    /// format conversion, LLM cleanup, chrome-render escalation). Same
+    /// pipeline as POST /read and the MCP `read` tool.
+    Read {
+        /// URL to read
+        url: String,
+        /// Output format: text (default), markdown, html, llm
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Max content length in chars (0 = unlimited)
+        #[arg(long, default_value_t = 0)]
+        max_length: usize,
+        /// Browser profile: chrome, firefox, safari, edge
+        #[arg(long)]
+        profile: Option<String>,
+        /// Proxy URL (e.g. http://user:pass@host:port)
+        #[arg(long)]
+        proxy: Option<String>,
+        /// Emit the full ReadOutput as JSON (pipeable to jq)
+        #[arg(long)]
+        json: bool,
         /// Enable debug logging for HTTP requests
         #[arg(long)]
         debug: bool,
@@ -78,12 +156,7 @@ async fn main() -> anyhow::Result<()> {
             if let Some(browser_name) = &profile {
                 // Match the host OS so the CLI and service select the same
                 // profile for the same browser name. (Issue #81: one identity)
-                let filter = ProfileFilter {
-                    browser: Some(browser_name.clone()),
-                    os: Some(std::env::consts::OS.to_string()),
-                    mobile: Some(false),
-                };
-                cfg.profile = Some(random_profile(&filter));
+                cfg.profile = Some(select_profile(browser_name));
             }
 
             if !config::proxy_disabled()
@@ -112,6 +185,26 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 println!("{}", page.html());
             }
+        }
+        Commands::Read {
+            url,
+            format,
+            max_length,
+            profile,
+            proxy,
+            json,
+            debug,
+        } => {
+            let args = read::ReadArgs {
+                url,
+                format,
+                max_length,
+                profile,
+                proxy,
+                json,
+                debug,
+            };
+            read::run(args).await?;
         }
         Commands::Serve {
             config: config_path,
