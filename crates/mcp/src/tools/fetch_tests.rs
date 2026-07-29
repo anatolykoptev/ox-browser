@@ -45,6 +45,35 @@ fn fetch_input_with_content_type() {
     assert_eq!(input.content_type.as_deref(), Some("text/xml"));
 }
 
+// ── WIRE-NAME PARITY (issue #139 follow-up) ───────────────────────────────────
+//
+// `timeout` is canonical; `timeout_secs` is accepted via a serde alias so a
+// caller guessing the wrong spelling does not silently get the 8 s default.
+// Asserts the RESOLVED deadline, not merely Ok(_).
+
+#[test]
+fn fetch_input_timeout_canonical_name_resolves() {
+    use ox_http::deadline::resolve_timeout;
+    let input: FetchInput = serde_json::from_str(r#"{"url":"https://x.com","timeout":1}"#).unwrap();
+    assert_eq!(
+        resolve_timeout(input.timeout),
+        std::time::Duration::from_secs(1),
+        "canonical `timeout` must resolve to 1s"
+    );
+}
+
+#[test]
+fn fetch_input_timeout_secs_alias_resolves() {
+    use ox_http::deadline::resolve_timeout;
+    let input: FetchInput =
+        serde_json::from_str(r#"{"url":"https://x.com","timeout_secs":1}"#).unwrap();
+    assert_eq!(
+        resolve_timeout(input.timeout),
+        std::time::Duration::from_secs(1),
+        "alias `timeout_secs` must resolve to 1s, not the 8s default"
+    );
+}
+
 // ── FetchSmartInput ───────────────────────────────────────────────────────────
 
 #[test]

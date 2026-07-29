@@ -42,9 +42,10 @@ pub struct ReadParams {
     /// pipeline (fetch + extract + solver escalation + rate-limit wait),
     /// not one attempt — issue #139. Same field/name/units/ceiling as
     /// `/fetch`'s `timeout`, the MCP `fetch`/`read` tools, and the CLI
-    /// `--timeout` flag.
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
+    /// `--timeout` flag. The legacy `timeout_secs` spelling is accepted
+    /// via a serde alias but is not the canonical name.
+    #[serde(default, alias = "timeout_secs")]
+    pub timeout: Option<u64>,
 }
 
 fn default_format() -> String {

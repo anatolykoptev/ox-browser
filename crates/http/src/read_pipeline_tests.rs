@@ -20,7 +20,7 @@ fn params(url: &str) -> ReadParams {
         url: url.to_owned(),
         format: "text".into(),
         max_length: 0,
-        timeout_secs: None,
+        timeout: None,
     }
 }
 
@@ -103,7 +103,7 @@ fn truncation_applied_when_max_length_set() {
         url: "https://x.com".into(),
         format: "text".into(),
         max_length: 50,
-        timeout_secs: None,
+        timeout: None,
     };
     let out = build_output(ext, &p, "direct", 0);
     assert!(out.content.len() <= 55);
@@ -392,7 +392,7 @@ async fn cli_and_api_paths_produce_same_read_output() {
         url: "https://example.com/article".into(),
         format: "markdown".into(),
         max_length: 0,
-        timeout_secs: None,
+        timeout: None,
     };
     // API construction: serde-deserialise JSON, as axum's `Json<ReadParams>`
     // does in the /read handler. The default format is "text" (content.rs).
@@ -425,7 +425,7 @@ async fn read_format_mapping_is_discriminating() {
         url: url.into(),
         format: fmt.into(),
         max_length: 0,
-        timeout_secs: None,
+        timeout: None,
     };
 
     let md = read_page_inner(&http, &mk("markdown"), &[]).await;
@@ -508,14 +508,14 @@ impl Handler for SlowHandler {
     }
 }
 
-/// `read_page` with `timeout_secs: Some(1)` against a handler that sleeps
+/// `read_page` with `timeout: Some(1)` against a handler that sleeps
 /// 10 s MUST return an error output whose `elapsed_ms` is ~1 s (the bound
 /// fired), NOT ~10 s (the handler completed). This is the RED test for the
-/// per-call deadline: on the old code (no `timeout_secs` field, fixed
+/// per-call deadline: on the old code (no `timeout` field, fixed
 /// `PIPELINE_TIMEOUT = 30 s`), the handler sleeps 10 s and completes
 /// successfully — `out.error` is `None` and `elapsed_ms` ≈ 10_000.
 ///
-/// The mutation probe: change `read_page` to ignore `params.timeout_secs`
+/// The mutation probe: change `read_page` to ignore `params.timeout`
 /// (e.g. revert to a fixed 30 s) and this test goes RED — `out.error` is
 /// `None` and `elapsed_ms` far exceeds 2_000.
 #[tokio::test]
@@ -531,7 +531,7 @@ async fn read_page_deadline_fires_within_bound() {
         url: "https://slow.test/page".into(),
         format: "text".into(),
         max_length: 0,
-        timeout_secs: Some(1),
+        timeout: Some(1),
     };
 
     let out = read_page(&http, &p, &[]).await;
@@ -552,10 +552,10 @@ async fn read_page_deadline_fires_within_bound() {
     );
 }
 
-/// `read_page` with `timeout_secs: None` (the default) against a fast
+/// `read_page` with `timeout: None` (the default) against a fast
 /// handler MUST complete successfully — the default bound (8 s) does not
 /// fire on a sub-millisecond response. This is the byte-identical
-/// no-field test: a caller that omits `timeout_secs` gets the same
+/// no-field test: a caller that omits `timeout` gets the same
 /// successful behavior as before the field existed (the default is
 /// generous enough not to interfere with fast responses).
 #[tokio::test]
@@ -570,7 +570,7 @@ async fn read_page_default_timeout_does_not_fire_on_fast_response() {
         url: "https://fast.test/page".into(),
         format: "text".into(),
         max_length: 0,
-        timeout_secs: None,
+        timeout: None,
     };
 
     let out = read_page(&http, &p, &[]).await;
@@ -584,7 +584,7 @@ async fn read_page_default_timeout_does_not_fire_on_fast_response() {
     assert!(!out.content.is_empty());
 }
 
-/// `read_page` with `timeout_secs: Some(0)` MUST clamp up to 1 s (not
+/// `read_page` with `timeout: Some(0)` MUST clamp up to 1 s (not
 /// reject every request), so a fast handler still completes. This is the
 /// ceiling-clamp test: `resolve_timeout(Some(0))` → 1 s, not 0 s.
 #[tokio::test]
@@ -599,7 +599,7 @@ async fn read_page_timeout_zero_clamps_to_one_sec() {
         url: "https://zero.test/page".into(),
         format: "text".into(),
         max_length: 0,
-        timeout_secs: Some(0),
+        timeout: Some(0),
     };
 
     let out = read_page(&http, &p, &[]).await;
@@ -613,7 +613,7 @@ async fn read_page_timeout_zero_clamps_to_one_sec() {
     assert_eq!(handler_calls.load(Ordering::SeqCst), 1);
 }
 
-/// `read_page` with `timeout_secs: Some(600)` MUST clamp down to the
+/// `read_page` with `timeout: Some(600)` MUST clamp down to the
 /// ceiling (60 s), not use 600 s. Against a handler that sleeps 2 s, the
 /// call completes successfully — the ceiling (60 s) does not fire. This
 /// is the upper-clamp test: `resolve_timeout(Some(600))` → 60 s, not 600 s.
@@ -630,7 +630,7 @@ async fn read_page_timeout_above_ceiling_clamps_down() {
         url: "https://ceiling.test/page".into(),
         format: "text".into(),
         max_length: 0,
-        timeout_secs: Some(600),
+        timeout: Some(600),
     };
 
     let out = read_page(&http, &p, &[]).await;
@@ -642,4 +642,89 @@ async fn read_page_timeout_above_ceiling_clamps_down() {
         out.error
     );
     assert_eq!(handler_calls.load(Ordering::SeqCst), 1);
+}
+
+// ─── WIRE-NAME PARITY TESTS (issue #139 follow-up) ───────────────────────────
+//
+// The per-call deadline field is `timeout` on every caller-facing surface
+// (`/fetch`, MCP `fetch`, CLI `--timeout`). `/read` and MCP `read` previously
+// spelled it `timeout_secs` — a name that, sent to `/fetch`, was SILENTLY
+// DROPPED (no `deny_unknown_fields`), so a caller guessing the wrong spelling
+// got the 8 s default with no error. These tests pin the unified `timeout`
+// name and the `timeout_secs` alias on every request DTO, asserting the
+// RESOLVED deadline (not merely that deserialization succeeded — an unknown
+// field deserializes fine and is dropped, so an `Ok(_)` assertion would pass
+// on the broken code).
+//
+// RED on the pre-rename code: `{"timeout": 2}` is an unknown field on
+// `ReadParams` (whose field was `timeout_secs`) → dropped →
+// `resolve_timeout(None)` = 8 s default → the bound fires at ~8 s against the
+// 10 s handler, producing an error string naming "8s" (not "2s") and an
+// elapsed_ms of ~8_000 (not ~2_000). Both assertions below fail for that
+// reason.
+
+/// `/read` accepts the canonical `{"timeout": 2}` wire name and resolves the
+/// deadline to 2 s — NOT the 8 s default. Drives the REAL `read_page` path
+/// (deserialization → resolve_timeout → bounded → SlowHandler) so a dropped
+/// field surfaces as a wrong resolved deadline, not a missing field access.
+#[tokio::test]
+async fn read_page_timeout_canonical_name_resolves_to_caller_value() {
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let handler: Arc<dyn Handler> = Arc::new(SlowHandler {
+        delay: Duration::from_secs(10),
+        calls: handler_calls.clone(),
+    });
+    let http = HttpClient::with_handler(handler, config_with(None, None));
+
+    // Construct via JSON deserialization — the wire path — NOT a struct
+    // literal, so the test compiles on both the pre- and post-rename code
+    // and the RED is a runtime assertion failure, not a build error.
+    let p: ReadParams =
+        serde_json::from_str(r#"{"url":"https://slow.test/page","timeout":2}"#).unwrap();
+
+    let out = read_page(&http, &p, &[]).await;
+
+    // The bound fired → error output naming the RESOLVED secs (2, not 8).
+    assert!(out.error.is_some(), "expected deadline error, got success");
+    let err = out.error.as_deref().unwrap();
+    assert!(
+        err.contains("2s per-call bound"),
+        "resolved deadline must be 2s (caller-supplied), got: {err}"
+    );
+    // elapsed_ms ~2 s (the bound), NOT ~8 s (the default).
+    assert!(
+        out.elapsed_ms < 4_000,
+        "deadline should fire at ~2s, got elapsed_ms={}",
+        out.elapsed_ms
+    );
+}
+
+/// `/read` still accepts the legacy `{"timeout_secs": 2}` spelling via the
+/// serde alias and resolves to 2 s. Regression guard: the alias must keep
+/// working after the canonical name became `timeout`.
+#[tokio::test]
+async fn read_page_timeout_secs_alias_resolves_to_caller_value() {
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let handler: Arc<dyn Handler> = Arc::new(SlowHandler {
+        delay: Duration::from_secs(10),
+        calls: handler_calls.clone(),
+    });
+    let http = HttpClient::with_handler(handler, config_with(None, None));
+
+    let p: ReadParams =
+        serde_json::from_str(r#"{"url":"https://slow.test/page","timeout_secs":2}"#).unwrap();
+
+    let out = read_page(&http, &p, &[]).await;
+
+    assert!(out.error.is_some(), "expected deadline error, got success");
+    let err = out.error.as_deref().unwrap();
+    assert!(
+        err.contains("2s per-call bound"),
+        "alias must resolve to 2s, got: {err}"
+    );
+    assert!(
+        out.elapsed_ms < 4_000,
+        "alias deadline should fire at ~2s, got elapsed_ms={}",
+        out.elapsed_ms
+    );
 }

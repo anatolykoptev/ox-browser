@@ -28,8 +28,10 @@ pub struct ReadInput {
     /// clamped to `[1, MAX_CALL_TIMEOUT_SECS]`. Bounds the whole read
     /// pipeline, not one attempt. Same field/units/ceiling as `/fetch`,
     /// `/read`, MCP `fetch`, and the CLI `--timeout` flag (issue #139).
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
+    /// The legacy `timeout_secs` spelling is accepted via a serde alias
+    /// but is not the canonical name.
+    #[serde(default, alias = "timeout_secs")]
+    pub timeout: Option<u64>,
 }
 
 fn default_format() -> String {
@@ -42,7 +44,7 @@ impl From<ReadInput> for ReadParams {
             url: i.url,
             format: i.format,
             max_length: i.max_length,
-            timeout_secs: i.timeout_secs,
+            timeout: i.timeout,
         }
     }
 }

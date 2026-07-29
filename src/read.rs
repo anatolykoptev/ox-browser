@@ -51,7 +51,7 @@ pub fn build_read_params(args: &ReadArgs) -> Result<ReadParams, String> {
         url: args.url.clone(),
         format: args.format.clone(),
         max_length: args.max_length,
-        timeout_secs: args.timeout,
+        timeout: args.timeout,
     })
 }
 
@@ -154,7 +154,7 @@ mod tests {
         assert_eq!(p.url, "https://example.com/x");
         assert_eq!(p.format, "markdown");
         assert_eq!(p.max_length, 1234);
-        assert_eq!(p.timeout_secs, None);
+        assert_eq!(p.timeout, None);
     }
 
     #[test]
@@ -170,7 +170,7 @@ mod tests {
             timeout: Some(3),
         };
         let p = build_read_params(&args).unwrap();
-        assert_eq!(p.timeout_secs, Some(3));
+        assert_eq!(p.timeout, Some(3));
     }
 
     #[test]

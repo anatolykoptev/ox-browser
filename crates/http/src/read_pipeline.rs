@@ -36,7 +36,7 @@ pub type SiteHandler = Arc<
 >;
 
 /// Execute the full read pipeline bounded by the caller-supplied per-call
-/// deadline (`params.timeout_secs`, resolved via [`resolve_timeout`]). The
+/// deadline (`params.timeout`, resolved via [`resolve_timeout`]). The
 /// bound wraps the WHOLE pipeline — fetch + extract + solver escalation +
 /// rate-limit wait — not one attempt, so the retry loop's
 /// `retries × per-attempt` multiplication (issue #133's ~83 s) is bounded
@@ -48,7 +48,7 @@ pub async fn read_page(
     params: &ReadParams,
     site_handlers: &[SiteHandler],
 ) -> ReadOutput {
-    let deadline = resolve_timeout(params.timeout_secs);
+    let deadline = resolve_timeout(params.timeout);
     let secs = deadline.as_secs();
     match bounded(deadline, read_page_inner(http, params, site_handlers)).await {
         CallOutcome::Ok(output) => output,
