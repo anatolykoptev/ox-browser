@@ -16,6 +16,15 @@ use ox_http::tls::{
 };
 use ox_http::{BUILTIN_PROFILES, profile_to_emulation};
 
+// Literal bucket-B list decoupled from the production `FP_BUCKET_B` (F7
+// pattern, mirroring `TEST_B` in `tls.rs::tests`). `FP_BUCKET_B` is now empty
+// — the trust_anchors gap is closed (issue #81, commit b6865e5) — so the
+// `should_panic` provenance tests (`f2b_*`) must pass a literal non-empty
+// bucket to keep the guard mechanism exercised. Production callers
+// (`test_reference_provenance`, `f2b_all_references_pass_bucket_b_provenance`)
+// still pass `FP_BUCKET_B` directly.
+const PROVENANCE_B: &[&str] = &["ja3n_hash", "ja4", "peetprint_hash"];
+
 // ── Provenance ─────────────────────────────────────────────────────────
 
 /// Verify that every committed reference file carries the provenance fields
@@ -106,7 +115,7 @@ fn test_reference_provenance() {
         assert_ja3_provenance(&r, &name);
 
         // F2b: every bucket-B field must have a non-empty reference value.
-        assert_bucket_b_provenance(&r, &name);
+        assert_bucket_b_provenance(&r, &name, FP_BUCKET_B);
     }
 
     assert!(
@@ -193,12 +202,16 @@ fn f2a_unknown_bucket_b_field_panics() {
 
 // F2b: a reference with an empty bucket-B field must FAIL provenance, so a
 // future capture that drops a field cannot silently disable its expiry.
+// Uses `PROVENANCE_B` (literal) not `FP_BUCKET_B`: the production bucket is
+// now empty (gap closed, issue #81), so the guard would never iterate and
+// the `should_panic` would silently pass. The literal bucket keeps the
+// guard mechanism exercised regardless of what `FP_BUCKET_B` contains.
 #[test]
 #[should_panic(expected = "bucket-B field ja3n_hash has an empty reference value")]
 fn f2b_empty_bucket_b_field_fails_provenance() {
     let mut r = load_reference("148");
     r.tls.ja3n_hash.clear();
-    assert_bucket_b_provenance(&r, "reference_chrome_148.json");
+    assert_bucket_b_provenance(&r, "reference_chrome_148.json", PROVENANCE_B);
 }
 
 // F2b (provenance side): a reference with an empty source for a bucket-B
@@ -206,13 +219,13 @@ fn f2b_empty_bucket_b_field_fails_provenance() {
 // cannot silently downgrade check_source to a raw value comparison of
 // unknown provenance. Mutation: remove the source assert from
 // assert_bucket_b_provenance and this test fails (no panic → should_panic
-// test fails).
+// test fails). Uses `PROVENANCE_B` for the same reason as the sibling above.
 #[test]
 #[should_panic(expected = "bucket-B field peetprint_hash has an empty provenance source")]
 fn f2b_empty_bucket_b_source_fails_provenance() {
     let mut r = load_reference("148");
     r.sources.peetprint.clear();
-    assert_bucket_b_provenance(&r, "reference_chrome_148.json");
+    assert_bucket_b_provenance(&r, "reference_chrome_148.json", PROVENANCE_B);
 }
 
 // F2b (positive): every committed reference passes the bucket-B provenance
@@ -235,7 +248,7 @@ fn f2b_all_references_pass_bucket_b_provenance() {
                 .unwrap_or_else(|e| panic!("read {}: {e}", entry.path().display())),
         )
         .unwrap_or_else(|e| panic!("parse {}: {e}", entry.path().display()));
-        assert_bucket_b_provenance(&r, &name);
+        assert_bucket_b_provenance(&r, &name, FP_BUCKET_B);
     }
     assert!(count > 0, "no reference fixtures found");
 }
@@ -343,7 +356,8 @@ fn source_prefix_diff_excludes_every_bucket_b_field() {
 // lives in `classify_for_reference` in common/mod.rs — the SAME function the
 // live oracle calls. These tests drive it with BOTH committed fixtures:
 // Chrome 131 (no 51764 → bucket-B diff must be a HARD failure) and
-// Chrome 148 (51764 present → bucket-B diff must be tolerated_b).
+// Chrome 148 (51764 present → bucket-B diff must be a HARD failure too,
+// because FP_BUCKET_B is now empty — the trust_anchors gap is closed).
 //
 // Falsification: delete the `else` branch inside `classify_for_reference`
 // and the Chrome 131 test FAILS (ja4 goes to tolerated_b, verdict.is_ok()
@@ -374,16 +388,31 @@ fn classify_for_reference_chrome131_bucket_b_diff_is_hard_failure() {
     );
 }
 
+// Chrome 148 DOES exhibit the gap (51764 in JA3), but FP_BUCKET_B is now
+// EMPTY — the trust_anchors gap is closed (issue #81, commit b6865e5: wreq
+// fork sends the extension, the live oracle confirmed GAP-CLOSED on
+// ja3n_hash/ja4/peetprint_hash). With an empty bucket, the former bucket-B
+// fields are in NEITHER bucket, so a diff on any of them is a hard failure,
+// not tolerated_b. This is the production wiring counterpart of
+// `closed_gap_field_diff_is_now_hard_fail` in tls.rs (which covers the same
+// transition via the public wrapper with a single field); this test drives
+// the full `classify_for_reference` path with all three former bucket-B
+// fields against the real Chrome 148 fixture.
+//
+// Before the gap closed, this test asserted `verdict.is_ok()` +
+// `tolerated_b.len() == 3`; that assertion is now inverted. The gap-closed
+// machinery itself is retained for the next gap (see `bucket_b_match_signals_
+// gap_closed` in tls.rs, which uses literal buckets to keep the path
+// exercised regardless of what FP_BUCKET_B contains).
 #[test]
-fn classify_for_reference_chrome148_bucket_b_diff_is_tolerated() {
+fn classify_for_reference_chrome148_bucket_b_diff_is_hard_failure() {
     let reference = load_reference("148");
     assert!(
         reference_exhibits_gap(&reference.tls.ja3),
         "Chrome 148 JA3 must contain 51764"
     );
-    // Provide diffs for ALL bucket-B fields so none trigger gap_closed
-    // (a field with no diff means it matched → gap closed). All three are
-    // bucket-B diffs with non-empty observed values → tolerated_b.
+    // Diffs on all three former bucket-B fields. With FP_BUCKET_B empty,
+    // none are tolerated; each is a hard failure (in neither bucket).
     let diffs = vec![
         (
             "ja3n_hash".to_string(),
@@ -403,11 +432,16 @@ fn classify_for_reference_chrome148_bucket_b_diff_is_tolerated() {
     ];
     let verdict = classify_for_reference(&reference, &diffs);
     assert!(
-        verdict.is_ok(),
-        "Chrome 148 (gap exhibited): bucket-B diffs must be tolerated"
+        !verdict.is_ok(),
+        "Chrome 148 (gap closed, FP_BUCKET_B empty): former bucket-B diffs \
+         must be hard failures, not tolerated"
     );
-    assert_eq!(verdict.tolerated_b.len(), 3);
-    assert!(verdict.hard_failures.is_empty());
+    assert!(
+        verdict.tolerated_b.is_empty(),
+        "no field is in bucket B anymore — tolerated_b must be empty"
+    );
+    assert_eq!(verdict.hard_failures.len(), 3);
+    assert!(verdict.gap_closed.is_empty());
 }
 
 // ── Fix C: empty observed bucket-B diff is a hard failure ──────────────
