@@ -1,7 +1,6 @@
 use std::sync::OnceLock;
 
 use ox_http::{HttpClient, HttpConfig};
-use wreq::IntoEmulation;
 
 /// Header order for Twitter API requests (matches go-twitter/headers.go).
 pub(crate) static TWITTER_HEADER_ORDER: &[&str] = &[
@@ -31,20 +30,40 @@ static TWITTER_CLIENT: OnceLock<HttpClient> = OnceLock::new();
 
 /// Shared HttpClient for all Twitter API requests.
 ///
-/// Uses Chrome fingerprint emulation and no Cloudflare detection
-/// (Twitter uses its own anti-bot layer).
+/// Routes through the same TLS/HTTP2 identity seam as the rest of the
+/// fleet: `tls::chrome_emulation()` (the hand-built Chrome 148 profile
+/// with `trust_anchors` / 0xca34, issue #81) and the fleet Chrome 148
+/// User-Agent from `BUILTIN_PROFILES`. The old path used
+/// `wreq_util::Profile::Chrome136.into_emulation()` — internally coherent
+/// (UA 136 + TLS 136 agreed) but twelve majors stale and missing the
+/// `trust_anchors` extension the main path carries.
+///
+/// `cloudflare_detect: false` and `quality_check: false` are preserved:
+/// Twitter has its own anti-bot layer, and a 403 from Twitter is a real
+/// auth error, not a CF challenge.
 pub(crate) fn twitter_http() -> &'static HttpClient {
     TWITTER_CLIENT.get_or_init(|| {
+        let profile = ox_http::BUILTIN_PROFILES
+            .iter()
+            .find(|p| p.browser == "chrome" && p.os == "windows")
+            .expect("builtin Chrome 148 Windows profile exists");
         let config = HttpConfig {
             timeout: std::time::Duration::from_secs(30),
-            user_agent: crate::TWITTER_USER_AGENT.to_string(),
-            emulation: Some(wreq_util::Profile::Chrome136.into_emulation()),
+            user_agent: profile.user_agent.to_string(),
+            emulation: Some(ox_http::tls::chrome_emulation(profile)),
             cloudflare_detect: false,
             quality_check: false, // Twitter 403 = real auth error, not CF challenge
             ..HttpConfig::default()
         };
         HttpClient::new(config).expect("twitter http client")
     })
+}
+
+/// The Twitter client's User-Agent — the fleet Chrome 148 UA from
+/// `BUILTIN_PROFILES`, exposed for request-level header construction.
+/// Replaces the deleted `TWITTER_USER_AGENT` constant (was Chrome 136).
+pub(crate) fn twitter_user_agent() -> &'static str {
+    twitter_http().config().user_agent.as_str()
 }
 
 /// Build an ordered header Vec following TWITTER_HEADER_ORDER.
@@ -150,5 +169,72 @@ mod tests {
                 keys[i]
             );
         }
+    }
+
+    /// The Twitter client's TLS/HTTP2 emulation must be the SAME VALUE the
+    /// main path produces via `tls::chrome_emulation()` — not merely `Some`.
+    /// An assertion that only checks non-`None` passes against any preset
+    /// (including the old `wreq_util::Profile::Chrome136`) and is worthless.
+    /// We compare the `tls_options` and `http2_options` Debug output, which
+    /// are the fingerprint-relevant fields `chrome_emulation` sets. The old
+    /// Chrome 136 preset lacks `trust_anchors` (0xca34) and has a different
+    /// extension count, so its `tls_options` Debug output differs.
+    #[test]
+    fn twitter_emulation_matches_main_path() {
+        let profile = ox_http::BUILTIN_PROFILES
+            .iter()
+            .find(|p| p.browser == "chrome" && p.os == "windows")
+            .expect("builtin Chrome 148 Windows profile");
+        let main_emu = ox_http::tls::chrome_emulation(profile);
+        let twitter_emu = twitter_http()
+            .config()
+            .emulation
+            .as_ref()
+            .expect("twitter client has emulation set");
+
+        assert_eq!(
+            format!("{:?}", twitter_emu.tls_options),
+            format!("{:?}", main_emu.tls_options),
+            "Twitter TLS options must be byte-identical to the main path's chrome_emulation"
+        );
+        assert_eq!(
+            format!("{:?}", twitter_emu.http2_options),
+            format!("{:?}", main_emu.http2_options),
+            "Twitter HTTP/2 options must be byte-identical to the main path's chrome_emulation"
+        );
+    }
+
+    /// The Twitter UA major and the `sec-ch-ua` major must agree. The
+    /// `client_hints_middleware` (active because `profile` is None) derives
+    /// `sec-ch-ua` from the request's `user-agent` header via
+    /// `client_hints_headers()`. A stale sec-ch-ua claiming 136 next to a
+    /// UA claiming 148 recreates the mismatch class this issue closes.
+    #[test]
+    fn twitter_ua_major_matches_sec_ch_ua_major() {
+        let ua = twitter_user_agent();
+        let ua_major = ox_http::profile::extract_major_version_pub(ua)
+            .expect("twitter UA has a parseable major version");
+
+        let hints = ox_http::client_hints_headers(ua);
+        let sec_ch_ua = hints
+            .iter()
+            .find(|(k, _)| k == "sec-ch-ua")
+            .expect("sec-ch-ua hint generated for Chrome UA");
+
+        // Extract the first brand's version: "Chromium";v="148", ...
+        let v_start = sec_ch_ua.1.find("v=\"").expect("sec-ch-ua has v=") + 3;
+        let rest = &sec_ch_ua.1[v_start..];
+        let v_end = rest.find('"').expect("sec-ch-ua version terminates");
+        let hint_major: u32 = rest[..v_end]
+            .split('.')
+            .next()
+            .unwrap()
+            .parse()
+            .expect("sec-ch-ua version is numeric");
+
+        assert_eq!(
+            ua_major, hint_major,
+            "Twitter UA major ({ua_major}) must match sec-ch-ua major ({hint_major})"
+        );
     }
 }
