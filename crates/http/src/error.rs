@@ -21,6 +21,9 @@ pub enum HttpError {
 
     #[error("cloudflare {0} (HTTP {1}, ray {2})")]
     Cloudflare(ChallengeType, u16, String),
+
+    #[error("response body exceeded cap: {observed} bytes > {limit} bytes limit")]
+    BodyTooLarge { limit: u64, observed: u64 },
 }
 
 impl HttpError {
@@ -31,7 +34,7 @@ impl HttpError {
             Self::Timeout(_) => true,
             Self::Request(e) => e.is_timeout() || e.is_connect(),
             Self::Cloudflare(_, _, _) => true,
-            Self::InvalidUrl(_) | Self::ProxyPool(_) => false,
+            Self::InvalidUrl(_) | Self::ProxyPool(_) | Self::BodyTooLarge { .. } => false,
         }
     }
 }

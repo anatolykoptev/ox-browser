@@ -60,6 +60,16 @@ pub struct HttpConfig {
     /// can check `is_blocked` and set `RenderMode::GiveUp` instead of
     /// `RenderMode::Chrome` when the domain is on cooldown.
     pub solver_negcache: Option<Arc<SolverNegCache>>,
+    /// Maximum response body size in bytes for the page-fetch surface
+    /// (`/fetch`, `/read`, CLI, crawler). Responses whose body exceeds this
+    /// are rejected with `HttpError::BodyTooLarge` before the body is fully
+    /// buffered, preventing unbounded allocation from attacker-chosen URLs
+    /// (issue #117, resource_exhaustion). The media-download surface has its
+    /// own per-call cap (`download_to_file::max_size_bytes`) because a media
+    /// download legitimately wants a far higher ceiling than a page fetch.
+    /// Default: 50 MB (matches webclaw prior art; the largest legitimate
+    /// pages are a few MB).
+    pub max_body_bytes: u64,
 }
 
 impl Default for HttpConfig {
@@ -83,6 +93,7 @@ impl Default for HttpConfig {
             chrome_render_url: None,
             render_cache: None,
             solver_negcache: None,
+            max_body_bytes: 50 * 1024 * 1024, // 50 MB — see field doc
         }
     }
 }

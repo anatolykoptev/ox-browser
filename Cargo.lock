@@ -2109,6 +2109,7 @@ dependencies = [
  "chrono",
  "cookie_store",
  "dom_query 0.27.0",
+ "futures-util",
  "htmd",
  "once_cell",
  "rand 0.8.5",

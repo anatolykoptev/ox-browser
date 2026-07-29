@@ -8,6 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use wreq::Client;
 
+use crate::body_cap::read_text_capped;
 use crate::middleware::{Handler, Request};
 use crate::proxy_fallback::{looks_like_proxy_dial_failure, record_proxy_dial_fallback};
 use crate::proxy_pool::ProxyPool;
@@ -55,6 +56,12 @@ pub struct WreqHandler {
     /// configuration the dial-failure fallback is dormant — the predicate
     /// returns `false` for every request (tracking issue ox-browser#90).
     max_redirects: usize,
+    /// Per-response body cap in bytes. Responses whose body exceeds this are
+    /// rejected with `HttpError::BodyTooLarge` before the body is fully
+    /// buffered (issue #117, resource_exhaustion). Threaded from
+    /// `HttpConfig::max_body_bytes` at construction so every caller through
+    /// the middleware chain inherits the cap without each remembering.
+    max_body_bytes: u64,
 }
 
 impl WreqHandler {
@@ -68,14 +75,20 @@ impl WreqHandler {
     /// `auto_sys_proxy` default so an ambient `HTTP_PROXY` cannot silently
     /// proxy the base client while the flag reads false. `max_redirects` is
     /// the configured redirect limit, used to gate the dial-failure
-    /// classifier.
-    pub fn new(client: Client, client_has_static_proxy: bool, max_redirects: usize) -> Self {
+    /// classifier. `max_body_bytes` is the per-response body cap (issue #117).
+    pub fn new(
+        client: Client,
+        client_has_static_proxy: bool,
+        max_redirects: usize,
+        max_body_bytes: u64,
+    ) -> Self {
         Self {
             client,
             proxy_pool: None,
             direct_client: None,
             client_has_static_proxy,
             max_redirects,
+            max_body_bytes,
         }
     }
 
@@ -88,6 +101,7 @@ impl WreqHandler {
         pool: Arc<dyn ProxyPool>,
         client_has_static_proxy: bool,
         max_redirects: usize,
+        max_body_bytes: u64,
     ) -> Self {
         Self {
             client,
@@ -95,6 +109,7 @@ impl WreqHandler {
             direct_client: None,
             client_has_static_proxy,
             max_redirects,
+            max_body_bytes,
         }
     }
 
@@ -220,7 +235,14 @@ impl WreqHandler {
         let status = resp.status().as_u16();
         let final_url = resp.uri().to_string();
         let headers = resp.headers().clone();
-        let body = resp.text().await?;
+        // Body cap (issue #117): stream the response body with a running-total
+        // byte cap instead of `resp.text()` which reads the full body into
+        // memory unbounded. Every caller through the middleware chain inherits
+        // the cap — `/fetch`, `/read`, CLI, crawler, reddit, media-orchestrator
+        // generic path. The media-download surface has its own per-call cap
+        // (`download_to_file::max_size_bytes`) because it uses a separate wreq
+        // client, not this handler.
+        let body = read_text_capped(resp, self.max_body_bytes).await?;
 
         Ok(HttpResponse {
             status,

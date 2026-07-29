@@ -97,6 +97,11 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
         1,
         "test fixture — bare-client contrast for the #101 identity falsification",
     ),
+    (
+        "crates/http/src/body_cap.rs",
+        4,
+        "test fixtures — raw TCP server clients for body-cap tests (target 127.0.0.1)",
+    ),
 ];
 
 /// Lines matching this substring (case-sensitive) count as a construction
