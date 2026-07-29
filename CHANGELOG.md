@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.4](https://github.com/anatolykoptev/ox-browser/compare/v0.8.3...v0.8.4) (2026-07-29)
+
+
+### Fixed
+
+* **ci:** set git identity before the lockfile-regen commit ([#116](https://github.com/anatolykoptev/ox-browser/issues/116)) ([c900471](https://github.com/anatolykoptev/ox-browser/commit/c9004710ba336c87e2efac7aff23745f0c58d42f))
+* **release:** derive Cargo.lock from the bumped version instead of annotating it ([#112](https://github.com/anatolykoptev/ox-browser/issues/112)) ([d820dd8](https://github.com/anatolykoptev/ox-browser/commit/d820dd813580b78a7b101592373e7c7adf4ad7c8))
+
+
+### Changed
+
+* **cli:** extract fetch and the shared CLI helpers into modules ([#115](https://github.com/anatolykoptev/ox-browser/issues/115)) ([3704002](https://github.com/anatolykoptev/ox-browser/commit/370400201b3990bc69d335503d0ae45a0c65c8f1))
+
 ## [0.8.3](https://github.com/anatolykoptev/ox-browser/compare/v0.8.2...v0.8.3) (2026-07-29)
 
 
