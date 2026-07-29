@@ -131,6 +131,8 @@ pub fn record_body_cap_rejection() {
 /// `ReadOutput::extraction_note`.
 pub fn record_read_extraction_rejected() {
     READ_EXTRACTION_REJECTED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
 // ── Outbound in-flight gauge ───────────────────────────────────────────────
 //
 // Issue #128/#139: the mechanism that stops the service accumulating
@@ -589,13 +591,21 @@ pub fn render() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
 
     /// Gauge-publishing tests read/write the shared process-global `PROXY_DISABLED`
     /// static. When run in parallel they race on that atomic, producing flaky
     /// assertions. This mutex serializes them so the gauge value is deterministic
     /// within each test — mirrors the T2 render_cache gauge test pattern.
-    static GAUGE_TEST_LOCK: Mutex<()> = Mutex::new(());
+    ///
+    /// `tokio::sync::Mutex` (not `std::sync`): the two `bounded` gauge tests
+    /// hold the guard across an `.await` on the in-flight gauge, and a
+    /// `std::sync::MutexGuard` is not `Send` — clippy `await_holding_lock`
+    /// flags it, and on a single-threaded runtime a second task blocking on
+    /// the same lock would deadlock rather than yield. The sync tests use
+    /// `blocking_lock()` (the documented way to acquire a tokio mutex from
+    /// non-async code).
+    static GAUGE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
     #[test]
     fn render_emits_gauge_series_in_prometheus_format() {
@@ -713,7 +723,7 @@ mod tests {
     /// render() emits `oxbrowser_proxy_disabled 1`; with 0, it emits `… 0`.
     #[test]
     fn render_emits_proxy_disabled_gauge() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.blocking_lock();
 
         // Proxy disabled → gauge 1 → render shows "oxbrowser_proxy_disabled 1"
         set_gauge(&PROXY_DISABLED, 1);
@@ -745,7 +755,7 @@ mod tests {
     /// `config::build_cookie_provider` at startup.
     #[test]
     fn render_emits_solver_configured_gauge() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.blocking_lock();
 
         // Real solver configured → gauge 1
         set_gauge(&SOLVER_CONFIGURED, 1);
@@ -777,7 +787,7 @@ mod tests {
     /// insert and after `evict_expired` sweeps stale domains.
     #[test]
     fn render_emits_ratelimit_domains_gauge() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.blocking_lock();
 
         // One domain tracked → gauge 1
         set_gauge(&RATELIMIT_DOMAINS, 1);
@@ -809,7 +819,7 @@ mod tests {
     /// download by `ox_media::download::check_quota`.
     #[test]
     fn render_emits_media_tmpfs_bytes_gauge() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.blocking_lock();
 
         set_gauge(&MEDIA_TMPFS_BYTES, 1_500_000_000);
         let body = render();
@@ -919,7 +929,7 @@ mod tests {
     /// would race the baseline read.
     #[tokio::test]
     async fn outbound_inflight_gauge_returns_to_baseline_after_bounded_call() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.lock().await;
         let baseline = OUTBOUND_INFLIGHT.load(Ordering::Relaxed);
         let outcome: CallOutcome<u32> =
             crate::deadline::bounded(Duration::from_secs(5), async { 42 }).await;
@@ -937,7 +947,7 @@ mod tests {
     /// Serialized with `GAUGE_TEST_LOCK` — same reason as the ok-path test.
     #[tokio::test]
     async fn outbound_inflight_gauge_decrements_on_deadline_exceeded() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.lock().await;
         let baseline = OUTBOUND_INFLIGHT.load(Ordering::Relaxed);
         let outcome: CallOutcome<()> = crate::deadline::bounded(Duration::from_millis(10), async {
             tokio::time::sleep(Duration::from_secs(2)).await;
