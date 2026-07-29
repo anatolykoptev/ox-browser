@@ -55,6 +55,14 @@ pub struct FetchSmartInput {
     /// Save response body to file instead of returning inline. Default: true.
     #[serde(default = "default_true")]
     pub save_to_file: bool,
+    /// Per-call deadline in seconds. `None` → seam default; `Some(s)` →
+    /// clamped to `[1, MAX_CALL_TIMEOUT_SECS]`. Bounds the whole call,
+    /// not one attempt. Same field/units/ceiling as `/fetch`, `/read`,
+    /// MCP `fetch`/`read`, and the CLI `--timeout` flag (issue #145).
+    /// The legacy `timeout_secs` spelling is accepted via a serde alias
+    /// but is not the canonical name.
+    #[serde(default, alias = "timeout_secs")]
+    pub timeout: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -215,6 +223,11 @@ impl OxMcpServer {
 
     /// Fetch with automatic CF bypass via middleware chain.
     /// DEPRECATED: Use the `read` MCP tool instead.
+    ///
+    /// Bound the WHOLE call (retry loop + solver escalation + rate-limit
+    /// wait), not one attempt — issue #145. Same seam as `do_fetch` and
+    /// `read_pipeline::read_page` — outside any retry, wrapping the
+    /// top-level future.
     pub(crate) async fn do_fetch_smart(
         &self,
         input: FetchSmartInput,
@@ -223,9 +236,11 @@ impl OxMcpServer {
         let save = input.save_to_file;
         let url = input.url.clone();
 
-        // Middleware chain handles CF detect + solve + retry automatically.
-        match self.http_client.get(&input.url).await {
-            Ok(resp) => Ok(smart_ok(
+        let deadline = resolve_timeout(input.timeout);
+        let outcome = bounded(deadline, self.http_client.get(&input.url)).await;
+
+        match outcome {
+            CallOutcome::Ok(Ok(resp)) => Ok(smart_ok(
                 resp.status,
                 resp.body,
                 "auto",
@@ -234,7 +249,14 @@ impl OxMcpServer {
                 save,
                 &url,
             )),
-            Err(e) => Ok(smart_error(start, &e.to_string())),
+            CallOutcome::Ok(Err(e)) => Ok(smart_error(start, &e.to_string())),
+            // The per-call bound fired — distinct error string so a caller
+            // can tell "I bounded this" from "the site failed" (issue #145).
+            // Same shape as `do_fetch`'s DeadlineExceeded branch.
+            CallOutcome::DeadlineExceeded { secs } => Ok(smart_error(
+                start,
+                &format!("deadline exceeded ({secs}s per-call bound)"),
+            )),
         }
     }
 }

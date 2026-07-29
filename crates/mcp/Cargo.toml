@@ -21,3 +21,7 @@ ox-media = { path = "../media" }
 axum = "0.8"
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+async-trait = "0.1"
+ox-http = { path = "../http", features = ["test-utils"] }
