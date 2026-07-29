@@ -1,0 +1,339 @@
+name: Fingerprint oracle
+
+# Scheduled live run of the feature-gated fingerprint oracle. This is the
+# ONLY instrument that detects TLS/HTTP2/header emulation drift against a
+# captured real-Chrome reference. It must NEVER block a merge — it is not
+# in preflight and has no push/PR trigger. A flaky echo service cannot be
+# allowed to block CI.
+#
+# On drift failure: files or updates a GitHub issue (label `fingerprint-drift`
+# + `followup`) with expected-vs-observed values, reference provenance, and
+# the run URL. Deduplicates against an existing OPEN drift issue so a weekly
+# run does not spam duplicates.
+#
+# On endpoint outage: retries once; if still unreachable, reports an
+# infrastructure skip in the job summary and does NOT file a drift issue.
+#
+# See issue #87 and crates/http/tests/fingerprint_oracle_test.rs for the
+# oracle's design contract (unreachable endpoint = ERROR, not skip; do not
+# weaken assertions to make it green).
+
+on:
+  schedule:
+    # Weekly Monday 04:17 UTC — off-hour to reduce echo-service load.
+    # GitHub Actions scheduled workflows run only on the default branch.
+    - cron: "17 4 * * 1"
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: fingerprint-oracle
+  cancel-in-progress: true
+
+jobs:
+  oracle:
+    name: Live fingerprint oracle
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@1.97
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # ── Reference provenance + age ────────────────────────────────────
+      #
+      # The oracle iterates every Chrome/linux profile, but provenance
+      # reporting only needs one representative. We pick the newest fixture
+      # by capture_time — that is the reference the oracle is most likely to
+      # be measuring against (the highest Chrome major with a committed
+      # reference). The age distinguishes "our emulation drifted" from "our
+      # reference got old".
+      - name: Reference provenance + age
+        id: ref
+        run: |
+          python3 - <<'PY'
+          import json, datetime, pathlib, os
+          fixtures = pathlib.Path("crates/http/tests/fixtures")
+          newest = None
+          for p in fixtures.glob("reference_chrome_*.json"):
+              r = json.loads(p.read_text())
+              if newest is None or r["capture_time"] > newest[1]["capture_time"]:
+                  newest = (p, r)
+          if newest is None:
+              raise SystemExit("no reference_chrome_*.json fixture found")
+          path, ref = newest
+          capture = datetime.datetime.fromisoformat(
+              ref["capture_time"].replace("Z", "+00:00")
+          )
+          age_days = (datetime.datetime.now(datetime.timezone.utc) - capture).days
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"browser_version={ref['browser_version']}\n")
+              f.write(f"capture_time={ref['capture_time']}\n")
+              f.write(f"age_days={age_days}\n")
+              f.write(f"fixture={path.name}\n")
+          print(f"Newest reference: {path.name}")
+          print(f"  browser_version: {ref['browser_version']}")
+          print(f"  capture_time:    {ref['capture_time']}")
+          print(f"  age_days:        {age_days}")
+          PY
+
+      # ── Run the oracle (attempt 1) ────────────────────────────────────
+      #
+      # --nocapture streams eprintln! output (FIELD/GAP-CLOSED lines) to
+      # stderr so we can parse drift details from the log. pipefail ensures
+      # the pipeline exits non-zero when cargo test fails.
+      - name: Run fingerprint oracle (attempt 1)
+        id: oracle
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo test -p ox-http --features fingerprint --test fingerprint_oracle_test -- --nocapture 2>&1 | tee /tmp/oracle_attempt1.log
+
+      # ── Classify attempt 1: drift vs outage vs unknown ─────────────────
+      - name: Classify result (attempt 1)
+        id: classify
+        if: steps.oracle.outcome != 'success'
+        run: |
+          python3 - <<'PY'
+          import re, os
+          log = open("/tmp/oracle_attempt1.log", encoding="utf-8", errors="replace").read()
+          # Outage markers: the oracle's own panic/assert strings for
+          # unreachable, non-200, or unparseable echo responses. These are
+          # infrastructure failures, NOT fingerprint drift.
+          outage_patterns = [
+              r"endpoint unreachable",
+              r"returned status \d+",
+              r"parse \w+ response",
+              r"no HTTP/2 akamai fingerprint",
+              r"no JA4 in browserleaks response",
+          ]
+          # Drift markers: the oracle's FIELD / GAP-CLOSED / mismatch panic.
+          drift_patterns = [
+              r"fingerprint mismatch for Chrome",
+              r"^\s*FIELD ",
+              r"^\s*GAP-CLOSED ",
+          ]
+          is_outage = any(re.search(p, log) for p in outage_patterns)
+          is_drift = any(re.search(p, log, re.MULTILINE) for p in drift_patterns)
+          # If neither matched (e.g. compile break, unknown panic), treat as
+          # drift so a human inspects — better noisy than silent.
+          if not is_outage and not is_drift:
+              is_drift = True
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"is_outage={'true' if is_outage else 'false'}\n")
+              f.write(f"is_drift={'true' if is_drift else 'false'}\n")
+          print(f"is_outage={is_outage}")
+          print(f"is_drift={is_drift}")
+          PY
+
+      # ── Retry on outage (attempt 2) ───────────────────────────────────
+      - name: Retry on outage (attempt 2)
+        id: retry
+        if: steps.classify.outputs.is_outage == 'true'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo test -p ox-http --features fingerprint --test fingerprint_oracle_test -- --nocapture 2>&1 | tee /tmp/oracle_attempt2.log
+
+      # ── Reclassify after retry ────────────────────────────────────────
+      - name: Reclassify after retry
+        id: reclassify
+        if: steps.classify.outputs.is_outage == 'true' && steps.retry.outcome != 'success'
+        run: |
+          python3 - <<'PY'
+          import re, os
+          log = open("/tmp/oracle_attempt2.log", encoding="utf-8", errors="replace").read()
+          outage_patterns = [
+              r"endpoint unreachable",
+              r"returned status \d+",
+              r"parse \w+ response",
+              r"no HTTP/2 akamai fingerprint",
+              r"no JA4 in browserleaks response",
+          ]
+          drift_patterns = [
+              r"fingerprint mismatch for Chrome",
+              r"^\s*FIELD ",
+              r"^\s*GAP-CLOSED ",
+          ]
+          is_outage = any(re.search(p, log) for p in outage_patterns)
+          is_drift = any(re.search(p, log, re.MULTILINE) for p in drift_patterns)
+          if not is_outage and not is_drift:
+              is_drift = True
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"is_outage={'true' if is_outage else 'false'}\n")
+              f.write(f"is_drift={'true' if is_drift else 'false'}\n")
+          print(f"is_outage={is_outage}")
+          print(f"is_drift={is_drift}")
+          PY
+
+      # ── Report infrastructure skip (outage on both attempts) ──────────
+      - name: Report infrastructure skip
+        if: steps.classify.outputs.is_outage == 'true' && steps.reclassify.outputs.is_outage == 'true'
+        run: |
+          {
+            echo "## Fingerprint oracle — infrastructure skip"
+            echo ""
+            echo "An echo endpoint (tls.peet.ws or tls.browserleaks.com) was"
+            echo "unreachable or returned an unparseable response on **both**"
+            echo "attempts. This is **NOT** fingerprint drift."
+            echo ""
+            echo "### Attempt 1 (last 30 lines)"
+            echo '```'
+            tail -30 /tmp/oracle_attempt1.log
+            echo '```'
+            echo ""
+            echo "### Attempt 2 (last 30 lines)"
+            echo '```'
+            tail -30 /tmp/oracle_attempt2.log
+            echo '```'
+            echo ""
+            echo "No drift issue filed. The oracle will retry next week (or on"
+            echo "manual dispatch via the Actions tab)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Ensure labels exist ───────────────────────────────────────────
+      - name: Ensure labels exist
+        if: steps.classify.outputs.is_drift == 'true' || steps.reclassify.outputs.is_drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "fingerprint-drift" --description "Scheduled fingerprint oracle detected TLS/HTTP2/header emulation drift" --color "D93F0B" --if-not-exists 2>/dev/null || true
+          gh label create "followup" --description "Followup item from a review or scheduled check" --color "FBCA04" --if-not-exists 2>/dev/null || true
+
+      # ── File or update drift issue ────────────────────────────────────
+      #
+      # Token choice: GITHUB_TOKEN (not the krolik-release-bot App token).
+      # The App token's value in release-please.yml is that App-created PRs
+      # get CI runs and App-created tags trigger downstream `on: push: tags`
+      # workflows. Neither applies to issues — GITHUB_TOKEN with
+      # `issues: write` is sufficient and simpler (no token-minting step,
+      # fewer secret dependencies).
+      - name: File or update drift issue
+        if: steps.classify.outputs.is_drift == 'true' || steps.reclassify.outputs.is_drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Pick which log to report from: if retry ran and found drift,
+          # use attempt 2; otherwise attempt 1.
+          if [ "${{ steps.reclassify.outputs.is_drift }}" = "true" ] && [ -f /tmp/oracle_attempt2.log ]; then
+            LOG=/tmp/oracle_attempt2.log
+          else
+            LOG=/tmp/oracle_attempt1.log
+          fi
+
+          # Extract drift details (FIELD blocks + GAP-CLOSED lines) from
+          # the oracle's own eprintln! output.
+          python3 - "$LOG" <<'PY'
+          import re, sys
+          log = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          lines = log.splitlines()
+          drift_lines = []
+          for i, line in enumerate(lines):
+              stripped = line.strip()
+              if stripped.startswith("FIELD ") or stripped.startswith("GAP-CLOSED "):
+                  drift_lines.append(stripped)
+                  # FIELD blocks have two continuation lines (expected/observed).
+                  if stripped.startswith("FIELD"):
+                      for j in range(i + 1, min(i + 3, len(lines))):
+                          drift_lines.append("  " + lines[j].strip())
+          out = "\n".join(drift_lines) if drift_lines else "(no FIELD/GAP-CLOSED lines found — see full log below)"
+          with open("/tmp/drift_details.txt", "w") as f:
+              f.write(out)
+          PY
+
+          BROWSER_VERSION="${{ steps.ref.outputs.browser_version }}"
+          CAPTURE_TIME="${{ steps.ref.outputs.capture_time }}"
+          AGE_DAYS="${{ steps.ref.outputs.age_days }}"
+          FIXTURE="${{ steps.ref.outputs.fixture }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          DRIFT_DETAILS=$(cat /tmp/drift_details.txt)
+
+          # Build the freshness note based on reference age.
+          if [ "$AGE_DAYS" -gt 90 ]; then
+            FRESHNESS_NOTE="> ⚠️ Reference is **${AGE_DAYS} days old** — drift may indicate a stale reference (Chrome has moved on) rather than an ox-browser regression. Consider re-capturing from go-stealth's \`cmd/fingerprint-capture\`."
+          else
+            FRESHNESS_NOTE="> Reference age: **${AGE_DAYS} days** — within freshness window; drift is most likely an ox-browser regression."
+          fi
+
+          # Search for an existing OPEN drift issue to avoid weekly duplicates.
+          EXISTING=$(gh issue list --label "fingerprint-drift" --state open --json number --jq '.[0].number' 2>/dev/null || true)
+
+          BODY=$(cat <<EOF
+          ## Fingerprint oracle drift detected
+
+          **Run**: ${RUN_URL}
+          **Reference**: \`${FIXTURE}\` — Chrome **${BROWSER_VERSION}**, captured ${CAPTURE_TIME} (${AGE_DAYS} days old)
+
+          ${FRESHNESS_NOTE}
+
+          ### Drifted fields
+
+          \`\`\`
+          ${DRIFT_DETAILS}
+          \`\`\`
+
+          ### Full oracle output (last 80 lines)
+
+          \`\`\`
+          $(tail -80 "${LOG}")
+          \`\`\`
+
+          ---
+
+          *Filed/updated by the scheduled fingerprint oracle workflow (issue #87). Do not weaken assertions to make this green — fix the emulation profile in \`crates/http/src/tls.rs\` or re-capture the reference.*
+          EOF
+          )
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            {
+              echo "## Fingerprint oracle — drift detected"
+              echo ""
+              echo "Updated existing issue [#${EXISTING}](${{ github.server_url }}/${{ github.repository }}/issues/${EXISTING}) with this run's drift details."
+              echo ""
+              echo "**Reference**: Chrome ${BROWSER_VERSION} (${AGE_DAYS} days old)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            ISSUE_URL=$(gh issue create \
+              --title "Fingerprint oracle drift — Chrome ${BROWSER_VERSION} reference" \
+              --body "$BODY" \
+              --label "fingerprint-drift" \
+              --label "followup")
+            {
+              echo "## Fingerprint oracle — drift detected"
+              echo ""
+              echo "Filed new issue: ${ISSUE_URL}"
+              echo ""
+              echo "**Reference**: Chrome ${BROWSER_VERSION} (${AGE_DAYS} days old)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # ── Pass: close stale drift issue + summary ───────────────────────
+      - name: Pass — close stale drift issue + summary
+        if: steps.oracle.outcome == 'success' || steps.retry.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # If a previous run filed a drift issue and this run passes, the
+          # drift is resolved — close it so the issue tracker reflects reality.
+          EXISTING=$(gh issue list --label "fingerprint-drift" --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "Oracle passed on $(date -u +%Y-%m-%dT%H:%M:%SZ). Closing — drift resolved."
+            gh issue close "$EXISTING"
+            echo "Closed resolved drift issue #${EXISTING}." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          {
+            echo "## Fingerprint oracle — passed"
+            echo ""
+            echo "All fields match the reference."
+            echo ""
+            echo "**Reference**: \`${{ steps.ref.outputs.fixture }}\` — Chrome ${{ steps.ref.outputs.browser_version }}, captured ${{ steps.ref.outputs.capture_time }} (${{ steps.ref.outputs.age_days }} days old)"
+          } >> "$GITHUB_STEP_SUMMARY"
