@@ -14,6 +14,12 @@ use crate::render_cache::RenderMode;
 /// Overall timeout for the entire read pipeline (fetch + extract).
 const PIPELINE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Maximum chrome-render response body (50 MB — a rendered page DOM is the
+/// same class as the main fetch path's 50 MB cap). The chrome-render service
+/// is our own, but "it is our own service" is the assumption that stops
+/// holding the day something upstream breaks (issue #119).
+const CHROME_RENDER_MAX_BODY_BYTES: u64 = 50 * 1024 * 1024;
+
 /// A site-specific handler: takes (params, format, start) → Option<ReadOutput>.
 /// Injected from outside ox-http to avoid circular dependencies.
 pub type SiteHandler = Arc<
@@ -227,7 +233,13 @@ async fn chrome_fallback(
         return None;
     }
 
-    let data: serde_json::Value = resp.json().await.ok()?;
+    // Body cap (issue #119): stream the response body with a running-total
+    // byte cap instead of `resp.json()` which reads the full body unbounded.
+    // The cap and counter route through the same body_cap ceiling as #118.
+    let text = crate::body_cap::read_text_capped_reqwest(resp, CHROME_RENDER_MAX_BODY_BYTES)
+        .await
+        .ok()?;
+    let data: serde_json::Value = serde_json::from_str(&text).ok()?;
 
     // Extract HTML from the evaluate action result
     let html = data["actions"]

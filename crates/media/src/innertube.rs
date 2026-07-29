@@ -9,6 +9,12 @@ use crate::{MediaConfig, MediaError};
 const ANDROID_VR_UA: &str = "com.google.android.apps.youtube.vr.oculus/1.60.19 \
     (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
 
+/// Maximum Innertube response body (10 MB). YouTube player responses are
+/// typically <1 MB; 10 MB is generous. The video ID is attacker-chosen, so
+/// the request target is attacker-influenced even though the host is
+/// YouTube's (issue #119).
+const INNERTUBE_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
+
 /// Build JSON request body for the Innertube ANDROID_VR client.
 /// This client returns direct URLs without signature cipher,
 /// doesn't require PO Tokens, and works from datacenter IPs via proxy.
@@ -122,8 +128,7 @@ pub async fn fetch_player_response(
         )));
     }
 
-    let text = resp
-        .text()
+    let text = ox_http::body_cap::read_text_capped(resp, INNERTUBE_MAX_BODY_BYTES)
         .await
         .map_err(|e| MediaError::FetchFailed(format!("innertube read: {e}")))?;
 
@@ -202,5 +207,55 @@ mod tests {
         let json = r#"{"videoDetails":{"title":"T","author":"","shortDescription":"","lengthSeconds":"0","viewCount":"0"},"streamingData":{"formats":[{"itag":18,"url":"https://cdn/v.mp4","mimeType":"video/mp4","width":640,"height":360,"bitrate":500000}]},"playabilityStatus":{"status":"UNPLAYABLE","reason":"blocked"}}"#;
         let pr: PlayerResponse = serde_json::from_str(json).unwrap();
         assert!(!has_usable_streams(&pr));
+    }
+
+    /// A body over the cap is rejected with the error naming the limit, and
+    /// the counter increments. Uses a small cap to avoid allocating a 10 MB+
+    /// body in a test — the mechanism is identical regardless of the limit
+    /// value (issue #119).
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn innertube_cap_rejects_oversized_body() {
+        use std::sync::atomic::Ordering;
+
+        let before = ox_http::metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+
+        // Start a mock HTTP server serving a body that exceeds the cap.
+        let cap: u64 = 100;
+        let body = "x".repeat(200);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}/");
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), sock.readable()).await;
+            let _ = sock.try_read(&mut buf);
+            let resp = format!("HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n{body}");
+            let _ = sock.write_all(resp.as_bytes()).await;
+            let _ = sock.shutdown().await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let client = wreq::Client::builder().no_proxy().build().unwrap();
+        let response = client.get(&url).send().await.unwrap();
+        let err = ox_http::body_cap::read_text_capped(response, cap)
+            .await
+            .unwrap_err();
+
+        match err {
+            ox_http::HttpError::BodyTooLarge { limit, observed } => {
+                assert_eq!(limit, cap, "error should name the limit");
+                assert!(
+                    observed > cap,
+                    "observed ({observed}) should exceed cap ({cap})"
+                );
+            }
+            other => panic!("expected BodyTooLarge, got {other:?}"),
+        }
+
+        let after = ox_http::metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+        assert_eq!(after, before + 1, "counter must increment on rejection");
     }
 }
