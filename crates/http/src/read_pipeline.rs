@@ -1,6 +1,11 @@
 //! Shared read pipeline — async fetch + extract via middleware chain.
 //!
 //! Called by both MCP and REST layers.
+//!
+//! The read pipeline always fetches with GET — the extraction stage
+//! assumes a document retrieved by a navigation-style GET. Method/body
+//! support lives on `/fetch` and the CLI `fetch` subcommand only (issue
+//! #114); it is intentionally NOT inherited here.
 
 use std::future::Future;
 use std::pin::Pin;
