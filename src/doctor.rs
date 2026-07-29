@@ -475,23 +475,17 @@ async fn check_solver(checks: &mut Vec<CheckReport>, config: Option<&config::Ser
         return;
     };
 
-    let reachable = probe_reachable(&url).await;
-    let status = if reachable {
-        CheckStatus::Pass
-    } else {
-        CheckStatus::Skip
+    let (status, detail) = match probe_reachable(&url).await {
+        Ok(()) => (CheckStatus::Pass, format!("{kind} at {url} reachable")),
+        Err(reason) => (
+            CheckStatus::Skip,
+            format!("{kind} at {url} unreachable: {reason}"),
+        ),
     };
     checks.push(CheckReport {
         name: "solver",
         status,
-        detail: Some(format!(
-            "{kind} at {url}{}",
-            if reachable {
-                " reachable"
-            } else {
-                " unreachable"
-            }
-        )),
+        detail: Some(detail),
         profiles: Vec::new(),
         max_age_days: None,
     });
@@ -514,23 +508,17 @@ async fn check_chrome_render(checks: &mut Vec<CheckReport>) {
         });
         return;
     };
-    let reachable = probe_reachable(&url).await;
-    let status = if reachable {
-        CheckStatus::Pass
-    } else {
-        CheckStatus::Skip
+    let (status, detail) = match probe_reachable(&url).await {
+        Ok(()) => (CheckStatus::Pass, format!("GO_BROWSER_URL={url} reachable")),
+        Err(reason) => (
+            CheckStatus::Skip,
+            format!("GO_BROWSER_URL={url} unreachable: {reason}"),
+        ),
     };
     checks.push(CheckReport {
         name: "chrome_render",
         status,
-        detail: Some(format!(
-            "GO_BROWSER_URL={url}{}",
-            if reachable {
-                " reachable"
-            } else {
-                " unreachable"
-            }
-        )),
+        detail: Some(detail),
         profiles: Vec::new(),
         max_age_days: None,
     });
@@ -563,58 +551,87 @@ async fn check_proxy(checks: &mut Vec<CheckReport>, proxy: Option<&str>) {
         });
         return;
     };
-    let reachable = probe_proxy_reachable(proxy_url).await;
-    let status = if reachable {
-        CheckStatus::Pass
-    } else {
-        CheckStatus::Skip
+    let (status, detail) = match probe_proxy_reachable(proxy_url).await {
+        Ok(()) => (CheckStatus::Pass, format!("proxy {proxy_url} reachable")),
+        Err(reason) => (
+            CheckStatus::Skip,
+            format!("proxy {proxy_url} unreachable: {reason}"),
+        ),
     };
     checks.push(CheckReport {
         name: "proxy",
         status,
-        detail: Some(format!(
-            "proxy {proxy_url}{}",
-            if reachable {
-                " reachable"
-            } else {
-                " unreachable"
-            }
-        )),
+        detail: Some(detail),
         profiles: Vec::new(),
         max_age_days: None,
     });
 }
 
 // ── Reachability probes ────────────────────────────────────────────────
+//
+// Probes ask "does this service answer", not "does the root path exist".
+// Any HTTP response — 200, 404, 500 — proves the service is up; only a
+// connection failure, DNS failure, or timeout means unreachable.
+//
+// # Why a bare `wreq::Client`, not `HttpClient`
+//
+// `HttpClient::new` always wires BOTH SSRF tiers: the pre-resolve
+// `ssrf_middleware` (outermost in the chain, `client.rs:103`) and the
+// connect-time `SsrfGuardedResolver` + `ssrf_redirect_policy` baked into
+// the wreq client (`client.rs:317-321`). That is correct for user-supplied
+// URLs — the entire request path (`/fetch`, `/read`, MCP tools) goes
+// through `HttpClient` and must never reach a private address.
+//
+// But the endpoints probed here (`GO_BROWSER_URL`, `solver.byparr_url`,
+// the configured proxy) come from OUR OWN configuration, not from a
+// fetched page or an API caller. They live on a private Docker network by
+// design (e.g. `go-wowa` → `172.19.0.14`). A probe that carries the SSRF
+// guard reports a healthy dependency as down — a diagnostic worse than no
+// diagnostic.
+//
+// The distinguishing property is **provenance**: a URL we configured is not
+// attacker-supplied. The relaxation is enforced by **code locality**: the
+// unguarded client is built inline in these three probe functions only.
+// `HttpClient::new` (the request-path entry point) is unchanged and still
+// mandates both SSRF tiers for every other caller. There is no shared
+// constructor, no config flag, and no `HttpConfig` field that the request
+// path could accidentally pick up — the bare `wreq::Client` is constructed
+// with `wreq::Client::builder()` directly, bypassing `wreq_transport_core`
+// (which always installs the guarded resolver).
 
-/// Probe an endpoint with a bare 5s-timeout client. Any HTTP response (any
-/// status) means the service is up; a connection error means it is down.
-async fn probe_reachable(url: &str) -> bool {
-    let client = match HttpClient::new(ox_http::HttpConfig {
-        timeout: std::time::Duration::from_secs(5),
-        ..ox_http::HttpConfig::default()
-    }) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    client.get(url).await.is_ok()
+/// Probe an endpoint. Returns `Ok(())` if the service answered with any HTTP
+/// response (any status code), or `Err(reason)` with what was actually
+/// observed — a connection error, a timeout, a DNS failure — never a
+/// conclusion like "unreachable" that was not measured.
+async fn probe_reachable(url: &str) -> Result<(), String> {
+    let client = wreq::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        // Clear wreq's `auto_sys_proxy` default so an ambient `HTTP_PROXY`
+        // cannot reroute a probe to our own sidecar through an unrelated
+        // proxy (mirrors the invariant in `client.rs` `build_wreq_client`).
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("build probe client: {e}"))?;
+    match client.get(url).send().await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("{e}")),
+    }
 }
 
-/// Probe the proxy by building a client that routes through it and fetching
-/// a lightweight target. Any HTTP response means the proxy is up.
-async fn probe_proxy_reachable(proxy_url: &str) -> bool {
-    use std::sync::Arc;
-    let client = match HttpClient::new(ox_http::HttpConfig {
-        timeout: std::time::Duration::from_secs(8),
-        proxy_pool: Some(Arc::new(ox_http::StaticPool::new(vec![
-            proxy_url.to_string(),
-        ]))),
-        ..ox_http::HttpConfig::default()
-    }) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    client.get("https://example.com").await.is_ok()
+/// Probe the proxy by routing a lightweight fetch through it. Returns
+/// `Ok(())` if any HTTP response came back (the proxy is up and forwarding),
+/// or `Err(reason)` with the observed error.
+async fn probe_proxy_reachable(proxy_url: &str) -> Result<(), String> {
+    let proxy = wreq::Proxy::all(proxy_url).map_err(|e| format!("parse proxy URL: {e}"))?;
+    let client = wreq::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .proxy(proxy)
+        .build()
+        .map_err(|e| format!("build probe client: {e}"))?;
+    match client.get("https://example.com").send().await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("{e}")),
+    }
 }
 
 // ── Date helpers (no chrono dep — self-contained civil-days calc) ───────
@@ -823,6 +840,81 @@ mod tests {
         assert!(
             !measured.contains(&"131".to_string()),
             "Chrome 131 has no shipped profile — doctor must not measure it"
+        );
+    }
+
+    // ── Probe reachability tests ──────────────────────────────────────
+    //
+    // These exercise the fix for the 0.8.5 false-negative: probes must
+    // reach private addresses (our own configured services on a Docker
+    // network) while the user-facing request path must NOT.
+
+    /// A probe against a private address (127.0.0.1 = loopback) succeeds
+    /// when the endpoint answers — even with a 404. This is exactly the
+    /// blocked case: the SSRF guard would refuse 127.0.0.1, but the probe
+    /// bypasses it because the URL's provenance is our own config.
+    #[tokio::test]
+    async fn probe_reachable_succeeds_for_private_address_that_answers() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{port}/");
+
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let _ = sock.read(&mut [0u8; 1024]).await;
+            sock.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let result = probe_reachable(&url).await;
+        assert!(
+            result.is_ok(),
+            "probe to a private address that answers must succeed, got: {result:?}"
+        );
+    }
+
+    /// A probe against a closed port reports unreachable with an observed
+    /// error string (connection refused), not a bare "unreachable".
+    #[tokio::test]
+    async fn probe_reachable_reports_unreachable_for_closed_port() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let url = format!("http://127.0.0.1:{port}/");
+
+        let result = probe_reachable(&url).await;
+        assert!(
+            result.is_err(),
+            "probe to a closed port must report unreachable"
+        );
+        // The error must describe what was observed, not just "unreachable".
+        let reason = result.unwrap_err();
+        assert!(!reason.is_empty(), "error reason must not be empty");
+    }
+
+    /// THE load-bearing test: a user-facing fetch of a private address is
+    /// still blocked by the SSRF guard. Proves the relaxation was scoped to
+    /// probes only — `HttpClient::new` (the request-path entry point) is
+    /// unchanged and still mandates both SSRF tiers.
+    #[tokio::test]
+    async fn user_facing_fetch_of_private_address_is_still_blocked() {
+        let client = HttpClient::new(ox_http::HttpConfig {
+            timeout: std::time::Duration::from_secs(5),
+            ..ox_http::HttpConfig::default()
+        })
+        .expect("build HttpClient with default config");
+
+        let result = client.get("http://127.0.0.1:1/").await;
+        assert!(
+            result.is_err(),
+            "user-facing fetch of a private address must be blocked"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("SSRF blocked"),
+            "error must say SSRF blocked, got: {msg}"
         );
     }
 }

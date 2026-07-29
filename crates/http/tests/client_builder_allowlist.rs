@@ -80,6 +80,17 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
         1,
         "go-twitter social API client (internal service)",
     ),
+    // Doctor probes — target our own configured services (GO_BROWSER_URL,
+    // byparr, proxy) on a private Docker network. A bare wreq::Client is
+    // intentional: it bypasses the SSRF guard that would otherwise block
+    // private addresses. The relaxation is scoped to these probe functions
+    // only — the request path uses HttpClient::new which always carries
+    // both SSRF tiers. See src/doctor.rs "Reachability probes" section.
+    (
+        "src/doctor.rs",
+        2,
+        "doctor reachability probes — own configured services on private network, SSRF guard intentionally bypassed",
+    ),
     // Test / example fixtures — not shipped, target local/dead hosts.
     (
         "crates/http/src/proxy_fallback.rs",
