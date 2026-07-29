@@ -89,6 +89,102 @@ pub async fn read_text_capped(response: Response, max_bytes: u64) -> Result<Stri
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
+/// Read a reqwest response body as text, enforcing a byte cap.
+///
+/// Same two-stage shape as [`read_text_capped`] but for `reqwest::Response`
+/// (the chrome-render fallback uses reqwest, not wreq). The cap applies to the
+/// decompressed body — reqwest's `bytes_stream()` yields bytes after
+/// decompression when the `gzip`/`brotli`/`zstd` features are enabled.
+pub async fn read_text_capped_reqwest(
+    response: reqwest::Response,
+    max_bytes: u64,
+) -> Result<String, HttpError> {
+    if let Some(cl) = response.content_length()
+        && cl > max_bytes
+    {
+        metrics::record_body_cap_rejection();
+        tracing::warn!(
+            content_length = cl,
+            max_bytes,
+            "body cap rejected: Content-Length exceeds limit (header stage, reqwest)"
+        );
+        return Err(HttpError::BodyTooLarge {
+            limit: max_bytes,
+            observed: cl,
+        });
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut total: u64 = 0;
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|e| HttpError::BodyDecodeError(format!("reqwest stream: {e}")))?;
+        total += chunk.len() as u64;
+        if total > max_bytes {
+            metrics::record_body_cap_rejection();
+            tracing::warn!(
+                observed = total,
+                max_bytes,
+                "body cap rejected: running total exceeds limit (stream stage, reqwest)"
+            );
+            return Err(HttpError::BodyTooLarge {
+                limit: max_bytes,
+                observed: total,
+            });
+        }
+        buf.extend_from_slice(&chunk);
+    }
+
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Decompress a gzipped byte slice with a cap on the **decompressed** byte
+/// count.
+///
+/// This is the sitemap decompression-bomb guard. A `sitemap.xml.gz` fetched
+/// from an attacker-chosen site may be a few KB on the wire but decompress
+/// without limit — `read_to_end` on a `GzDecoder` would grow the buffer until
+/// the container's memory limit kills the process. The cap applies to the
+/// decompressed size, not the compressed size: capping the compressed size is
+/// the mistake that makes a bomb guard useless (that is the entire attack).
+///
+/// Uses the same `HttpError::BodyTooLarge` error and
+/// `oxbrowser_body_cap_rejections_total` counter as [`read_text_capped`] so
+/// all body-cap rejections are observable through one metric.
+pub fn gunzip_capped(input: &[u8], max_bytes: u64) -> Result<Vec<u8>, HttpError> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+
+    let mut decoder = GzDecoder::new(input);
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 8192];
+    let mut total: u64 = 0;
+    loop {
+        let n = decoder
+            .read(&mut tmp)
+            .map_err(|e| HttpError::BodyDecodeError(format!("gzip decompression failed: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        if total > max_bytes {
+            metrics::record_body_cap_rejection();
+            tracing::warn!(
+                observed = total,
+                max_bytes,
+                "body cap rejected: decompressed size exceeds limit (gunzip stage)"
+            );
+            return Err(HttpError::BodyTooLarge {
+                limit: max_bytes,
+                observed: total,
+            });
+        }
+        buf.extend_from_slice(&tmp[..n]);
+    }
+    Ok(buf)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +385,104 @@ mod tests {
 
         let after = metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
         assert_eq!(after, before + 1);
+    }
+
+    /// `gunzip_capped` rejects a gzip-compressed input whose DECOMPRESSED size
+    /// exceeds the cap. This is the decompression-bomb guard: the compressed
+    /// input is small (well under the cap), but the decompressed output is
+    /// large. Capping the compressed size would miss this — the cap must apply
+    /// to the decompressed byte count.
+    #[test]
+    #[serial]
+    fn gunzip_capped_rejects_decompressed_exceeds_cap() {
+        let before = metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+
+        // 200 KB of repetitive data — compresses to ~200 bytes.
+        let raw = "A".repeat(200_000);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(raw.as_bytes()).unwrap();
+        let gzipped = encoder.finish().unwrap();
+
+        // The compressed size is far below the cap — capping compressed bytes
+        // would NOT catch this. The decompressed size (200 KB) exceeds the 1 KB
+        // cap.
+        let cap: u64 = 1024;
+        assert!(
+            gzipped.len() as u64 <= cap,
+            "compressed size ({}) should be under cap ({cap}) — this is the bomb shape",
+            gzipped.len()
+        );
+
+        let err = gunzip_capped(&gzipped, cap).unwrap_err();
+        match err {
+            HttpError::BodyTooLarge { limit, observed } => {
+                assert_eq!(limit, cap, "error should name the limit");
+                assert!(
+                    observed > cap,
+                    "observed ({observed}) should exceed cap ({cap})"
+                );
+            }
+            other => panic!("expected BodyTooLarge, got {other:?}"),
+        }
+
+        let after = metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+        assert_eq!(after, before + 1, "counter must increment on rejection");
+    }
+
+    /// `gunzip_capped` succeeds when the decompressed size is under the cap.
+    #[test]
+    #[serial]
+    fn gunzip_capped_succeeds_under_cap() {
+        let before = metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+
+        let raw = b"hello sitemap";
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(raw).unwrap();
+        let gzipped = encoder.finish().unwrap();
+
+        let result = gunzip_capped(&gzipped, 1024).unwrap();
+        assert_eq!(result, raw);
+
+        let after = metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+        assert_eq!(after, before, "counter must NOT increment on success");
+    }
+
+    /// `read_text_capped_reqwest` rejects a body that exceeds the cap via the
+    /// stream stage (Content-Length absent). Mirrors the wreq test but for the
+    /// reqwest path used by the chrome-render fallback.
+    #[tokio::test]
+    #[serial]
+    async fn read_text_capped_reqwest_rejects_when_body_exceeds_cap() {
+        let before = metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+
+        let cap: u64 = 100;
+        let body = "x".repeat(200);
+        let url = start_raw_server(raw_response(None, &body)).await;
+
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let response = client.get(&url).send().await.unwrap();
+        let err = read_text_capped_reqwest(response, cap).await.unwrap_err();
+
+        match err {
+            HttpError::BodyTooLarge { limit, observed } => {
+                assert_eq!(limit, cap, "error should name the limit");
+                assert!(
+                    observed > cap,
+                    "observed ({observed}) should exceed cap ({cap})"
+                );
+            }
+            other => panic!("expected BodyTooLarge, got {other:?}"),
+        }
+
+        let after = metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+        assert_eq!(after, before + 1, "counter must increment on rejection");
     }
 }

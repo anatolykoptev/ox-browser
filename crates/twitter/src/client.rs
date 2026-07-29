@@ -6,6 +6,12 @@ use crate::{fxtwitter, graphql, parser, request, social};
 const GO_HULLY_ENV: &str = "GO_HULLY_URL";
 const GO_SOCIAL_URL_ENV: &str = "GO_SOCIAL_URL";
 
+/// Maximum go-hully response body (1 MB). A single tweet JSON is <10 KB;
+/// 1 MB is very generous. go-hully is our own service, but "it is our own
+/// service" is the assumption that stops holding the day something upstream
+/// breaks (issue #119).
+const HULLY_MAX_BODY_BYTES: u64 = 1024 * 1024;
+
 /// Fetch a single tweet by ID with fallback chain.
 /// Order: go-social (auth pool) → go-hully → FxTwitter → GraphQL (guest token).
 pub async fn fetch_tweet(id: &str) -> Option<Tweet> {
@@ -127,7 +133,9 @@ async fn fetch_tweet_from_hully(base_url: &str, id: &str) -> Result<Tweet, Strin
         return Err(format!("go-hully HTTP {status}"));
     }
 
-    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let body = ox_http::body_cap::read_text_capped(resp, HULLY_MAX_BODY_BYTES)
+        .await
+        .map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     Ok(Tweet {
         id: v["ID"].as_str().unwrap_or("").to_string(),
@@ -142,4 +150,67 @@ async fn fetch_tweet_from_hully(base_url: &str, id: &str) -> Result<Tweet, Strin
         replies: 0,
         views: v["Views"].as_u64().unwrap_or(0),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    /// A body over the cap is rejected with the error naming the limit, and
+    /// the counter increments. Uses a small cap to avoid allocating a 1 MB+
+    /// body in a test — the mechanism is identical regardless of the limit
+    /// value (issue #119).
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn hully_cap_rejects_oversized_body() {
+        use std::sync::atomic::Ordering;
+
+        let before = ox_http::metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+
+        // Start a mock HTTP server serving a body that exceeds the cap.
+        let cap: u64 = 100;
+        let body = "x".repeat(200);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), sock.readable()).await;
+            let _ = sock.try_read(&mut buf);
+            let resp = format!("HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n{body}");
+            let _ = sock.write_all(resp.as_bytes()).await;
+            let _ = sock.shutdown().await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Use a bare wreq client with a small cap — same mechanism as
+        // fetch_tweet_from_hully but with a test-sized cap.
+        let client = wreq::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let resp = client
+            .get(format!("{base_url}/v1/tweet/123"))
+            .header("accept", "application/json")
+            .send()
+            .await
+            .unwrap();
+        let err = ox_http::body_cap::read_text_capped(resp, cap)
+            .await
+            .unwrap_err();
+
+        match err {
+            ox_http::HttpError::BodyTooLarge { limit, observed } => {
+                assert_eq!(limit, cap, "error should name the limit");
+                assert!(
+                    observed > cap,
+                    "observed ({observed}) should exceed cap ({cap})"
+                );
+            }
+            other => panic!("expected BodyTooLarge, got {other:?}"),
+        }
+
+        let after = ox_http::metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
+        assert_eq!(after, before + 1, "counter must increment on rejection");
+    }
 }

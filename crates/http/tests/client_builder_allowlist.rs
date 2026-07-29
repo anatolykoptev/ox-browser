@@ -72,8 +72,8 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/twitter/src/client.rs",
-        1,
-        "hully tweet API client (internal service)",
+        2,
+        "hully tweet API client (internal service) + test fixture mock server (127.0.0.1)",
     ),
     (
         "crates/twitter/src/social.rs",
@@ -99,8 +99,13 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/http/src/body_cap.rs",
-        4,
+        5,
         "test fixtures — raw TCP server clients for body-cap tests (target 127.0.0.1)",
+    ),
+    (
+        "crates/media/src/innertube.rs",
+        1,
+        "test fixture — mock server for innertube body-cap test (target 127.0.0.1)",
     ),
 ];
 

@@ -1,8 +1,14 @@
 //! Sitemap XML parser and auto-discovery.
 
 use anyhow::Result;
-use flate2::read::GzDecoder;
-use std::io::Read;
+
+/// Maximum decompressed sitemap size (50 MB — the Google sitemap protocol spec
+/// max per file). A gzipped sitemap from an attacker-chosen site can be a few
+/// KB on the wire but decompress without limit; the cap in
+/// [`parse_sitemap_with_cap`] applies to the DECOMPRESSED byte count, not the
+/// compressed one (issue #119 — capping compressed bytes is the mistake that
+/// makes a bomb guard useless).
+const SITEMAP_MAX_DECOMPRESSED_BYTES: u64 = 50 * 1024 * 1024;
 
 /// A single URL entry from a sitemap urlset.
 #[derive(Debug, Clone)]
@@ -23,18 +29,30 @@ pub enum SitemapContent {
 }
 
 /// Parse a sitemap XML document (either index or urlset).
+///
+/// Uses the default decompressed-body cap of 50 MB
+/// ([`SITEMAP_MAX_DECOMPRESSED_BYTES`]). For tests that need a smaller cap,
+/// use [`parse_sitemap_with_cap`].
 pub fn parse_sitemap(xml: &[u8]) -> Result<SitemapContent> {
+    parse_sitemap_with_cap(xml, SITEMAP_MAX_DECOMPRESSED_BYTES)
+}
+
+/// Parse a sitemap XML document with an explicit decompressed-body cap.
+///
+/// If the input is gzip-compressed (magic bytes `0x1f 0x8b`), it is
+/// decompressed via [`ox_http::body_cap::gunzip_capped`] which enforces a
+/// ceiling on the **decompressed** byte count — not the compressed one. This
+/// is the decompression-bomb guard: a `sitemap.xml.gz` from an attacker-chosen
+/// site may be a few KB on the wire but expand without limit (issue #119).
+pub fn parse_sitemap_with_cap(xml: &[u8], max_decompressed_bytes: u64) -> Result<SitemapContent> {
     use quick_xml::Reader;
     use quick_xml::events::Event;
 
-    // Detect gzip (magic bytes 0x1f, 0x8b)
+    // Detect gzip (magic bytes 0x1f, 0x8b). Decompress with a cap on the
+    // DECOMPRESSED byte count — capping the compressed size is the mistake
+    // that makes a bomb guard useless (issue #119).
     let data = if xml.len() >= 2 && xml[0] == 0x1f && xml[1] == 0x8b {
-        let mut decoder = GzDecoder::new(xml);
-        let mut decompressed = Vec::new();
-        decoder
-            .read_to_end(&mut decompressed)
-            .map_err(|e| anyhow::anyhow!("gzip decompression failed: {e}"))?;
-        decompressed
+        ox_http::body_cap::gunzip_capped(xml, max_decompressed_bytes)?
     } else {
         xml.to_vec()
     };
@@ -308,5 +326,74 @@ mod tests {
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].url, "https://a.com/new");
         assert_eq!(filtered[1].url, "https://a.com/nodate");
+    }
+
+    /// Decompression-bomb guard: a gzipped sitemap whose compressed size is
+    /// tiny but whose DECOMPRESSED size exceeds the cap must be rejected.
+    ///
+    /// This test ACTUALLY COMPRESSES a large body and asserts the decompressed
+    /// read is rejected — not just that the code exists. The compressed payload
+    /// is well under the cap (proving capping compressed bytes would miss it),
+    /// while the decompressed payload far exceeds it.
+    #[test]
+    fn rejects_gzip_bomb_decompressed_exceeds_cap() {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+
+        // Build a large XML sitemap — 10 000 URL entries, ~800 KB decompressed.
+        let mut xml = String::from(
+            r#"<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">"#,
+        );
+        for i in 0..10_000 {
+            xml.push_str(&format!(
+                "<url><loc>https://example.com/page{i}</loc></url>"
+            ));
+        }
+        xml.push_str("</urlset>");
+
+        let decompressed_size = xml.len();
+
+        // Gzip compress — repetitive XML compresses dramatically.
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let gzipped = encoder.finish().unwrap();
+        let compressed_size = gzipped.len();
+
+        // The bomb shape: compressed is tiny, decompressed is large.
+        // The compression ratio proves this is a real bomb vector.
+        let ratio = decompressed_size as f64 / compressed_size as f64;
+        assert!(
+            compressed_size < 50_000,
+            "compressed ({compressed_size}) should be small"
+        );
+        assert!(
+            ratio > 10.0,
+            "compression ratio ({ratio:.1}x) should be >10x — this is the bomb shape"
+        );
+
+        // Cap at 100 KB — the decompressed body (~800 KB) exceeds it, but the
+        // compressed body (~20 KB) does not. A guard that caps compressed bytes
+        // would let this through; the decompressed-byte cap rejects it.
+        let cap: u64 = 100 * 1024;
+        assert!(
+            compressed_size as u64 <= cap,
+            "compressed ({compressed_size}) must be under cap ({cap}) — capping compressed bytes would miss the bomb"
+        );
+
+        let result = parse_sitemap_with_cap(&gzipped, cap);
+        assert!(result.is_err(), "gzip bomb must be rejected");
+
+        // The error must name the limit (HttpError::BodyTooLarge Display).
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("exceeded cap"),
+            "error should name the cap: {err_msg}"
+        );
+        assert!(
+            err_msg.contains(&cap.to_string()),
+            "error should contain the limit value ({cap}): {err_msg}"
+        );
     }
 }
