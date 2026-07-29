@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use ox_http::BrowserProfile;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
@@ -40,11 +41,21 @@ pub fn media_path(platform: &str, url: &str, ext: &str) -> PathBuf {
 /// Downloads to a `.part` file first, renames on success, cleans up on error.
 /// Optional `proxy_url` for sites that block datacenter IPs.
 /// Returns total bytes written.
+///
+/// `profile` is the browser identity the originating page fetch used (threaded
+/// from `orchestrator::download` via `HttpClient::config().profile`, falling
+/// back to `platform_matched_profile()`). The client carries the profile's
+/// TLS/HTTP2 fingerprint, and the request carries the profile's headers
+/// (User-Agent + client hints in Chrome wire order) via `browser_headers` —
+/// so a WAF that saw Chrome fetch the page sees the same Chrome fetch the
+/// images/video. There is no code path that sets a mismatched UA on this
+/// request (issue #101 / PR #97's incoherence-unrepresentable property).
 pub async fn download_to_file(
     url: &str,
     dest: &Path,
     max_size_bytes: u64,
     proxy_url: &str,
+    profile: &BrowserProfile,
 ) -> Result<u64, MediaError> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
@@ -67,10 +78,18 @@ pub async fn download_to_file(
 
     let part_path = dest.with_extension("part");
 
-    let client = crate::http::build_client(proxy_url, DOWNLOAD_TIMEOUT, "download")?;
+    let client = crate::http::build_client(profile, proxy_url, DOWNLOAD_TIMEOUT, "download")?;
 
-    let response = client
-        .get(url)
+    // Apply the profile's headers (UA + client hints in Chrome wire order).
+    // The client carries the matching TLS/HTTP2 emulation, so the request is
+    // a coherent browser fetch — same identity as the page fetch that
+    // extracted this media URL.
+    let mut request = client.get(url);
+    for (name, value) in ox_http::browser_headers(profile) {
+        request = request.header(name.as_str(), value.as_str());
+    }
+
+    let response = request
         .send()
         .await
         .map_err(|e| MediaError::DownloadFailed(format!("request: {e}")))?;

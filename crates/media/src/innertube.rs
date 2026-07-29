@@ -1,5 +1,7 @@
 //! YouTube Innertube API client — direct player requests via ANDROID_VR.
 
+use ox_http::BrowserProfile;
+
 use crate::youtube::{PlayerFormat, PlayerResponse};
 use crate::{MediaConfig, MediaError};
 
@@ -81,14 +83,28 @@ pub fn has_usable_streams(pr: &PlayerResponse) -> bool {
 /// ANDROID_VR doesn't require PO Tokens and returns direct stream URLs.
 /// Uses wreq with proxy support since datacenter IPs are blocked by YouTube.
 /// `proxy_url` overrides config proxy (used for sticky sessions).
+///
+/// `profile` supplies the TLS/HTTP2 emulation (the client's transport
+/// fingerprint). The ANDROID_VR User-Agent is set per-request — it is the
+/// Innertube ANDROID_VR protocol identity (an Android-app identity, not a
+/// browser one). Android's YouTube app uses Chrome's BoringSSL network stack,
+/// so the Chrome emulation is the correct TLS layer for an Android-app
+/// request; no `sec-ch-ua` client hints are sent (a real Android app doesn't),
+/// so the request is coherent as an Android-app fetch rather than a bare
+/// Rust client (issue #101).
 pub async fn fetch_player_response(
     video_id: &str,
     config: &MediaConfig,
     proxy_url: &str,
+    profile: &BrowserProfile,
 ) -> Result<PlayerResponse, MediaError> {
     let body = build_android_vr_body(video_id, config);
-    let client =
-        crate::http::build_client(proxy_url, std::time::Duration::from_secs(20), "innertube")?;
+    let client = crate::http::build_client(
+        profile,
+        proxy_url,
+        std::time::Duration::from_secs(20),
+        "innertube",
+    )?;
 
     let resp = client
         .post(&config.innertube_url)

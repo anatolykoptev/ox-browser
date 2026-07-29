@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use wreq::Client;
 
@@ -12,7 +13,7 @@ use crate::middleware_residential::residential_proxy_middleware;
 use crate::middleware_retry::retry_middleware;
 use crate::middleware_solver::{solver_middleware, solver_middleware_with_negcache};
 use crate::middleware_ssrf::ssrf_middleware;
-use crate::profile::profile_to_emulation;
+use crate::profile::{BrowserProfile, profile_to_emulation};
 use crate::profile_hints::browser_headers;
 use crate::ssrf_connect::{SsrfGuardedResolver, ssrf_redirect_policy};
 use crate::{HttpConfig, HttpError, HttpResponse, Result};
@@ -229,49 +230,26 @@ impl HttpClient {
         config: &HttpConfig,
         emulation: Option<&wreq::Emulation>,
     ) -> Result<Client> {
-        let mut builder = Client::builder()
-            .timeout(config.timeout)
-            // Connect-time, rebind-resistant IP guard (see crate::ssrf_connect
-            // module doc) — filters DNS resolution results, not just the
-            // pre-resolve middleware_ssrf check.
-            .dns_resolver(SsrfGuardedResolver)
-            // Refuses a redirect hop whose target is already a blocked
-            // literal IP (the resolver above never sees those — wreq skips
-            // DNS resolution entirely for IP-literal hosts).
-            .redirect(ssrf_redirect_policy(config.max_redirects))
-            .cookie_store(true);
-
-        // Static proxy (proxy_pool is handled per-request in WreqHandler).
-        if let Some(ref proxy_url) = config.proxy_url {
-            let proxy =
-                wreq::Proxy::all(proxy_url).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
-            builder = builder.proxy(proxy);
-        } else {
-            // C: wreq's `ClientBuilder` defaults `auto_sys_proxy: true`,
-            // which installs a `ProxyMatcher::system()` that reads
-            // `HTTP_PROXY` / `http_proxy` (and the macOS dynamic store) at
-            // build time. Without `.no_proxy()`, an ambient `HTTP_PROXY` —
-            // routine in Docker images and CI runners — silently proxies the
-            // base client while `client_has_static_proxy` reads false. That
-            // breaks the iff the `WreqHandler::new` docstring asserts: every
-            // proxy counter under-reports, and the dial fallback is skipped
-            // (used_proxy is false), so a dead ambient proxy hard-fails every
-            // read instead of degrading. Calling
-            // `.no_proxy()` clears `auto_sys_proxy`, making the flag a true
-            // iff and preventing unlogged ambient-proxy attribution.
-            builder = builder.no_proxy();
-        }
-
-        // Browser emulation for TLS/HTTP2 fingerprints. The Emulation
-        // controls TLS + HTTP/2 ONLY — identity headers are set per-request
-        // by `build_request()` via `browser_headers()`.
-        if let Some(emu) = emulation {
-            builder = builder.emulation(emu.clone());
-        }
-
-        // Note: we do NOT set .user_agent() on the builder — headers are
-        // managed per-request (profile headers or fallback UA).
-        Ok(builder.build()?)
+        // C: wreq's `ClientBuilder` defaults `auto_sys_proxy: true`,
+        // which installs a `ProxyMatcher::system()` that reads
+        // `HTTP_PROXY` / `http_proxy` (and the macOS dynamic store) at
+        // build time. Without `.no_proxy()`, an ambient `HTTP_PROXY` —
+        // routine in Docker images and CI runners — silently proxies the
+        // base client while `client_has_static_proxy` reads false. That
+        // breaks the iff the `WreqHandler::new` docstring asserts: every
+        // proxy counter under-reports, and the dial fallback is skipped
+        // (used_proxy is false), so a dead ambient proxy hard-fails every
+        // read instead of degrading. The `.no_proxy()` call inside
+        // `wreq_transport_core` (when `proxy` is `None`) clears
+        // `auto_sys_proxy`, making the flag a true iff and preventing
+        // unlogged ambient-proxy attribution.
+        wreq_transport_core(
+            config.timeout,
+            config.max_redirects,
+            emulation,
+            config.proxy_url.as_deref(),
+            true,
+        )
     }
 
     /// Build a wreq client identical to [`build_wreq_client`] but with no
@@ -281,18 +259,7 @@ impl HttpClient {
         config: &HttpConfig,
         emulation: Option<&wreq::Emulation>,
     ) -> Result<Client> {
-        let mut builder = Client::builder()
-            .timeout(config.timeout)
-            .dns_resolver(SsrfGuardedResolver)
-            .redirect(ssrf_redirect_policy(config.max_redirects))
-            .cookie_store(true)
-            .no_proxy();
-
-        if let Some(emu) = emulation {
-            builder = builder.emulation(emu.clone());
-        }
-
-        Ok(builder.build()?)
+        wreq_transport_core(config.timeout, config.max_redirects, emulation, None, true)
     }
 
     /// Test-only constructor: inject a pre-built handler and config directly,
@@ -302,4 +269,98 @@ impl HttpClient {
     pub fn with_handler(handler: Arc<dyn Handler>, config: HttpConfig) -> Self {
         Self { handler, config }
     }
+}
+
+// ── Shared wreq-client construction seam ────────────────────────────────
+//
+// Issue #101: the media-download path (`ox-media`) built a bare `wreq::Client`
+// with no browser identity, so a WAF that saw a byte-perfect Chrome fetch the
+// page then saw a bare Rust client fetch the images/video from the same origin
+// — a one-visitor-two-clients correlation signal. This seam is the ONE place
+// the transport + identity layer is constructed, shared by `HttpClient`'s own
+// builders above and by the public [`build_profiled_wreq_client`] the media
+// path adopts. Duplication is what created the gap; this closes it.
+
+/// Shared wreq client construction core: timeout, SSRF connect-time +
+/// redirect-hop guards, proxy (or `.no_proxy()` to clear wreq's ambient
+/// `HTTP_PROXY` default), cookie store, and TLS/HTTP2 emulation.
+///
+/// `proxy = None` means "no proxy" and calls `.no_proxy()` (clearing
+/// `auto_sys_proxy`). `proxy = Some(url)` attaches a static proxy. Per-request
+/// proxy pools / residential proxies are handled by `WreqHandler`, not here.
+///
+/// The Emulation controls TLS + HTTP/2 ONLY — identity headers are set
+/// per-request by the caller via `browser_headers(profile)` (mirroring PR #97:
+/// the emulation owns the transport fingerprint, the profile owns the headers,
+/// and the two cannot diverge because there is no `.headers(...)` on the
+/// Emulation). This function does NOT set `.user_agent()` on the builder.
+fn wreq_transport_core(
+    timeout: Duration,
+    max_redirects: usize,
+    emulation: Option<&wreq::Emulation>,
+    proxy: Option<&str>,
+    cookie_store: bool,
+) -> Result<Client> {
+    let mut builder = Client::builder()
+        .timeout(timeout)
+        // Connect-time, rebind-resistant IP guard (see crate::ssrf_connect
+        // module doc) — filters DNS resolution results, not just the
+        // pre-resolve middleware_ssrf check.
+        .dns_resolver(SsrfGuardedResolver)
+        // Refuses a redirect hop whose target is already a blocked literal IP
+        // (the resolver above never sees those — wreq skips DNS resolution
+        // entirely for IP-literal hosts).
+        .redirect(ssrf_redirect_policy(max_redirects));
+
+    if cookie_store {
+        builder = builder.cookie_store(true);
+    }
+
+    if let Some(url) = proxy {
+        let proxy = wreq::Proxy::all(url).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+        builder = builder.proxy(proxy);
+    } else {
+        // Clear `auto_sys_proxy` so an ambient `HTTP_PROXY` cannot silently
+        // proxy a client whose caller believes is direct (see the comment in
+        // `build_wreq_client` for the full invariant).
+        builder = builder.no_proxy();
+    }
+
+    // Browser emulation for TLS/HTTP2 fingerprints.
+    if let Some(emu) = emulation {
+        builder = builder.emulation(emu.clone());
+    }
+
+    // Note: we do NOT set .user_agent() on the builder — headers are
+    // managed per-request (profile headers or fallback UA).
+    Ok(builder.build()?)
+}
+
+/// Build a wreq client carrying the same browser TLS/HTTP2 identity as
+/// [`HttpClient`] does for a given [`BrowserProfile`].
+///
+/// This is the shared seam the media-download path (`ox-media`) adopts instead
+/// of building a bare `wreq::Client` (issue #101). It applies
+/// [`profile_to_emulation`] (TLS + HTTP/2 fingerprint) plus the SSRF
+/// connect-time and redirect-hop guards, and a static proxy when `proxy_url`
+/// is non-empty. It does NOT set a User-Agent or client hints on the builder —
+/// the caller sets headers per-request via [`browser_headers`] (for browser
+/// identity) or its own protocol UA (for the Innertube ANDROID_VR client,
+/// whose Android-app identity legitimately differs from a browser's).
+///
+/// `max_redirects` should match the originating `HttpClient`'s config so the
+/// media path behaves identically to the page-fetch path.
+pub fn build_profiled_wreq_client(
+    profile: &BrowserProfile,
+    proxy_url: &str,
+    timeout: Duration,
+    max_redirects: usize,
+) -> Result<Client> {
+    let emulation = profile_to_emulation(profile);
+    let proxy = if proxy_url.is_empty() {
+        None
+    } else {
+        Some(proxy_url)
+    };
+    wreq_transport_core(timeout, max_redirects, emulation.as_ref(), proxy, false)
 }

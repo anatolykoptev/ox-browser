@@ -1,5 +1,6 @@
 //! YouTube platform downloader via Innertube API.
 
+use ox_http::BrowserProfile;
 use tracing::{debug, info};
 
 use crate::download::{download_to_file, media_path};
@@ -19,12 +20,13 @@ impl PlatformDownloader for YouTubeDownloader {
         req: &MediaRequest,
         max_bytes: u64,
         config: &MediaConfig,
+        profile: &BrowserProfile,
     ) -> Result<MediaResult, MediaError> {
         let video_id = innertube::extract_video_id(url)
             .ok_or_else(|| MediaError::FetchFailed("no video ID in URL".into()))?;
 
         let proxy = &config.proxy_url;
-        let pr = innertube::fetch_player_response(video_id, config, proxy).await?;
+        let pr = innertube::fetch_player_response(video_id, config, proxy, profile).await?;
         let info = build_video_info(&pr, req.max_height.unwrap_or(config.default_max_height));
         let video_url = info.video_url.as_deref().ok_or(MediaError::NoVideoFound)?;
         debug!(
@@ -34,11 +36,12 @@ impl PlatformDownloader for YouTubeDownloader {
         );
 
         let video_dest = media_path("yt", url, "mp4");
-        let video_size = download_to_file(video_url, &video_dest, max_bytes, proxy).await?;
+        let video_size =
+            download_to_file(video_url, &video_dest, max_bytes, proxy, profile).await?;
 
         let (final_path, final_size, merged) = if let Some(ref audio_url) = info.audio_url {
             let audio_dest = media_path("yt", &format!("{url}_audio"), "m4a");
-            download_to_file(audio_url, &audio_dest, max_bytes, proxy).await?;
+            download_to_file(audio_url, &audio_dest, max_bytes, proxy, profile).await?;
             let merged_dest = media_path("yt", &format!("{url}_merged"), "mp4");
             merge_dash(&video_dest, &audio_dest, &merged_dest)
                 .map_err(|e| MediaError::MergeFailed(e.to_string()))?;

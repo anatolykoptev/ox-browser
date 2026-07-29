@@ -47,7 +47,7 @@ pub mod ssrf_connect;
 pub mod tls;
 pub mod url_util;
 
-pub use client::HttpClient;
+pub use client::{HttpClient, build_profiled_wreq_client};
 pub use cloudflare::{ChallengeType, CloudflareChallenge, detect_cloudflare};
 pub use config::HttpConfig;
 pub use cookie_cache::CookieCache;
