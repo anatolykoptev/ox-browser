@@ -1,6 +1,7 @@
 //! Generic platform downloader — extract media from HTML.
 
 use dom_query::Document;
+use ox_http::BrowserProfile;
 use tracing::{debug, info};
 
 use crate::download::{download_to_file, media_path};
@@ -21,6 +22,7 @@ impl PlatformDownloader for GenericDownloader {
         req: &MediaRequest,
         max_bytes: u64,
         config: &MediaConfig,
+        profile: &BrowserProfile,
     ) -> Result<MediaResult, MediaError> {
         let mut items = extract_media(&self.html, &self.base_url);
 
@@ -54,7 +56,7 @@ impl PlatformDownloader for GenericDownloader {
         for item in &items {
             let ext = url_extension(&item.url, item.media_kind);
             let dest = media_path("generic", &item.url, ext);
-            let size = download_to_file(&item.url, &dest, max_bytes, "").await?;
+            let size = download_to_file(&item.url, &dest, max_bytes, "", profile).await?;
             files.push(MediaFile {
                 path: dest.to_string_lossy().into_owned(),
                 size_bytes: size,
