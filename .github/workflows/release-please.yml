@@ -81,7 +81,25 @@ jobs:
         if: ${{ steps.relpr.outputs.skip != 'true' }}
         env:
           BRANCH: ${{ steps.relpr.outputs.branch }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
+          # A fresh runner has no git identity, so `git commit` aborts with
+          # "empty ident name". Set one matching the krolik-release-bot App
+          # token that pushes this commit. The noreply email for a GitHub App
+          # bot needs the bot USER id (the machine user GitHub creates on
+          # install), NOT the App id — actions/create-github-app-token@v2
+          # exposes app-slug but not that user id, so look it up via the API.
+          bot_id=$(curl -fsSL -H "Authorization: token $TOKEN" \
+            "https://api.github.com/users/${APP_SLUG}%5Bbot%5D" | jq -r .id)
+          if [ -z "$bot_id" ]; then
+            echo "bot user id lookup failed; falling back to github-actions[bot]"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          else
+            git config user.name "${APP_SLUG}[bot]"
+            git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          fi
           # `cargo update --workspace --offline` updates ONLY the workspace
           # member versions and touches no third-party dependency versions
           # (offline => no newer compatible versions can be discovered). It
