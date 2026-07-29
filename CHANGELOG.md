@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.3](https://github.com/anatolykoptev/ox-browser/compare/v0.8.2...v0.8.3) (2026-07-29)
+
+
+### Added
+
+* **cli:** add read subcommand exposing the extraction pipeline ([#104](https://github.com/anatolykoptev/ox-browser/issues/104)) ([794ebdc](https://github.com/anatolykoptev/ox-browser/commit/794ebdc53a1fdfe1983bc0f87e0ea5831fb00c4a))
+
+
+### Fixed
+
+* **cli:** default fetch and read to the service identity ([#108](https://github.com/anatolykoptev/ox-browser/issues/108)) ([3641982](https://github.com/anatolykoptev/ox-browser/commit/3641982df275211a604a09b15e7115358a50d561))
+* **media:** route media downloads through the shared browser-identity constructor ([#107](https://github.com/anatolykoptev/ox-browser/issues/107)) ([1295ac3](https://github.com/anatolykoptev/ox-browser/commit/1295ac357bffe3e29763a38305e5f06e5d466887))
+
 ## [0.8.2](https://github.com/anatolykoptev/ox-browser/compare/v0.8.1...v0.8.2) (2026-07-29)
 
 
