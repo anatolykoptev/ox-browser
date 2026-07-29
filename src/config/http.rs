@@ -78,6 +78,53 @@ impl HttpSection {
     }
 }
 
+/// Load only the `[http]` section for CLI subcommands that are not the
+/// server (`fetch`/`read`). This is the config.toml coupling for Issue #102
+/// option B: the CLI matches the *deployed* service's configured profile,
+/// not just the built-in default — so an operator reproducing a WAF block
+/// on the deployed host speaks the same TLS dialect as the service.
+///
+/// Path resolution mirrors `serve`: `OX_BROWSER_CONFIG` env, else `config.toml`.
+///
+/// - File absent → `HttpSection::default()` (`profile = "chrome"` — the
+///   documented default, NEVER the bare client).
+/// - File present but syntactically invalid TOML or a malformed `[http]` →
+///   a loud error (propagated). A config the server cannot parse would not
+///   start either; a silent fallback to bare here would reintroduce #102.
+/// - Non-`[http]` sections are ignored (serde skips unknown fields, no
+///   `deny_unknown_fields`), so a `[solver]`/`[proxy]` typo does not break
+///   `ox-browser fetch` — only the http surface is pulled in.
+pub fn load_http_section_for_cli() -> anyhow::Result<HttpSection> {
+    load_http_section_from(&cli_config_path())
+}
+
+fn cli_config_path() -> std::path::PathBuf {
+    std::env::var("OX_BROWSER_CONFIG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("config.toml"))
+}
+
+/// Load `[http]` from an explicit path. Split out so tests can drive it
+/// without mutating the process-global `OX_BROWSER_CONFIG` env var.
+pub fn load_http_section_from(path: &std::path::Path) -> anyhow::Result<HttpSection> {
+    if !path.exists() {
+        return Ok(HttpSection::default());
+    }
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("read config {}: {e}", path.display()))?;
+    // Parse only [http]; unknown sections are ignored by serde, so a
+    // malformed [solver]/[proxy] does not break the CLI. Only [http] or a
+    // syntactically invalid TOML errors.
+    #[derive(serde::Deserialize)]
+    struct CliConfig {
+        #[serde(default)]
+        http: HttpSection,
+    }
+    let cfg: CliConfig = toml::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("parse config {}: {e}", path.display()))?;
+    Ok(cfg.http)
+}
+
 /// Extract the browser family name from a config string.
 ///
 /// Accepts both new-style names ("chrome", "firefox") and old-style

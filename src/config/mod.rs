@@ -34,7 +34,9 @@ pub use chrome::ChromeSection;
 pub use cloudflare::CloudflareSection;
 pub use crawler::CrawlerSection;
 pub use fetch::FetchSection;
-pub use http::HttpSection;
+#[cfg(test)]
+pub use http::load_http_section_from;
+pub use http::{HttpSection, load_http_section_for_cli};
 pub use images::ImagesSection;
 pub use log::LogSection;
 pub use media::MediaSection;
