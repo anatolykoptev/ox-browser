@@ -72,9 +72,33 @@ opt-level = 1
 # TEMPORARY — pending upstream wreq PR for the `trust_anchors` extension
 # (draft-ietf-tls-trust-anchor-ids, codepoint 0xca34 = 51764). The fork adds
 # `TlsOptions::requested_trust_anchors` + builder setter, applied per-connection
-# via BoringSSL's `SSL_set1_requested_trust_anchors`. It branches off the
+# via BoringSSL's `SSL_set1_requested_trust_anchors`. wreq branches off the
 # released `v6.0.0-rc.29` tag, so the version wreq-util resolves against is
-# unchanged. Remove this stanza once the upstream PR lands and is released.
-# Tracked in issue #81.
+# unchanged. Tracked in issue #81.
+#
+# All three entries are rev-pinned (never branch-pinned): a force-push to a
+# mutable branch would silently change the production TLS stack on the next
+# non-`--locked` resolve. The wreq rev is the `feat/trust-anchors-safe` branch
+# head — it calls btls's safe `set_requested_trust_anchors` wrapper instead of
+# raw FFI, so `#![deny(unsafe_code)]` holds in wreq with no exemption. The
+# other branch (`feat/trust-anchors`) keeps the unsafe block to compile
+# against released btls and is NOT what we ship.
+#
+# btls is pinned to a rev based on the `v0.5.6` tag (NOT fork main): upstream
+# btls main removed `Hash` from `SslVersion`, and wreq derives `Hash` for its
+# `TlsVersion`, so a main-based pin does not compile. Both `btls` and
+# `btls-sys` are required: the fork's workspace `btls-sys` and the crates.io
+# `btls-sys` both declare `links = "boringssl"`, and cargo forbids two
+# packages linking one native library. With both stanzas, exactly one
+# `btls-sys` node results.
+#
+# Removal ORDER:
+#   1. When btls ships a release containing `set_requested_trust_anchors`,
+#      drop the `btls` and `btls-sys` stanzas (the crates.io versions then
+#      satisfy wreq's dep).
+#   2. When upstream wreq merges 0x676e67/wreq#1220 and releases, drop the
+#      `wreq` stanza too.
 [patch.crates-io]
-wreq = { git = "https://github.com/anatolykoptev/wreq", branch = "feat/trust-anchors" }
+wreq     = { git = "https://github.com/anatolykoptev/wreq", rev = "adc3c16765cdcbe2344a5f37fe2b411d4ebd325f" }
+btls     = { git = "https://github.com/anatolykoptev/btls", rev = "56c95cde8ffde73643007a2725e43b2d42ddca15" }
+btls-sys = { git = "https://github.com/anatolykoptev/btls", rev = "56c95cde8ffde73643007a2725e43b2d42ddca15" }
