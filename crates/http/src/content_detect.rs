@@ -204,14 +204,24 @@ mod tests {
     fn visible_text_len_counts_cjk_chars_not_bytes() {
         // 10 CJK chars = 30 UTF-8 bytes. Must count as 10, not 30.
         let html = "<p>こんにちは</p>"; // 5 hiragana chars
-        assert_eq!(visible_text_len(html), 5, "5 hiragana chars must count as 5, not {} bytes", "こんにちは".len());
+        assert_eq!(
+            visible_text_len(html),
+            5,
+            "5 hiragana chars must count as 5, not {} bytes",
+            "こんにちは".len()
+        );
     }
 
     #[test]
     fn visible_text_len_counts_cyrillic_chars_not_bytes() {
         // 6 Cyrillic chars = 12 UTF-8 bytes. Must count as 6, not 12.
         let html = "<p>Привет</p>"; // 6 Cyrillic chars
-        assert_eq!(visible_text_len(html), 6, "6 Cyrillic chars must count as 6, not {} bytes", "Привет".len());
+        assert_eq!(
+            visible_text_len(html),
+            6,
+            "6 Cyrillic chars must count as 6, not {} bytes",
+            "Привет".len()
+        );
     }
 
     #[test]
@@ -222,7 +232,11 @@ mod tests {
         // above the floor when it should be at the boundary.
         let body = "あ".repeat(500); // 500 chars, 1500 bytes
         let html = format!("<html><body>{body}</body></html>");
-        assert_eq!(visible_text_len(&html), 500, "500 CJK chars must count as 500 (char-based floor), not 1500 (bytes)");
+        assert_eq!(
+            visible_text_len(&html),
+            500,
+            "500 CJK chars must count as 500 (char-based floor), not 1500 (bytes)"
+        );
     }
 
     #[test]
@@ -231,7 +245,11 @@ mod tests {
         // text. The previous is_ascii_whitespace missed it (it is non-ASCII),
         // so it counted as 3 visible bytes. char::is_whitespace covers it.
         let html = "<p>あ\u{3000}い</p>"; // あ + ideographic space + い
-        assert_eq!(visible_text_len(html), 2, "U+3000 ideographic space must not count as visible text");
+        assert_eq!(
+            visible_text_len(html),
+            2,
+            "U+3000 ideographic space must not count as visible text"
+        );
     }
 
     #[test]
@@ -240,7 +258,11 @@ mod tests {
         // text. The previous is_ascii_whitespace missed it (non-ASCII), so it
         // counted as 2 visible bytes.
         let html = "<p>a\u{00a0}b</p>"; // a + NBSP + b
-        assert_eq!(visible_text_len(html), 2, "U+00A0 NBSP must not count as visible text");
+        assert_eq!(
+            visible_text_len(html),
+            2,
+            "U+00A0 NBSP must not count as visible text"
+        );
     }
 
     #[test]
@@ -248,7 +270,11 @@ mod tests {
         // Mixed Latin + CJK + Cyrillic: each codepoint counts as 1.
         // "Hello" (5) + "世界" (2) + "Мир" (3) = 10 chars.
         let html = "<p>Hello世界Мир</p>";
-        assert_eq!(visible_text_len(html), 10, "mixed-script text must count codepoints, not bytes");
+        assert_eq!(
+            visible_text_len(html),
+            10,
+            "mixed-script text must count codepoints, not bytes"
+        );
     }
 
     #[test]
@@ -257,6 +283,10 @@ mod tests {
         // chars — the tag detection is byte-based (ASCII) but the text counting
         // is char-based, and the two must not desync.
         let html = "<style>body{color:red}</style><p>テスト</p><script>var x=1</script>";
-        assert_eq!(visible_text_len(html), 3, "only the 3 katakana chars outside script/style must count");
+        assert_eq!(
+            visible_text_len(html),
+            3,
+            "only the 3 katakana chars outside script/style must count"
+        );
     }
 }
