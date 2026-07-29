@@ -62,134 +62,14 @@ use common::*;
 #[cfg(feature = "fingerprint")]
 use ox_http::{BUILTIN_PROFILES, BrowserProfile, HttpClient, HttpConfig};
 
-// ── Echo service endpoints ─────────────────────────────────────────────
-
-#[cfg(feature = "fingerprint")]
-const PEET_ENDPOINT: &str = "https://tls.peet.ws/api/all";
-#[cfg(feature = "fingerprint")]
-const BROWSERLEAKS_ENDPOINT: &str = "https://tls.browserleaks.com/json";
-
-// ── Peet response parsing ──────────────────────────────────────────────
-//
-// peet.ws /api/all returns a JSON object with `tls`, `http2`, `user_agent`
-// top-level keys. The `http2` object contains `akamai_fingerprint` and
-// `sent_frames` (an array of HEADERS frames with `headers` arrays of
-// "name: value" strings).
-
-#[cfg(feature = "fingerprint")]
-fn extract_peet(raw: &serde_json::Value) -> Observed {
-    let mut o = Observed::default();
-
-    let tls = &raw["tls"];
-    o.tls.ja3 = tls["ja3"].as_str().unwrap_or("").to_string();
-    o.tls.ja3_hash = tls["ja3_hash"].as_str().unwrap_or("").to_string();
-    o.tls.peetprint = tls["peetprint"].as_str().unwrap_or("").to_string();
-    o.tls.peetprint_hash = tls["peetprint_hash"].as_str().unwrap_or("").to_string();
-
-    o.user_agent = raw["user_agent"].as_str().unwrap_or("").to_string();
-
-    let h2 = &raw["http2"];
-    o.http2_akamai_fingerprint = h2["akamai_fingerprint"].as_str().unwrap_or("").to_string();
-
-    // Extract header order from the first HEADERS frame.
-    if let Some(frames) = h2["sent_frames"].as_array() {
-        for frame in frames {
-            if frame["frame_type"].as_str() != Some("HEADERS") {
-                continue;
-            }
-            if let Some(headers) = frame["headers"].as_array() {
-                for h in headers {
-                    if let Some(hs) = h.as_str() {
-                        // Skip pseudo-headers (:method, :path, etc.) — their
-                        // order is encoded in the akamai fingerprint, not the
-                        // regular header order.
-                        if hs.starts_with(':') {
-                            continue;
-                        }
-                        let (name, val) = split_header(hs);
-                        o.header_order.push(name.clone());
-                        match name.as_str() {
-                            "sec-ch-ua" => o.sec_ch_ua = val,
-                            "sec-ch-ua-mobile" => o.sec_ch_ua_mobile = val,
-                            "sec-ch-ua-platform" => o.sec_ch_ua_platform = val,
-                            "accept" => o.accept = val,
-                            "accept-language" => o.accept_language = val,
-                            "accept-encoding" => o.accept_encoding = val,
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            break; // first HEADERS frame is the request
-        }
-    }
-
-    o.sources = Sources {
-        ja3: SERVICE_PEET.to_string(),
-        peetprint: SERVICE_PEET.to_string(),
-        http2: SERVICE_PEET.to_string(),
-        headers: SERVICE_PEET.to_string(),
-        ..Default::default()
-    };
-    o
-}
-
-// ── Browserleaks response parsing ──────────────────────────────────────
-//
-// tls.browserleaks.com/json returns a flat JSON object with ja3_hash, ja3n_hash,
-// ja4, ja4_o, akamai_text (HTTP/2 Akamai fingerprint), and user_agent.
-
-#[cfg(feature = "fingerprint")]
-fn extract_browserleaks(raw: &serde_json::Value) -> Observed {
-    let mut o = Observed::default();
-
-    o.tls.ja3_hash = raw["ja3_hash"].as_str().unwrap_or("").to_string();
-    o.tls.ja3n_hash = raw["ja3n_hash"].as_str().unwrap_or("").to_string();
-    o.tls.ja4 = raw["ja4"].as_str().unwrap_or("").to_string();
-    o.tls.ja4_o = raw["ja4_o"].as_str().unwrap_or("").to_string();
-    o.http2_akamai_fingerprint = raw["akamai_text"].as_str().unwrap_or("").to_string();
-
-    o.sources = Sources {
-        ja3: SERVICE_BROWSERLEAKS.to_string(),
-        ja3n: SERVICE_BROWSERLEAKS.to_string(),
-        ja4: SERVICE_BROWSERLEAKS.to_string(),
-        ja4_o: SERVICE_BROWSERLEAKS.to_string(),
-        http2: SERVICE_BROWSERLEAKS.to_string(),
-        ..Default::default()
-    };
-    o
-}
-
-// ── Merge peet + browserleaks observations ─────────────────────────────
-
-/// Combine a peet-sourced and a browserleaks-sourced Observed into one.
-/// browserleaks takes precedence for JA4, JA3n, JA4_o (FoxIO-faithful);
-/// peet takes precedence for peetprint, header order, sec-ch-ua (browserleaks
-/// does not expose them). JA3 hash and HTTP/2 Akamai come from browserleaks.
-#[cfg(feature = "fingerprint")]
-fn merge_observed(peet: Observed, bl: Observed) -> Observed {
-    let mut merged = peet; // start with peet (peetprint, headers, sec-ch-ua, accept*)
-
-    // Overwrite / fill in browserleaks-sourced metrics.
-    merged.tls.ja3_hash = bl.tls.ja3_hash;
-    merged.tls.ja3n_hash = bl.tls.ja3n_hash;
-    merged.tls.ja4 = bl.tls.ja4;
-    merged.tls.ja4_o = bl.tls.ja4_o;
-    merged.http2_akamai_fingerprint = bl.http2_akamai_fingerprint;
-
-    merged.sources = Sources {
-        ja3: bl.sources.ja3.clone(),
-        ja3n: bl.sources.ja3n.clone(),
-        ja4: bl.sources.ja4.clone(),
-        ja4_o: bl.sources.ja4_o.clone(),
-        peetprint: merged.sources.peetprint.clone(),
-        http2: bl.sources.http2.clone(),
-        headers: merged.sources.headers.clone(),
-    };
-    merged
-}
-
 // ── Test helpers ───────────────────────────────────────────────────────
+//
+// The echo-service response parsers (`extract_peet` / `extract_browserleaks`
+// / `merge_observed`), the endpoint constants, and `split_header` now live
+// in `crates/http/src/fingerprint.rs` (re-exported via `common::*`) so the
+// `ox-browser doctor` subcommand reuses them without copying (issue #109).
+// This file keeps only the test-local orchestration: profile selection,
+// client construction, the live capture flow, and the assertions.
 
 /// Chrome/linux profiles deduplicated by major version. The TLS/HTTP2
 /// fingerprint is per-major, not per-OS, so testing the linux variant of each
