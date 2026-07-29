@@ -57,51 +57,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
 
-      - name: Generate changelog
-        id: changelog
-        run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          if [ -z "$PREV_TAG" ]; then
-            COMMITS=$(git log --pretty=format:"- %s" HEAD)
-          else
-            COMMITS=$(git log --pretty=format:"- %s" ${PREV_TAG}..HEAD)
-          fi
-
-          # Group by conventional commit type
-          FEATURES=$(echo "$COMMITS" | grep -i "^- feat" || true)
-          FIXES=$(echo "$COMMITS" | grep -i "^- fix" || true)
-          OTHER=$(echo "$COMMITS" | grep -iv "^- feat\|^- fix\|^- docs\|^- test\|^- ci\|^- chore" || true)
-
-          {
-            echo "body<<CHANGELOG_EOF"
-            if [ -n "$FEATURES" ]; then
-              echo "### Features"
-              echo "$FEATURES"
-              echo ""
-            fi
-            if [ -n "$FIXES" ]; then
-              echo "### Bug Fixes"
-              echo "$FIXES"
-              echo ""
-            fi
-            if [ -n "$OTHER" ]; then
-              echo "### Other"
-              echo "$OTHER"
-              echo ""
-            fi
-            echo "CHANGELOG_EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create GitHub Release
+      # Attach binaries to the Release created by release-please. The tag was
+      # already pushed (by the App token) and the Release already exists with
+      # release-please's changelog as its body — `tag_name` targets that existing
+      # release and `files` uploads assets without overwriting the body.
+      - name: Attach artifacts to release
         uses: softprops/action-gh-release@v2
         with:
-          body: ${{ steps.changelog.outputs.body }}
+          tag_name: ${{ github.ref_name }}
           files: |
             ox-browser-linux-x86_64/ox-browser-linux-x86_64.tar.gz
             ox-browser-linux-aarch64/ox-browser-linux-aarch64.tar.gz
