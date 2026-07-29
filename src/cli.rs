@@ -60,8 +60,28 @@ pub(crate) fn build_cli_http_client(
     proxy: Option<String>,
     debug: bool,
 ) -> anyhow::Result<HttpClient> {
+    build_http_client_for_profile(resolve_cli_profile(profile)?, proxy, debug)
+}
+
+/// Build a one-shot [`HttpClient`] for an explicit resolved profile. This is
+/// the shared construction seam: `build_cli_http_client` resolves the profile
+/// name and delegates here, and `doctor` calls this directly per Chrome major
+/// (it iterates the profiles that have an embedded reference, so it cannot go
+/// through the name → profile resolution that picks one configured profile).
+///
+/// The point (issue #109): `doctor` MUST build the client through the SAME
+/// `HttpClient::new(HttpConfig { profile, .. })` path the service uses
+/// (`build_http_config` → `HttpClient::new`), not construct its own wreq
+/// client — otherwise it reproduces the very defect it exists to detect
+/// (the artifact under test is not the artifact that ships). Both callers
+/// route through this one function, so the construction cannot diverge.
+pub(crate) fn build_http_client_for_profile(
+    profile: Option<&'static BrowserProfile>,
+    proxy: Option<String>,
+    debug: bool,
+) -> anyhow::Result<HttpClient> {
     let mut cfg = HttpConfig {
-        profile: resolve_cli_profile(profile)?,
+        profile,
         debug,
         ..HttpConfig::default()
     };
