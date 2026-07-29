@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.7](https://github.com/anatolykoptev/ox-browser/compare/v0.8.6...v0.8.7) (2026-07-29)
+
+
+### Added
+
+* **fetch:** method and body on /fetch and the CLI, with retries gated on idempotency ([#126](https://github.com/anatolykoptev/ox-browser/issues/126)) ([75db1b4](https://github.com/anatolykoptev/ox-browser/commit/75db1b43d5983873338411fc74414a0988f93f18))
+
+
+### Fixed
+
+* **twitter:** route client through fleet chrome_emulation seam ([#96](https://github.com/anatolykoptev/ox-browser/issues/96)) ([#134](https://github.com/anatolykoptev/ox-browser/issues/134)) ([76eb7ce](https://github.com/anatolykoptev/ox-browser/commit/76eb7ce259504ea62240b88bae2451aaacabc7df))
+
 ## [0.8.6](https://github.com/anatolykoptev/ox-browser/compare/v0.8.5...v0.8.6) (2026-07-29)
 
 
