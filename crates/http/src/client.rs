@@ -165,8 +165,7 @@ impl HttpClient {
 
     /// Execute a GET request.
     pub async fn get(&self, url: &str) -> Result<HttpResponse> {
-        let req = self.build_request("GET", url, None, None);
-        self.handler.handle(req).await
+        self.request("GET", url, None, None, &[]).await
     }
 
     /// Execute a GET request with extra headers appended after the defaults.
@@ -175,11 +174,7 @@ impl HttpClient {
         url: &str,
         extra_headers: &[(&str, &str)],
     ) -> Result<HttpResponse> {
-        let mut req = self.build_request("GET", url, None, None);
-        for &(k, v) in extra_headers {
-            req.headers.push((k.to_owned(), v.to_owned()));
-        }
-        self.handler.handle(req).await
+        self.request("GET", url, None, None, extra_headers).await
     }
 
     /// Execute a pre-built Request through the middleware chain.
@@ -191,12 +186,43 @@ impl HttpClient {
 
     /// Execute a POST request with a text body and content type.
     pub async fn post(&self, url: &str, body: &str, content_type: &str) -> Result<HttpResponse> {
-        let req = self.build_request(
+        self.request(
             "POST",
             url,
             Some(body.as_bytes().to_vec()),
             Some(content_type),
-        );
+            &[],
+        )
+        .await
+    }
+
+    /// Execute a request with a custom method, optional body, optional
+    /// content type, and extra headers appended after the profile defaults.
+    ///
+    /// This is the general seam — [`get`](Self::get),
+    /// [`get_with_headers`](Self::get_with_headers), and
+    /// [`post`](Self::post) all delegate here. Callers that need a method
+    /// other than GET or POST (PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE)
+    /// use this directly.
+    ///
+    /// `content_type` is added as a `content-type` header ONLY when `body`
+    /// is `Some`. If the caller also passes a `content-type` in
+    /// `extra_headers`, the caller's value takes precedence — strip it from
+    /// `extra_headers` before passing it as `content_type` to avoid a
+    /// duplicate.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn request(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<Vec<u8>>,
+        content_type: Option<&str>,
+        extra_headers: &[(&str, &str)],
+    ) -> Result<HttpResponse> {
+        let mut req = self.build_request(method, url, body, content_type);
+        for &(k, v) in extra_headers {
+            req.headers.push((k.to_owned(), v.to_owned()));
+        }
         self.handler.handle(req).await
     }
 
@@ -371,4 +397,142 @@ pub fn build_profiled_wreq_client(
         Some(proxy_url)
     };
     wreq_transport_core(timeout, max_redirects, emulation.as_ref(), proxy, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::middleware::Request;
+    use std::sync::Mutex;
+
+    /// What the handler received: method, body, content-type.
+    struct Captured {
+        method: String,
+        body: Option<Vec<u8>>,
+        content_type: Option<String>,
+    }
+
+    /// Captures the method, body, and content-type of the request that
+    /// reaches the handler, then returns a 200.
+    struct CapturingHandler {
+        captured: Mutex<Option<Captured>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Handler for CapturingHandler {
+        async fn handle(&self, req: Request) -> Result<HttpResponse> {
+            let ct = req
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                .map(|(_, v)| v.clone());
+            *self.captured.lock().unwrap() = Some(Captured {
+                method: req.method,
+                body: req.body,
+                content_type: ct,
+            });
+            Ok(HttpResponse {
+                status: 200,
+                url: req.url,
+                headers: wreq::header::HeaderMap::new(),
+                body: String::new(),
+            })
+        }
+    }
+
+    fn capture_client() -> (HttpClient, std::sync::Arc<CapturingHandler>) {
+        let h = std::sync::Arc::new(CapturingHandler {
+            captured: Mutex::new(None),
+        });
+        let client = HttpClient::with_handler(h.clone(), HttpConfig::default());
+        (client, h)
+    }
+
+    /// A POST with a body reaches the handler with the correct method,
+    /// body bytes, and content-type (issue #114).
+    #[tokio::test]
+    async fn post_with_body_reaches_handler() {
+        let (client, handler) = capture_client();
+        let body = br#"{"a":1}"#.to_vec();
+        client
+            .request(
+                "POST",
+                "https://example.com/api",
+                Some(body.clone()),
+                Some("application/json"),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(captured.method, "POST");
+        assert_eq!(captured.body.as_deref(), Some(body.as_slice()));
+        assert_eq!(captured.content_type.as_deref(), Some("application/json"));
+    }
+
+    /// A GET with no method/body is byte-identical to the pre-#114 path —
+    /// method is GET, body is None, no content-type header.
+    #[tokio::test]
+    async fn get_default_is_byte_identical() {
+        let (client, handler) = capture_client();
+        client.get("https://example.com").await.unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(captured.method, "GET");
+        assert!(captured.body.is_none(), "no body on default GET");
+        assert!(
+            captured.content_type.is_none(),
+            "no content-type on default GET"
+        );
+    }
+
+    /// `request` with extra headers appends them after the profile defaults.
+    #[tokio::test]
+    async fn request_appends_extra_headers() {
+        struct HeaderCheckHandler;
+        #[async_trait::async_trait]
+        impl Handler for HeaderCheckHandler {
+            async fn handle(&self, req: Request) -> Result<HttpResponse> {
+                assert!(req.header("x-custom").is_some());
+                assert_eq!(req.header("x-custom"), Some("val"));
+                Ok(HttpResponse {
+                    status: 200,
+                    url: req.url,
+                    headers: wreq::header::HeaderMap::new(),
+                    body: String::new(),
+                })
+            }
+        }
+        let client = HttpClient::with_handler(
+            std::sync::Arc::new(HeaderCheckHandler),
+            HttpConfig::default(),
+        );
+        let resp = client
+            .request(
+                "GET",
+                "https://example.com",
+                None,
+                None,
+                &[("x-custom", "val")],
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status, 200);
+    }
+
+    /// `post` delegates to `request` — same body and content-type arrive.
+    #[tokio::test]
+    async fn post_delegates_to_request() {
+        let (client, handler) = capture_client();
+        client
+            .post("https://example.com", "{\"x\":42}", "text/plain")
+            .await
+            .unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(captured.method, "POST");
+        assert_eq!(captured.body.as_deref(), Some(b"{\"x\":42}".as_slice()));
+        assert_eq!(captured.content_type.as_deref(), Some("text/plain"));
+    }
 }

@@ -131,12 +131,20 @@ impl WreqHandler {
         skip_proxy: bool,
     ) -> Result<HttpResponse> {
         let mut builder = match req.method.to_uppercase().as_str() {
+            "GET" => client.get(&req.url),
             "POST" => client.post(&req.url),
             "PUT" => client.put(&req.url),
             "DELETE" => client.delete(&req.url),
             "PATCH" => client.patch(&req.url),
             "HEAD" => client.head(&req.url),
-            _ => client.get(&req.url),
+            other => {
+                // OPTIONS, TRACE, or any other valid HTTP method. wreq's
+                // typed `Method` validates the bytes; an invalid method
+                // surfaces as a request error here.
+                let method = wreq::Method::from_bytes(other.as_bytes())
+                    .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+                client.request(method, &req.url)
+            }
         };
 
         if !skip_proxy {
