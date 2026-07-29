@@ -15,10 +15,22 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::Result;
+use crate::cloudflare::detect_cloudflare;
+use crate::deadline::CallOutcome;
+use crate::error::HttpError;
 use crate::proxy_fallback::PROXY_DIAL_FALLBACK_TOTAL;
+use crate::response::HttpResponse;
 
-/// Total fetch attempts entering the read/fetch path (any outcome).
-pub static FETCH_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// Total read-path attempts entering `read_page_inner` (`/read`, MCP `read`,
+/// CLI `read`). Renamed from `oxbrowser_fetch_total` (issue #128): the old
+/// name said "fetch" but the increment lived in `read_page_inner`, so
+/// `POST /fetch` never touched it — a dashboard built on it looked like it
+/// covered `/fetch` and did not. The fetch path is now covered by the
+/// labelled `oxbrowser_fetch_outcome_total` counter, incremented in the
+/// `/fetch` (and MCP `fetch`) handler — NOT here. These two counters have
+/// no overlap.
+pub static READ_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Fetch attempts that returned a usable HTTP 200 body.
 pub static FETCH_SUCCESS_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -54,9 +66,11 @@ pub static PROXY_ATTACH_INVALID_URL_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// evidence about HTTPS (issue #86; tracking issue ox-browser#90).
 pub static PROXY_DIAL_TOTAL: AtomicU64 = AtomicU64::new(0);
 
-/// Record a fetch attempt (any outcome). Call once per top-level fetch/read.
-pub fn record_fetch() {
-    FETCH_TOTAL.fetch_add(1, Ordering::Relaxed);
+/// Record a read-path attempt entering `read_page_inner` (any outcome).
+/// Call once per top-level `/read` / MCP `read` / CLI `read`. Renamed from
+/// `record_fetch` (issue #128) — see [`READ_TOTAL`].
+pub fn record_read() {
+    READ_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record a successful (HTTP 200, usable body) fetch.
@@ -119,6 +133,146 @@ pub fn record_read_extraction_rejected() {
     READ_EXTRACTION_REJECTED_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
+// ── Outbound in-flight gauge ───────────────────────────────────────────────
+//
+// Issue #128/#139: the mechanism that stops the service accumulating
+// orphaned work is the per-call bound dropping the inner future. The gauge
+// makes "did the abandoned request stop?" answerable from OUTSIDE: a scrape
+// showing in-flight above baseline after a caller disconnect indicates
+// orphaned work surviving its bound. Incremented/decremented only by the
+// `deadline::bounded` seam (via `OutboundGuard`), so a surface that forgets
+// the seam cannot forget the gauge.
+
+/// Outbound fetch/read calls currently in flight (point-in-time, can go up
+/// and down). Incremented on entry to `deadline::bounded` and decremented
+/// on exit — including when the deadline fires and the inner future is
+/// dropped. Covers all six outbound surfaces (the seam is the single
+/// constructor).
+pub static OUTBOUND_INFLIGHT: AtomicU64 = AtomicU64::new(0);
+
+/// Increment the outbound in-flight gauge. Called only by the
+/// `deadline::bounded` seam's `OutboundGuard`.
+pub fn inc_outbound_inflight() {
+    OUTBOUND_INFLIGHT.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Decrement the outbound in-flight gauge. Called only by the
+/// `deadline::bounded` seam's `OutboundGuard` (on drop, including when the
+/// deadline fires).
+pub fn dec_outbound_inflight() {
+    OUTBOUND_INFLIGHT.fetch_sub(1, Ordering::Relaxed);
+}
+
+// ── /fetch outcome counter (labelled) ──────────────────────────────────────
+//
+// Issue #128: `/fetch` was unmetered. This counter is incremented in the
+// `/fetch` (and MCP `fetch`) handler — NOT in `read_page_inner` — labelled
+// by outcome so an operator can see the fetch failure mix (challenge vs
+// upstream vs rate-limited vs the per-call bound) without grepping logs.
+// Each label's doc below says exactly which branch increments it; a counter
+// whose doc overstates what it observes has already bitten this repo
+// (`oxbrowser_fetch_total`).
+
+/// `/fetch` outcome `ok`: the call completed within the deadline and
+/// returned a usable response with NO Cloudflare challenge detected and
+/// status != 429. Incremented in the `/fetch` and MCP `fetch` handlers.
+pub static FETCH_OUTCOME_OK: AtomicU64 = AtomicU64::new(0);
+/// `/fetch` outcome `upstream_error`: the call completed within the deadline
+/// but the upstream failed with a non-CF, non-429 error — a retryable 5xx
+/// surfaced as `RetryableStatus` (after retry exhaust on idempotent
+/// methods), a transport error, a wreq per-attempt timeout, or any other
+/// non-CF `HttpError`. Distinct from `timeout` (the per-call bound fired).
+pub static FETCH_OUTCOME_UPSTREAM_ERROR: AtomicU64 = AtomicU64::new(0);
+/// `/fetch` outcome `challenge`: a Cloudflare challenge was detected —
+/// either `detect_cloudflare` matched the returned response, or the chain
+/// surfaced `HttpError::Cloudflare` (genuine CF markers) or
+/// `HttpError::CloudflareInferred` (a bare 401/403/429/503 reclassified by
+/// quality_check).
+pub static FETCH_OUTCOME_CHALLENGE: AtomicU64 = AtomicU64::new(0);
+/// `/fetch` outcome `rate_limited`: the upstream returned 429. Surfaces as
+/// `Ok(resp{429})` for non-idempotent methods (POST/PATCH, not retried), or
+/// as `Err(RetryableStatus(429))` for idempotent methods after the retry
+/// loop exhausts its attempts.
+pub static FETCH_OUTCOME_RATE_LIMITED: AtomicU64 = AtomicU64::new(0);
+/// `/fetch` outcome `timeout`: the per-call deadline fired
+/// (`CallOutcome::DeadlineExceeded`). This is the bound THIS change
+/// introduced (issue #139) — distinct from a wreq per-attempt timeout
+/// (`HttpError::Timeout`, classified `upstream_error`), which is the
+/// per-attempt transport timeout that multiplies across retries.
+pub static FETCH_OUTCOME_TIMEOUT: AtomicU64 = AtomicU64::new(0);
+
+/// The five `oxbrowser_fetch_outcome_total` label rows, as a `&'static`
+/// slice so [`render`] can borrow them for the labelled sample lines
+/// without a temporary that drops at end-of-statement.
+static FETCH_OUTCOME_ROWS: &[(&str, &AtomicU64)] = &[
+    ("ok", &FETCH_OUTCOME_OK),
+    ("upstream_error", &FETCH_OUTCOME_UPSTREAM_ERROR),
+    ("challenge", &FETCH_OUTCOME_CHALLENGE),
+    ("rate_limited", &FETCH_OUTCOME_RATE_LIMITED),
+    ("timeout", &FETCH_OUTCOME_TIMEOUT),
+];
+
+/// `/fetch` outcome label. One variant per `oxbrowser_fetch_outcome_total`
+/// label; [`classify_fetch_outcome`] is total — every branch of
+/// `CallOutcome<Result<HttpResponse>>` maps to exactly one variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchOutcome {
+    Ok,
+    UpstreamError,
+    Challenge,
+    RateLimited,
+    Timeout,
+}
+
+/// Record a `/fetch` outcome by incrementing the matching labelled counter.
+/// Called in the `/fetch` and MCP `fetch` handlers after the bounded call
+/// resolves.
+pub fn record_fetch_outcome(o: FetchOutcome) {
+    let c = match o {
+        FetchOutcome::Ok => &FETCH_OUTCOME_OK,
+        FetchOutcome::UpstreamError => &FETCH_OUTCOME_UPSTREAM_ERROR,
+        FetchOutcome::Challenge => &FETCH_OUTCOME_CHALLENGE,
+        FetchOutcome::RateLimited => &FETCH_OUTCOME_RATE_LIMITED,
+        FetchOutcome::Timeout => &FETCH_OUTCOME_TIMEOUT,
+    };
+    c.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Classify a bounded `/fetch` result into an outcome label. The mapping is
+/// total and is the single source of truth for which counter increments on
+/// which branch — the `/fetch` and MCP `fetch` handlers both call this so
+/// the classification cannot drift between them.
+///
+/// - `DeadlineExceeded` → `Timeout` (the per-call bound, NOT a wreq
+///   per-attempt timeout).
+/// - `Ok(resp)` with `detect_cloudflare` match → `Challenge`.
+/// - `Ok(resp)` with `status == 429` → `RateLimited`.
+/// - `Ok(resp)` otherwise → `Ok`.
+/// - `Err(Cloudflare | CloudflareInferred)` → `Challenge`.
+/// - `Err(RetryableStatus(429))` → `RateLimited` (idempotent retry exhaust).
+/// - `Err(_)` otherwise → `UpstreamError`.
+pub fn classify_fetch_outcome(outcome: &CallOutcome<Result<HttpResponse>>) -> FetchOutcome {
+    match outcome {
+        CallOutcome::DeadlineExceeded { .. } => FetchOutcome::Timeout,
+        CallOutcome::Ok(Ok(resp)) => {
+            if detect_cloudflare(resp).is_some() {
+                FetchOutcome::Challenge
+            } else if resp.status == 429 {
+                FetchOutcome::RateLimited
+            } else {
+                FetchOutcome::Ok
+            }
+        }
+        CallOutcome::Ok(Err(e)) => match e {
+            HttpError::Cloudflare(_, _, _) | HttpError::CloudflareInferred(_, _) => {
+                FetchOutcome::Challenge
+            }
+            HttpError::RetryableStatus(429) => FetchOutcome::RateLimited,
+            _ => FetchOutcome::UpstreamError,
+        },
+    }
+}
+
 /// One counter row in the registry: metric name, help text, current value.
 struct Counter {
     name: &'static str,
@@ -137,6 +291,20 @@ struct Gauge {
     name: &'static str,
     help: &'static str,
     value: u64,
+}
+
+/// A labelled counter: one `# HELP` / `# TYPE counter` header, then one
+/// sample line per `(label_value, counter)` row, emitted as
+/// `name{<label>="<value>"} <n>`. The label dimension name (e.g.
+/// `outcome`) is fixed in the help text — the renderer only needs the
+/// value, so it is not carried per-row. Mirrors the hand-rolled
+/// convention (no `prometheus` crate); the only addition over [`Counter`]
+/// is the `{label="value"}` suffix on the sample line.
+struct LabelledCounter {
+    name: &'static str,
+    help: &'static str,
+    label: &'static str,
+    rows: &'static [(&'static str, &'static AtomicU64)],
 }
 
 /// Cookie-cache entry count at scrape time (point-in-time, can shrink).
@@ -207,7 +375,10 @@ pub static FRONTIER_DROPPED_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// rejection rate regardless of which stage caught it — the header stage is
 /// an optimisation, the stream stage is the guarantee, and both indicate the
 /// same condition: an origin served a body larger than the configured cap.
-/// Compare against `oxbrowser_fetch_total` to measure the cap-rejection rate.
+/// Compare against `oxbrowser_read_total` to measure the read-path
+/// cap-rejection rate (body_cap applies to the page-fetch surface, which
+/// covers both the read path and `/fetch`; the read counter is the closer
+/// denominator available without double-counting).
 pub static BODY_CAP_REJECTIONS_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Times the post-extraction sanity gate rejected the extracted subtree and
@@ -219,7 +390,9 @@ pub static BODY_CAP_REJECTIONS_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// content. Each bump is also a `tracing::info!` with `reason=
 /// extraction_rejected_low_text_ratio`, and the response carries the same
 /// token in `ReadOutput::extraction_note`. Compare against
-/// `oxbrowser_fetch_total` for the rejection rate; a sustained non-zero
+/// `oxbrowser_read_total` for the rejection rate (renamed from
+/// `oxbrowser_fetch_total` in issue #128 — the extraction gate is on the
+/// read path only); a sustained non-zero
 /// rate on a given route means the extractor is mis-selecting on that site
 /// shape (which the fallback masks, so this counter is the only signal).
 pub static READ_EXTRACTION_REJECTED_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -241,13 +414,13 @@ pub fn set_gauge(gauge: &AtomicU64, value: u64) {
 pub fn render() -> String {
     let counters = [
         Counter {
-            name: "oxbrowser_fetch_total",
-            help: "Total read-path attempts entering read_page_inner (/read and MCP read).",
-            value: FETCH_TOTAL.load(Ordering::Relaxed),
+            name: "oxbrowser_read_total",
+            help: "Total read-path attempts entering read_page_inner (/read, MCP read, CLI read). Renamed from oxbrowser_fetch_total (issue #128) — does NOT cover /fetch; use oxbrowser_fetch_outcome_total for the fetch path.",
+            value: READ_TOTAL.load(Ordering::Relaxed),
         },
         Counter {
             name: "oxbrowser_fetch_success_total",
-            help: "Fetch/read attempts that returned a usable HTTP 200 body.",
+            help: "Read-path attempts that returned a usable HTTP 200 body (incremented in read_page_inner).",
             value: FETCH_SUCCESS_TOTAL.load(Ordering::Relaxed),
         },
         Counter {
@@ -302,7 +475,22 @@ pub fn render() -> String {
         },
     ];
 
+    // /fetch outcome — labelled by `outcome`. Incremented in the /fetch and
+    // MCP fetch handlers (NOT in read_page_inner). One counter, five labels;
+    // each label's branch is documented on the matching FETCH_OUTCOME_* static.
+    let labelled = [LabelledCounter {
+        name: "oxbrowser_fetch_outcome_total",
+        help: "/fetch (and MCP fetch) outcomes, labelled by outcome. Incremented in the fetch handler, not the read pipeline. Labels: ok, upstream_error, challenge, rate_limited, timeout (the per-call bound, distinct from a wreq per-attempt timeout).",
+        label: "outcome",
+        rows: FETCH_OUTCOME_ROWS,
+    }];
+
     let gauges = [
+        Gauge {
+            name: "oxbrowser_outbound_inflight",
+            help: "Outbound fetch/read calls currently in flight (point-in-time, can go down). Inc/dec by the deadline::bounded seam; a value above baseline after a caller disconnect indicates orphaned work surviving its bound (issues #128/#139).",
+            value: OUTBOUND_INFLIGHT.load(Ordering::Relaxed),
+        },
         Gauge {
             name: "oxbrowser_cookie_cache_entries",
             help: "Cookie-cache entry count at scrape time (point-in-time, can shrink).",
@@ -365,6 +553,26 @@ pub fn render() -> String {
         out.push_str(&c.value.to_string());
         out.push('\n');
     }
+    for lc in &labelled {
+        out.push_str("# HELP ");
+        out.push_str(lc.name);
+        out.push(' ');
+        out.push_str(lc.help);
+        out.push('\n');
+        out.push_str("# TYPE ");
+        out.push_str(lc.name);
+        out.push_str(" counter\n");
+        for (value, counter) in lc.rows {
+            out.push_str(lc.name);
+            out.push('{');
+            out.push_str(lc.label);
+            out.push_str("=\"");
+            out.push_str(value);
+            out.push_str("\"} ");
+            out.push_str(&counter.load(Ordering::Relaxed).to_string());
+            out.push('\n');
+        }
+    }
     for g in &gauges {
         out.push_str("# HELP ");
         out.push_str(g.name);
@@ -385,13 +593,21 @@ pub fn render() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
 
     /// Gauge-publishing tests read/write the shared process-global `PROXY_DISABLED`
     /// static. When run in parallel they race on that atomic, producing flaky
     /// assertions. This mutex serializes them so the gauge value is deterministic
     /// within each test — mirrors the T2 render_cache gauge test pattern.
-    static GAUGE_TEST_LOCK: Mutex<()> = Mutex::new(());
+    ///
+    /// `tokio::sync::Mutex` (not `std::sync`): the two `bounded` gauge tests
+    /// hold the guard across an `.await` on the in-flight gauge, and a
+    /// `std::sync::MutexGuard` is not `Send` — clippy `await_holding_lock`
+    /// flags it, and on a single-threaded runtime a second task blocking on
+    /// the same lock would deadlock rather than yield. The sync tests use
+    /// `blocking_lock()` (the documented way to acquire a tokio mutex from
+    /// non-async code).
+    static GAUGE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
     #[test]
     fn render_emits_gauge_series_in_prometheus_format() {
@@ -414,7 +630,7 @@ mod tests {
     fn render_emits_all_series_in_prometheus_format() {
         let body = render();
         for series in [
-            "oxbrowser_fetch_total",
+            "oxbrowser_read_total",
             "oxbrowser_fetch_success_total",
             "oxbrowser_proxy_used_total",
             "oxbrowser_proxy_402_total",
@@ -436,7 +652,28 @@ mod tests {
                 "missing sample line for {series}"
             );
         }
+        // The labelled /fetch outcome counter: one TYPE line, five labelled
+        // sample lines.
+        assert!(
+            body.contains("# TYPE oxbrowser_fetch_outcome_total counter"),
+            "missing TYPE line for oxbrowser_fetch_outcome_total: {body}"
+        );
+        for label in [
+            "ok",
+            "upstream_error",
+            "challenge",
+            "rate_limited",
+            "timeout",
+        ] {
+            assert!(
+                body.lines().any(|l| l.starts_with(&format!(
+                    "oxbrowser_fetch_outcome_total{{outcome=\"{label}\"}} "
+                ))),
+                "missing labelled sample line for outcome={label}: {body}"
+            );
+        }
         for series in [
+            "oxbrowser_outbound_inflight",
             "oxbrowser_cookie_cache_entries",
             "oxbrowser_render_cache_entries",
             "oxbrowser_crawler_dedup_entries",
@@ -455,9 +692,9 @@ mod tests {
 
     #[test]
     fn record_helpers_increment_their_series() {
-        let before = FETCH_TOTAL.load(Ordering::Relaxed);
-        record_fetch();
-        assert_eq!(FETCH_TOTAL.load(Ordering::Relaxed), before + 1);
+        let before = READ_TOTAL.load(Ordering::Relaxed);
+        record_read();
+        assert_eq!(READ_TOTAL.load(Ordering::Relaxed), before + 1);
     }
 
     /// Verify render() reads solver_negcache::SOLVER_GIVEUP_TOTAL (the live counter),
@@ -488,7 +725,7 @@ mod tests {
     /// render() emits `oxbrowser_proxy_disabled 1`; with 0, it emits `… 0`.
     #[test]
     fn render_emits_proxy_disabled_gauge() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.blocking_lock();
 
         // Proxy disabled → gauge 1 → render shows "oxbrowser_proxy_disabled 1"
         set_gauge(&PROXY_DISABLED, 1);
@@ -520,7 +757,7 @@ mod tests {
     /// `config::build_cookie_provider` at startup.
     #[test]
     fn render_emits_solver_configured_gauge() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.blocking_lock();
 
         // Real solver configured → gauge 1
         set_gauge(&SOLVER_CONFIGURED, 1);
@@ -552,7 +789,7 @@ mod tests {
     /// insert and after `evict_expired` sweeps stale domains.
     #[test]
     fn render_emits_ratelimit_domains_gauge() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.blocking_lock();
 
         // One domain tracked → gauge 1
         set_gauge(&RATELIMIT_DOMAINS, 1);
@@ -584,7 +821,7 @@ mod tests {
     /// download by `ox_media::download::check_quota`.
     #[test]
     fn render_emits_media_tmpfs_bytes_gauge() {
-        let _guard = GAUGE_TEST_LOCK.lock().unwrap();
+        let _guard = GAUGE_TEST_LOCK.blocking_lock();
 
         set_gauge(&MEDIA_TMPFS_BYTES, 1_500_000_000);
         let body = render();
@@ -600,5 +837,129 @@ mod tests {
 
         // Reset to avoid leaking state into other tests.
         set_gauge(&MEDIA_TMPFS_BYTES, 0);
+    }
+
+    // ── /fetch outcome classifier tests (issue #128) ──────────────────────
+
+    use crate::cloudflare::ChallengeType;
+    use crate::deadline::CallOutcome;
+    use crate::error::HttpError;
+    use crate::response::HttpResponse;
+    use std::time::Duration;
+    use wreq::header::HeaderMap;
+
+    fn ok_resp(status: u16) -> HttpResponse {
+        HttpResponse {
+            status,
+            url: "https://x.test".into(),
+            headers: HeaderMap::new(),
+            body: String::new(),
+        }
+    }
+
+    #[test]
+    fn classify_ok_response() {
+        let outcome: CallOutcome<Result<HttpResponse>> = CallOutcome::Ok(Ok(ok_resp(200)));
+        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::Ok);
+    }
+
+    #[test]
+    fn classify_deadline_exceeded_as_timeout() {
+        let outcome: CallOutcome<Result<HttpResponse>> = CallOutcome::DeadlineExceeded { secs: 8 };
+        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::Timeout);
+    }
+
+    #[test]
+    fn classify_429_response_as_rate_limited() {
+        let outcome: CallOutcome<Result<HttpResponse>> = CallOutcome::Ok(Ok(ok_resp(429)));
+        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::RateLimited);
+    }
+
+    #[test]
+    fn classify_retryable_429_error_as_rate_limited() {
+        let outcome: CallOutcome<Result<HttpResponse>> =
+            CallOutcome::Ok(Err(HttpError::RetryableStatus(429)));
+        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::RateLimited);
+    }
+
+    #[test]
+    fn classify_cloudflare_error_as_challenge() {
+        let outcome: CallOutcome<Result<HttpResponse>> = CallOutcome::Ok(Err(
+            HttpError::Cloudflare(ChallengeType::JsChallenge, 403, "ray-id".into()),
+        ));
+        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::Challenge);
+    }
+
+    #[test]
+    fn classify_inferred_cloudflare_as_challenge() {
+        let outcome: CallOutcome<Result<HttpResponse>> = CallOutcome::Ok(Err(
+            HttpError::CloudflareInferred(403, Box::new(ok_resp(403))),
+        ));
+        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::Challenge);
+    }
+
+    #[test]
+    fn classify_generic_error_as_upstream_error() {
+        let outcome: CallOutcome<Result<HttpResponse>> =
+            CallOutcome::Ok(Err(HttpError::Timeout(Duration::from_secs(20))));
+        assert_eq!(
+            classify_fetch_outcome(&outcome),
+            FetchOutcome::UpstreamError
+        );
+    }
+
+    #[test]
+    fn classify_5xx_retryable_as_upstream_error() {
+        let outcome: CallOutcome<Result<HttpResponse>> =
+            CallOutcome::Ok(Err(HttpError::RetryableStatus(503)));
+        assert_eq!(
+            classify_fetch_outcome(&outcome),
+            FetchOutcome::UpstreamError
+        );
+    }
+
+    // ── in-flight gauge test (issue #128/#139) ────────────────────────────
+
+    /// `bounded` increments the in-flight gauge on entry and decrements on
+    /// exit — including when the deadline fires. This test verifies the
+    /// gauge returns to its baseline after a bounded call completes, so a
+    /// scrape showing in-flight above baseline after a caller disconnect
+    /// indicates orphaned work surviving its bound.
+    ///
+    /// Serialized with `GAUGE_TEST_LOCK` because the gauge is a global
+    /// atomic and parallel `bounded` calls from the deadline-exceeded test
+    /// would race the baseline read.
+    #[tokio::test]
+    async fn outbound_inflight_gauge_returns_to_baseline_after_bounded_call() {
+        let _guard = GAUGE_TEST_LOCK.lock().await;
+        let baseline = OUTBOUND_INFLIGHT.load(Ordering::Relaxed);
+        let outcome: CallOutcome<u32> =
+            crate::deadline::bounded(Duration::from_secs(5), async { 42 }).await;
+        assert!(matches!(outcome, CallOutcome::Ok(42)));
+        assert_eq!(
+            OUTBOUND_INFLIGHT.load(Ordering::Relaxed),
+            baseline,
+            "gauge must return to baseline after call completes"
+        );
+    }
+
+    /// The gauge must also decrement when the deadline fires (the inner
+    /// future is dropped) — the orphaned-work detection depends on it.
+    ///
+    /// Serialized with `GAUGE_TEST_LOCK` — same reason as the ok-path test.
+    #[tokio::test]
+    async fn outbound_inflight_gauge_decrements_on_deadline_exceeded() {
+        let _guard = GAUGE_TEST_LOCK.lock().await;
+        let baseline = OUTBOUND_INFLIGHT.load(Ordering::Relaxed);
+        let outcome: CallOutcome<()> = crate::deadline::bounded(Duration::from_millis(10), async {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        })
+        .await;
+        assert!(matches!(outcome, CallOutcome::DeadlineExceeded { .. }));
+        assert_eq!(
+            OUTBOUND_INFLIGHT.load(Ordering::Relaxed),
+            baseline,
+            "gauge must return to baseline even when deadline fires"
+        );
     }
 }

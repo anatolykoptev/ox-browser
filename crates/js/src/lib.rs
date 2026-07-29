@@ -210,7 +210,7 @@ mod tests {
         assert!(ct.starts_with("text/plain"), "content-type was {ct}");
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let body = String::from_utf8_lossy(&body);
-        assert!(body.contains("# TYPE oxbrowser_fetch_total counter"));
+        assert!(body.contains("# TYPE oxbrowser_read_total counter"));
         assert!(body.contains("oxbrowser_proxy_dial_fallback_total"));
     }
 

@@ -19,6 +19,10 @@ pub struct ReadArgs {
     pub proxy: Option<String>,
     pub debug: bool,
     pub json: bool,
+    /// Per-call deadline in seconds (`--timeout`). `None` → seam default;
+    /// `Some(s)` → clamped to `[1, MAX_CALL_TIMEOUT_SECS]`. Bounds the
+    /// whole read pipeline, not one attempt (issue #139).
+    pub timeout: Option<u64>,
 }
 
 /// Format strings accepted by `--format`. Mirrors the set
@@ -47,6 +51,7 @@ pub fn build_read_params(args: &ReadArgs) -> Result<ReadParams, String> {
         url: args.url.clone(),
         format: args.format.clone(),
         max_length: args.max_length,
+        timeout_secs: args.timeout,
     })
 }
 
@@ -143,11 +148,29 @@ mod tests {
             proxy: None,
             debug: false,
             json: false,
+            timeout: None,
         };
         let p = build_read_params(&args).unwrap();
         assert_eq!(p.url, "https://example.com/x");
         assert_eq!(p.format, "markdown");
         assert_eq!(p.max_length, 1234);
+        assert_eq!(p.timeout_secs, None);
+    }
+
+    #[test]
+    fn build_read_params_preserves_timeout() {
+        let args = ReadArgs {
+            url: "https://example.com/x".into(),
+            format: "markdown".into(),
+            max_length: 0,
+            profile: None,
+            proxy: None,
+            debug: false,
+            json: false,
+            timeout: Some(3),
+        };
+        let p = build_read_params(&args).unwrap();
+        assert_eq!(p.timeout_secs, Some(3));
     }
 
     #[test]
@@ -160,6 +183,7 @@ mod tests {
             proxy: None,
             debug: false,
             json: false,
+            timeout: None,
         };
         assert!(build_read_params(&args).is_err());
     }

@@ -10,14 +10,12 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::HttpClient;
 use crate::content::{self, ContentFormat, ReadOutput, ReadParams};
+use crate::deadline::{CallOutcome, bounded, resolve_timeout};
 use crate::render_cache::RenderMode;
-
-/// Overall timeout for the entire read pipeline (fetch + extract).
-const PIPELINE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum chrome-render response body (50 MB — a rendered page DOM is the
 /// same class as the main fetch path's 50 MB cap). The chrome-render service
@@ -37,24 +35,28 @@ pub type SiteHandler = Arc<
         + Sync,
 >;
 
-/// Execute the full read pipeline with a 30s overall timeout.
+/// Execute the full read pipeline bounded by the caller-supplied per-call
+/// deadline (`params.timeout_secs`, resolved via [`resolve_timeout`]). The
+/// bound wraps the WHOLE pipeline — fetch + extract + solver escalation +
+/// rate-limit wait — not one attempt, so the retry loop's
+/// `retries × per-attempt` multiplication (issue #133's ~83 s) is bounded
+/// as a unit (issue #139). On elapsed the inner future is dropped,
+/// cancelling the in-flight request; the in-flight gauge (managed by
+/// [`bounded`]) decrements with it.
 pub async fn read_page(
     http: &HttpClient,
     params: &ReadParams,
     site_handlers: &[SiteHandler],
 ) -> ReadOutput {
-    match tokio::time::timeout(
-        PIPELINE_TIMEOUT,
-        read_page_inner(http, params, site_handlers),
-    )
-    .await
-    {
-        Ok(output) => output,
-        Err(_) => build_error_output(
+    let deadline = resolve_timeout(params.timeout_secs);
+    let secs = deadline.as_secs();
+    match bounded(deadline, read_page_inner(http, params, site_handlers)).await {
+        CallOutcome::Ok(output) => output,
+        CallOutcome::DeadlineExceeded { .. } => build_error_output(
             params,
             "direct",
-            PIPELINE_TIMEOUT.as_millis() as u64,
-            "read pipeline timeout",
+            secs * 1000,
+            &format!("read pipeline deadline exceeded ({secs}s per-call bound)"),
         ),
     }
 }
@@ -65,7 +67,7 @@ async fn read_page_inner(
     site_handlers: &[SiteHandler],
 ) -> ReadOutput {
     let start = Instant::now();
-    crate::metrics::record_fetch();
+    crate::metrics::record_read();
     let format = ContentFormat::from_param(&params.format);
 
     // External site-specific handlers (injected to avoid circular deps).

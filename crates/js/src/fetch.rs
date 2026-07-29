@@ -6,7 +6,9 @@ use std::time::Instant;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use ox_http::deadline::{CallOutcome, bounded, resolve_timeout};
 use ox_http::detect_cloudflare;
+use ox_http::metrics::{classify_fetch_outcome, record_fetch_outcome};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -40,7 +42,13 @@ pub struct FetchRequest {
     pub content_type: Option<String>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    /// Timeout in seconds. If not set, uses server config default.
+    /// Per-call deadline in seconds. `None` → the seam default
+    /// (`deadline::DEFAULT_CALL_TIMEOUT_SECS`); `Some(s)` → clamped to
+    /// `[1, deadline::MAX_CALL_TIMEOUT_SECS]`. Bounds the WHOLE call
+    /// (retry loop + solver escalation + rate-limit wait), not one
+    /// attempt — issue #139. Same field/name/units/ceiling as `/read`'s
+    /// `timeout_secs`, the MCP `fetch`/`read` tools, and the CLI
+    /// `--timeout` flag.
     pub timeout: Option<u64>,
 }
 
@@ -118,18 +126,32 @@ pub async fn fetch(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    match state
-        .http_client
-        .request(
+    // Bound the WHOLE call (retry loop + solver escalation + rate-limit
+    // wait), not one attempt — issue #139. The deadline is caller-supplied
+    // and therefore attacker-influenced, so resolve_timeout clamps it to
+    // the ceiling. On elapsed the inner future is dropped, cancelling the
+    // in-flight request; the in-flight gauge (managed by `bounded`)
+    // decrements with it.
+    let deadline = resolve_timeout(req.timeout);
+    let outcome = bounded(
+        deadline,
+        state.http_client.request(
             &method,
             &req.url,
             body_bytes,
             content_type.as_deref(),
             &extra_refs,
-        )
-        .await
-    {
-        Ok(resp) => {
+        ),
+    )
+    .await;
+
+    // /fetch outcome counter (issue #128) — incremented in the handler,
+    // NOT in the read pipeline. The classifier is the single source of
+    // truth for which label fires on which branch.
+    record_fetch_outcome(classify_fetch_outcome(&outcome));
+
+    match outcome {
+        CallOutcome::Ok(Ok(resp)) => {
             let cf = detect_cloudflare(&resp);
             let cf_detected = cf.is_some();
             let cf_type = cf.map(|c| c.challenge_type.to_string());
@@ -153,7 +175,7 @@ pub async fn fetch(
                 }),
             )
         }
-        Err(e) => (
+        CallOutcome::Ok(Err(e)) => (
             StatusCode::BAD_GATEWAY,
             Json(FetchResponse {
                 status: 0,
@@ -163,6 +185,22 @@ pub async fn fetch(
                 cf_type: None,
                 elapsed_ms: start.elapsed().as_millis() as u64,
                 error: Some(e.to_string()),
+            }),
+        ),
+        // The per-call bound fired — distinct from an upstream failure
+        // (502): 504 Gateway Timeout, with an error string naming the
+        // bound so a caller can tell "I bounded this" from "the site
+        // failed" (issue #139).
+        CallOutcome::DeadlineExceeded { secs } => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(FetchResponse {
+                status: 0,
+                headers: HashMap::new(),
+                body: String::new(),
+                cf_detected: false,
+                cf_type: None,
+                elapsed_ms: start.elapsed().as_millis() as u64,
+                error: Some(format!("deadline exceeded ({secs}s per-call bound)")),
             }),
         ),
     }

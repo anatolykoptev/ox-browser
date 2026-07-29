@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use ox_core::{Browser, BrowserConfig};
 use ox_http::StaticPool;
+use ox_http::deadline::{CallOutcome, bounded, resolve_timeout};
 
 use crate::cli::resolve_cli_profile;
 use crate::config;
@@ -30,6 +31,10 @@ pub struct FetchArgs {
     /// Content-Type for the body. Defaults to `application/json` when a
     /// body is present. Ignored when no body.
     pub content_type: Option<String>,
+    /// Per-call deadline in seconds (`--timeout`). `None` → seam default;
+    /// `Some(s)` → clamped to `[1, MAX_CALL_TIMEOUT_SECS]`. Bounds the
+    /// whole call, not one attempt (issue #139).
+    pub timeout: Option<u64>,
 }
 
 /// Run the `fetch` subcommand.
@@ -84,9 +89,22 @@ pub async fn run(args: FetchArgs) -> anyhow::Result<()> {
     };
 
     let browser = Browser::new(cfg)?;
-    let page = browser
-        .request(&method, &args.url, body_bytes, content_type.as_deref())
-        .await?;
+    // Bound the whole call (retry loop + solver escalation + rate-limit
+    // wait), not one attempt — issue #139. Browser::request routes through
+    // HttpClient::request, so the same seam bounds the CLI as the service.
+    let deadline = resolve_timeout(args.timeout);
+    let page = match bounded(
+        deadline,
+        browser.request(&method, &args.url, body_bytes, content_type.as_deref()),
+    )
+    .await
+    {
+        CallOutcome::Ok(Ok(page)) => page,
+        CallOutcome::Ok(Err(e)) => return Err(e.into()),
+        CallOutcome::DeadlineExceeded { secs } => {
+            anyhow::bail!("deadline exceeded ({secs}s per-call bound)");
+        }
+    };
 
     if let Some(selector) = args.css {
         let sel = page.select(&selector);

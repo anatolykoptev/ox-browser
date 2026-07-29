@@ -20,6 +20,7 @@ fn params(url: &str) -> ReadParams {
         url: url.to_owned(),
         format: "text".into(),
         max_length: 0,
+        timeout_secs: None,
     }
 }
 
@@ -102,6 +103,7 @@ fn truncation_applied_when_max_length_set() {
         url: "https://x.com".into(),
         format: "text".into(),
         max_length: 50,
+        timeout_secs: None,
     };
     let out = build_output(ext, &p, "direct", 0);
     assert!(out.content.len() <= 55);
@@ -390,6 +392,7 @@ async fn cli_and_api_paths_produce_same_read_output() {
         url: "https://example.com/article".into(),
         format: "markdown".into(),
         max_length: 0,
+        timeout_secs: None,
     };
     // API construction: serde-deserialise JSON, as axum's `Json<ReadParams>`
     // does in the /read handler. The default format is "text" (content.rs).
@@ -422,6 +425,7 @@ async fn read_format_mapping_is_discriminating() {
         url: url.into(),
         format: fmt.into(),
         max_length: 0,
+        timeout_secs: None,
     };
 
     let md = read_page_inner(&http, &mk("markdown"), &[]).await;
@@ -478,4 +482,164 @@ async fn read_format_mapping_is_discriminating() {
         html.content, text.content,
         "html and text output must differ"
     );
+}
+
+// ─── DEADLINE TESTS (issue #139) ─────────────────────────────────────────────
+
+/// Handler that sleeps for the given duration before responding. Used to
+/// trigger the per-call deadline in `read_page` (which wraps
+/// `read_page_inner` with `deadline::bounded`).
+struct SlowHandler {
+    delay: Duration,
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Handler for SlowHandler {
+    async fn handle(&self, req: Request) -> Result<HttpResponse> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(self.delay).await;
+        Ok(HttpResponse {
+            status: 200,
+            url: req.url,
+            headers: HeaderMap::new(),
+            body: "<html><body>content</body></html>".into(),
+        })
+    }
+}
+
+/// `read_page` with `timeout_secs: Some(1)` against a handler that sleeps
+/// 10 s MUST return an error output whose `elapsed_ms` is ~1 s (the bound
+/// fired), NOT ~10 s (the handler completed). This is the RED test for the
+/// per-call deadline: on the old code (no `timeout_secs` field, fixed
+/// `PIPELINE_TIMEOUT = 30 s`), the handler sleeps 10 s and completes
+/// successfully — `out.error` is `None` and `elapsed_ms` ≈ 10_000.
+///
+/// The mutation probe: change `read_page` to ignore `params.timeout_secs`
+/// (e.g. revert to a fixed 30 s) and this test goes RED — `out.error` is
+/// `None` and `elapsed_ms` far exceeds 2_000.
+#[tokio::test]
+async fn read_page_deadline_fires_within_bound() {
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let handler: Arc<dyn Handler> = Arc::new(SlowHandler {
+        delay: Duration::from_secs(10),
+        calls: handler_calls.clone(),
+    });
+    let http = HttpClient::with_handler(handler, config_with(None, None));
+
+    let p = ReadParams {
+        url: "https://slow.test/page".into(),
+        format: "text".into(),
+        max_length: 0,
+        timeout_secs: Some(1),
+    };
+
+    let out = read_page(&http, &p, &[]).await;
+
+    // The bound fired → error output.
+    assert!(out.error.is_some(), "expected deadline error, got success");
+    assert!(
+        out.error.as_deref().unwrap().contains("deadline"),
+        "error must mention deadline; got: {:?}",
+        out.error
+    );
+    // elapsed_ms should be ~1 s (the bound), NOT ~10 s (the handler).
+    // Allow generous slack for scheduler latency on a loaded CI box.
+    assert!(
+        out.elapsed_ms < 3_000,
+        "deadline should fire at ~1s, got elapsed_ms={}",
+        out.elapsed_ms
+    );
+}
+
+/// `read_page` with `timeout_secs: None` (the default) against a fast
+/// handler MUST complete successfully — the default bound (8 s) does not
+/// fire on a sub-millisecond response. This is the byte-identical
+/// no-field test: a caller that omits `timeout_secs` gets the same
+/// successful behavior as before the field existed (the default is
+/// generous enough not to interfere with fast responses).
+#[tokio::test]
+async fn read_page_default_timeout_does_not_fire_on_fast_response() {
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let handler: Arc<dyn Handler> = Arc::new(OkHandler {
+        calls: handler_calls.clone(),
+    });
+    let http = HttpClient::with_handler(handler, config_with(None, None));
+
+    let p = ReadParams {
+        url: "https://fast.test/page".into(),
+        format: "text".into(),
+        max_length: 0,
+        timeout_secs: None,
+    };
+
+    let out = read_page(&http, &p, &[]).await;
+
+    assert!(
+        out.error.is_none(),
+        "expected success, got error: {:?}",
+        out.error
+    );
+    assert_eq!(handler_calls.load(Ordering::SeqCst), 1);
+    assert!(!out.content.is_empty());
+}
+
+/// `read_page` with `timeout_secs: Some(0)` MUST clamp up to 1 s (not
+/// reject every request), so a fast handler still completes. This is the
+/// ceiling-clamp test: `resolve_timeout(Some(0))` → 1 s, not 0 s.
+#[tokio::test]
+async fn read_page_timeout_zero_clamps_to_one_sec() {
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let handler: Arc<dyn Handler> = Arc::new(OkHandler {
+        calls: handler_calls.clone(),
+    });
+    let http = HttpClient::with_handler(handler, config_with(None, None));
+
+    let p = ReadParams {
+        url: "https://zero.test/page".into(),
+        format: "text".into(),
+        max_length: 0,
+        timeout_secs: Some(0),
+    };
+
+    let out = read_page(&http, &p, &[]).await;
+
+    // A 0 s deadline clamped to 1 s should NOT fire on a fast handler.
+    assert!(
+        out.error.is_none(),
+        "0s should clamp to 1s, not reject; got error: {:?}",
+        out.error
+    );
+    assert_eq!(handler_calls.load(Ordering::SeqCst), 1);
+}
+
+/// `read_page` with `timeout_secs: Some(600)` MUST clamp down to the
+/// ceiling (60 s), not use 600 s. Against a handler that sleeps 2 s, the
+/// call completes successfully — the ceiling (60 s) does not fire. This
+/// is the upper-clamp test: `resolve_timeout(Some(600))` → 60 s, not 600 s.
+#[tokio::test]
+async fn read_page_timeout_above_ceiling_clamps_down() {
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let handler: Arc<dyn Handler> = Arc::new(SlowHandler {
+        delay: Duration::from_millis(100),
+        calls: handler_calls.clone(),
+    });
+    let http = HttpClient::with_handler(handler, config_with(None, None));
+
+    let p = ReadParams {
+        url: "https://ceiling.test/page".into(),
+        format: "text".into(),
+        max_length: 0,
+        timeout_secs: Some(600),
+    };
+
+    let out = read_page(&http, &p, &[]).await;
+
+    // 600 s clamped to 60 s should NOT fire on a 100 ms response.
+    assert!(
+        out.error.is_none(),
+        "600s should clamp to 60s ceiling; got error: {:?}",
+        out.error
+    );
+    assert_eq!(handler_calls.load(Ordering::SeqCst), 1);
 }
