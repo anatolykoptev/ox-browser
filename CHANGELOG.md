@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.5](https://github.com/anatolykoptev/ox-browser/compare/v0.8.4...v0.8.5) (2026-07-29)
+
+
+### Added
+
+* **doctor:** move the fingerprint oracle into the shipped binary ([#121](https://github.com/anatolykoptev/ox-browser/issues/121)) ([ffb5877](https://github.com/anatolykoptev/ox-browser/commit/ffb5877145364c3ad31ab39bd4f8e642702e3217))
+
+
+### Fixed
+
+* **http:** enforce a response body ceiling ([#118](https://github.com/anatolykoptev/ox-browser/issues/118)) ([38732f7](https://github.com/anatolykoptev/ox-browser/commit/38732f7599dffc1f85eefd23de8e1f28f0d7b41c))
+
 ## [0.8.4](https://github.com/anatolykoptev/ox-browser/compare/v0.8.3...v0.8.4) (2026-07-29)
 
 
