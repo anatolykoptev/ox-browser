@@ -97,68 +97,7 @@ impl HttpClient {
             ))
         };
 
-        let mut middlewares: Vec<MiddlewareFn> = Vec::new();
-
-        // Outermost: SSRF protection (before any other processing).
-        middlewares.push(ssrf_middleware());
-
-        // Logging (only when debug enabled).
-        if config.debug {
-            middlewares.push(logging_middleware());
-        }
-
-        // Rate limiting (before retry, so retries also respect limits).
-        if let Some(ref limiter) = config.rate_limiter {
-            middlewares.push(rate_limit_middleware(Arc::clone(limiter)));
-        }
-
-        // Retry with exponential backoff.
-        if let Some(ref retry_cfg) = config.retry {
-            middlewares.push(retry_middleware(retry_cfg.clone()));
-        }
-
-        // CF solver (between retry and cloudflare_detect).
-        // Use the shared negcache when available so read_pipeline can check is_blocked()
-        // and set RenderMode::GiveUp instead of retrying doomed solve attempts.
-        if let (Some(provider), Some(cache)) = (&config.cookie_provider, &config.cookie_cache) {
-            if let Some(ref nc) = config.solver_negcache {
-                middlewares.push(solver_middleware_with_negcache(
-                    Arc::clone(provider),
-                    Arc::clone(cache),
-                    Arc::clone(nc),
-                ));
-            } else {
-                middlewares.push(solver_middleware(Arc::clone(provider), Arc::clone(cache)));
-            }
-        }
-
-        // Residential proxy retry (between solver and cloudflare_detect).
-        // On CF error, retries once with residential IP before falling back to solver.
-        if let Some(ref proxy) = config.residential_proxy {
-            middlewares.push(residential_proxy_middleware(proxy.clone()));
-        }
-
-        // Cloudflare detection (inside retry so CF triggers auto-retry).
-        if config.cloudflare_detect {
-            middlewares.push(cloudflare_detect_middleware());
-        }
-
-        // Quality check: convert anti-bot 200s and non-CF errors (401/403/429/503)
-        // to CF challenge errors so the solver middleware can handle them.
-        if config.quality_check {
-            middlewares.push(crate::middleware_quality::quality_check_middleware());
-        }
-
-        // Innermost middleware: auto-inject client hints.
-        // ONLY when no profile is set — when a profile is set, `browser_headers()`
-        // in `build_request()` provides the complete, coherent header set
-        // (including sec-ch-ua). The middleware must not add headers the
-        // profile didn't include (e.g. sec-ch-ua-full-version-list, which
-        // real Chrome doesn't send on top-level navigation).
-        if config.profile.is_none() {
-            middlewares.push(client_hints_middleware());
-        }
-
+        let middlewares = build_middlewares(&config);
         let handler = chain(middlewares, base);
         Ok(Self { handler, config })
     }
@@ -308,6 +247,92 @@ impl HttpClient {
     pub fn with_handler(handler: Arc<dyn Handler>, config: HttpConfig) -> Self {
         Self { handler, config }
     }
+
+    /// Test-only constructor: build the middleware chain from `config` (same
+    /// [`build_middlewares`] path as [`HttpClient::new`]) but with a custom
+    /// base handler instead of a real wreq client. This lets tests prove the
+    /// config→chain wiring is correct without network calls — e.g. that
+    /// `cloudflare_detect: false, quality_check: true` raises a genuine CF
+    /// challenge as an error, not as content (F-A).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_chain(base: Arc<dyn Handler>, config: HttpConfig) -> Self {
+        let middlewares = build_middlewares(&config);
+        let handler = chain(middlewares, base);
+        Self { handler, config }
+    }
+}
+
+/// Build the middleware stack from config, in chain order (outermost first):
+/// `[ssrf] -> [logging?] -> [rate_limit?] -> [retry?] -> [solver?] ->
+/// [residential?] -> [cloudflare_detect?] -> [quality_check?] ->
+/// [client_hints?]`.
+///
+/// Extracted from [`HttpClient::new`] so test constructors can build the
+/// real config→chain wiring with a mock base handler (`with_chain`).
+fn build_middlewares(config: &HttpConfig) -> Vec<MiddlewareFn> {
+    let mut middlewares: Vec<MiddlewareFn> = Vec::new();
+
+    // Outermost: SSRF protection (before any other processing).
+    middlewares.push(ssrf_middleware());
+
+    // Logging (only when debug enabled).
+    if config.debug {
+        middlewares.push(logging_middleware());
+    }
+
+    // Rate limiting (before retry, so retries also respect limits).
+    if let Some(ref limiter) = config.rate_limiter {
+        middlewares.push(rate_limit_middleware(Arc::clone(limiter)));
+    }
+
+    // Retry with exponential backoff.
+    if let Some(ref retry_cfg) = config.retry {
+        middlewares.push(retry_middleware(retry_cfg.clone()));
+    }
+
+    // CF solver (between retry and cloudflare_detect).
+    // Use the shared negcache when available so read_pipeline can check is_blocked()
+    // and set RenderMode::GiveUp instead of retrying doomed solve attempts.
+    if let (Some(provider), Some(cache)) = (&config.cookie_provider, &config.cookie_cache) {
+        if let Some(ref nc) = config.solver_negcache {
+            middlewares.push(solver_middleware_with_negcache(
+                Arc::clone(provider),
+                Arc::clone(cache),
+                Arc::clone(nc),
+            ));
+        } else {
+            middlewares.push(solver_middleware(Arc::clone(provider), Arc::clone(cache)));
+        }
+    }
+
+    // Residential proxy retry (between solver and cloudflare_detect).
+    // On CF error, retries once with residential IP before falling back to solver.
+    if let Some(ref proxy) = config.residential_proxy {
+        middlewares.push(residential_proxy_middleware(proxy.clone()));
+    }
+
+    // Cloudflare detection (inside retry so CF triggers auto-retry).
+    if config.cloudflare_detect {
+        middlewares.push(cloudflare_detect_middleware());
+    }
+
+    // Quality check: convert anti-bot 200s and non-CF errors (401/403/429/503)
+    // to CF challenge errors so the solver middleware can handle them.
+    if config.quality_check {
+        middlewares.push(crate::middleware_quality::quality_check_middleware());
+    }
+
+    // Innermost middleware: auto-inject client hints.
+    // ONLY when no profile is set — when a profile is set, `browser_headers()`
+    // in `build_request()` provides the complete, coherent header set
+    // (including sec-ch-ua). The middleware must not add headers the
+    // profile didn't include (e.g. sec-ch-ua-full-version-list, which
+    // real Chrome doesn't send on top-level navigation).
+    if config.profile.is_none() {
+        middlewares.push(client_hints_middleware());
+    }
+
+    middlewares
 }
 
 /// Ensure exactly one `content-type` header in the vector, with the last

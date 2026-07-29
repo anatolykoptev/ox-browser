@@ -46,6 +46,15 @@ struct RetryHandler {
 /// specific origin MAY not implement it idempotently. We follow the RFC
 /// rather than penalise every caller for a non-conformant minority; an
 /// origin that deviates from the RFC owns the consequence.
+///
+/// **Surface asymmetry (deliberate, F-B)**: the non-idempotent branch below
+/// returns a *response* after a single attempt, while the idempotent branch
+/// exhausts its retries and surfaces an *error* (`RetryableStatus`). So at
+/// the `/fetch` wrapper, a POST on 500 answers HTTP 200 with `status: 500`
+/// and `error: None` (the response body is preserved), while a GET on 500
+/// answers HTTP 502 with `status: 0` and `error` set. Making the GET path
+/// return its response too would change what `read_pipeline` and the solver
+/// see, since they key on the error — a wider change than this PR carries.
 pub(crate) fn is_idempotent(method: &str) -> bool {
     matches!(
         method.to_uppercase().as_str(),
@@ -72,6 +81,11 @@ impl Handler for RetryHandler {
         // retry to trigger for a non-idempotent method, so converting it to
         // `RetryableStatus` would discard the body the origin sent — usually
         // the error detail the caller needs.
+        //
+        // F-B: this branch surfaces a *response* (`Ok`), while the
+        // idempotent branch below surfaces an *error* (`RetryableStatus`)
+        // after exhausting retries. The asymmetry is deliberate — see the
+        // `is_idempotent` doc comment.
         if !is_idempotent(&req.method) {
             return match self.next.handle(req).await {
                 Err(HttpError::CloudflareInferred(_, resp)) => Ok(*resp),

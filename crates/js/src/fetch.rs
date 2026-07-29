@@ -171,6 +171,121 @@ pub async fn fetch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gobrowser_proxy::GoBrowserProxy;
+    use crate::{AppState, EndpointDefaults};
+    use async_trait::async_trait;
+    use ox_http::{
+        CookieCache, Handler, HttpClient, HttpConfig, HttpResponse, Request, RetryConfig,
+    };
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// Mock terminal handler that always returns a 500 with a body.
+    /// Used by the /fetch wrapper-contract tests below.
+    struct ServerErrorMock;
+
+    #[async_trait]
+    impl Handler for ServerErrorMock {
+        async fn handle(&self, req: Request) -> ox_http::Result<HttpResponse> {
+            Ok(HttpResponse {
+                status: 500,
+                url: req.url,
+                headers: Default::default(),
+                body: r#"{"error":"internal","trace":"abc-123"}"#.into(),
+            })
+        }
+    }
+
+    fn fast_retry() -> RetryConfig {
+        RetryConfig {
+            max_retries: 3,
+            initial_wait: Duration::from_millis(1),
+            max_wait: Duration::from_millis(10),
+            jitter_pct: 0.0,
+            ..Default::default()
+        }
+    }
+
+    /// Build an AppState whose http_client uses a mock base handler that
+    /// always returns 500, wired through the real config→middleware chain
+    /// (retry + quality_check, no cloudflare_detect — the default pair).
+    fn state_with_500_handler() -> AppState {
+        let config = HttpConfig {
+            retry: Some(fast_retry()),
+            cloudflare_detect: false,
+            quality_check: true,
+            ..HttpConfig::default()
+        };
+        let client = HttpClient::with_chain(Arc::new(ServerErrorMock), config);
+        let proxy = Arc::new(GoBrowserProxy::new("http://127.0.0.1:8906".to_string()));
+        AppState::new(
+            Arc::new(crate::tests::MockProvider),
+            Arc::new(CookieCache::new(Duration::from_secs(300))),
+            Arc::new(client),
+            EndpointDefaults::default(),
+            ox_media::MediaConfig::default(),
+            proxy,
+        )
+    }
+
+    // ── F-B: /fetch wrapper contract for 500 responses ───────────────────
+    //
+    // The retry middleware's idempotency gate creates a deliberate asymmetry
+    // (see `is_idempotent` in middleware_retry.rs): a non-idempotent method
+    // (POST) returns its response after a single attempt, while an idempotent
+    // method (GET) exhausts retries and surfaces `Err(RetryableStatus)`. The
+    // /fetch wrapper maps `Ok(resp)` → HTTP 200 with the real status/body,
+    // and `Err(e)` → HTTP 502 with `status: 0` and `error` set. These two
+    // tests pin both shapes at the handler level so a future change to the
+    // wrapper or the retry gate cannot silently move the contract.
+
+    /// POST on 500 → HTTP 200, `status: 500`, `error: None`, body present.
+    /// POST is non-idempotent: retry returns the response as-is (no retry
+    /// to trigger), so the wrapper answers 200 with the origin's status and
+    /// body intact.
+    #[tokio::test]
+    async fn fetch_post_on_500_returns_200_with_body() {
+        let state = state_with_500_handler();
+        let req = FetchRequest {
+            url: "http://1.1.1.1".into(),
+            method: Some("POST".into()),
+            body: Some(r#"{"x":1}"#.into()),
+            content_type: None,
+            headers: std::collections::HashMap::new(),
+            timeout: None,
+        };
+        let (status, json) = fetch(State(state), Json(req)).await;
+        assert_eq!(status, StatusCode::OK, "POST on 500 → HTTP 200");
+        assert_eq!(json.status, 500, "status field carries the origin 500");
+        assert!(json.error.is_none(), "error must be None for POST on 500");
+        assert!(
+            json.body.contains("trace"),
+            "body must be preserved, got: {}",
+            json.body
+        );
+    }
+
+    /// GET on 500 → HTTP 502, `status: 0`, `error` set, empty body.
+    /// GET is idempotent: retry exhausts its attempts, each returning 500,
+    /// and surfaces `Err(RetryableStatus(500))`. The wrapper maps that to
+    /// 502 with `status: 0` and the error string.
+    #[tokio::test]
+    async fn fetch_get_on_500_returns_502_with_error() {
+        let state = state_with_500_handler();
+        let req = FetchRequest {
+            url: "http://1.1.1.1".into(),
+            method: Some("GET".into()),
+            body: None,
+            content_type: None,
+            headers: std::collections::HashMap::new(),
+            timeout: None,
+        };
+        let (status, json) = fetch(State(state), Json(req)).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "GET on 500 → HTTP 502");
+        assert_eq!(json.status, 0, "status field is 0 for an error");
+        assert!(json.error.is_some(), "error must be set for GET on 500");
+        assert!(json.body.is_empty(), "body must be empty for an error");
+    }
 
     #[test]
     fn fetch_request_defaults() {
