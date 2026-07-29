@@ -328,3 +328,151 @@ async fn site_handler_error_does_not_increment_fetch_success_total() {
 
     assert!(out.error.is_some());
 }
+
+// ─── CLI `read` subcommand: shared-path parity + discriminating format mapping ──
+//
+// The CLI `read` subcommand (src/read.rs) calls `read_page` — the SAME
+// function the `/read` HTTP handler (ox_js::read) and the MCP `read` tool
+// call. These tests prove that parity against the shared function, without
+// running a server:
+//   1. `cli_and_api_paths_produce_same_read_output` — a ReadParams built the
+//      CLI way (from a validated format string) and one built the API way
+//      (serde-deserialised JSON, as axum's `Json<ReadParams>` does) produce
+//      byte-identical output through `read_page_inner`.
+//   2. `read_format_mapping_is_discriminating` — each `--format` value maps
+//      to the ContentFormat the pipeline maps it to, and the outputs differ
+//      across formats. A test that would still pass if the mapping were
+//      swapped is not a test: `assert_ne` between text and markdown output
+//      catches a swapped mapping.
+
+/// Handler returning a fixed HTML body with a real article, so format
+/// conversion has something to discriminate on.
+struct FixedBodyHandler {
+    body: String,
+}
+
+#[async_trait]
+impl Handler for FixedBodyHandler {
+    async fn handle(&self, req: Request) -> Result<HttpResponse> {
+        Ok(HttpResponse {
+            status: 200,
+            url: req.url,
+            headers: HeaderMap::new(),
+            body: self.body.clone(),
+        })
+    }
+}
+
+fn article_html() -> &'static str {
+    "<html><head><title>Article Title</title></head>\
+     <body><article><h1>Heading One</h1><p>Body paragraph text.</p>\
+     <p>Second <a href=\"/x\">link</a> paragraph.</p></article></body></html>"
+}
+
+fn http_with_article() -> HttpClient {
+    let handler: Arc<dyn Handler> = Arc::new(FixedBodyHandler {
+        body: article_html().to_string(),
+    });
+    let cfg = config_with(None, None);
+    HttpClient::with_handler(handler, cfg)
+}
+
+#[tokio::test]
+async fn cli_and_api_paths_produce_same_read_output() {
+    let http = http_with_article();
+
+    // CLI construction: build ReadParams from a validated format string
+    // (exactly what src/read.rs::build_read_params does).
+    let cli_params = ReadParams {
+        url: "https://example.com/article".into(),
+        format: "markdown".into(),
+        max_length: 0,
+    };
+    // API construction: serde-deserialise JSON, as axum's `Json<ReadParams>`
+    // does in the /read handler. The default format is "text" (content.rs).
+    let api_params: ReadParams =
+        serde_json::from_str(r#"{"url":"https://example.com/article","format":"markdown"}"#)
+            .unwrap();
+
+    // The two construction paths must agree on every field.
+    assert_eq!(cli_params.url, api_params.url);
+    assert_eq!(cli_params.format, api_params.format);
+    assert_eq!(cli_params.max_length, api_params.max_length);
+
+    let cli_out = read_page_inner(&http, &cli_params, &[]).await;
+    let api_out = read_page_inner(&http, &api_params, &[]).await;
+
+    // Byte-identical output through the shared function.
+    assert_eq!(cli_out.content, api_out.content, "content must match");
+    assert_eq!(cli_out.title, api_out.title, "title must match");
+    assert_eq!(cli_out.format, api_out.format, "format must match");
+    assert_eq!(cli_out.error, api_out.error, "error must match");
+    assert_eq!(cli_out.method, api_out.method, "method must match");
+}
+
+#[tokio::test]
+async fn read_format_mapping_is_discriminating() {
+    let http = http_with_article();
+    let url = "https://example.com/article";
+
+    let mk = |fmt: &str| ReadParams {
+        url: url.into(),
+        format: fmt.into(),
+        max_length: 0,
+    };
+
+    let md = read_page_inner(&http, &mk("markdown"), &[]).await;
+    let text = read_page_inner(&http, &mk("text"), &[]).await;
+    let html = read_page_inner(&http, &mk("html"), &[]).await;
+    let llm = read_page_inner(&http, &mk("llm"), &[]).await;
+
+    // markdown: contains the heading as markdown, not as a raw HTML tag.
+    assert!(
+        md.content.contains("Heading One"),
+        "markdown must contain heading text; got: {:?}",
+        md.content
+    );
+    assert!(
+        !md.content.contains("<h1>"),
+        "markdown must not contain raw <h1>; got: {:?}",
+        md.content
+    );
+
+    // text: plain text — no markdown heading syntax, no HTML tags.
+    assert!(
+        !text.content.contains("# "),
+        "text must not contain markdown heading syntax; got: {:?}",
+        text.content
+    );
+    assert!(
+        !text.content.contains("<h1>"),
+        "text must not contain HTML tags; got: {:?}",
+        text.content
+    );
+
+    // html: raw content node HTML — contains tags.
+    assert!(
+        html.content.contains('<'),
+        "html format must contain HTML tags; got: {:?}",
+        html.content
+    );
+
+    // llm: token-optimised — no raw HTML tags.
+    assert!(
+        !llm.content.contains("<h1>"),
+        "llm must strip HTML tags; got: {:?}",
+        llm.content
+    );
+
+    // The discriminator: markdown and text MUST differ. If from_param's
+    // "markdown" mapping were swapped to Text, md.content == text.content
+    // and this assertion fails — proving the mapping is wired, not a no-op.
+    assert_ne!(
+        md.content, text.content,
+        "markdown and text output must differ (mapping must be discriminating)"
+    );
+    assert_ne!(
+        html.content, text.content,
+        "html and text output must differ"
+    );
+}

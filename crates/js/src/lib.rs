@@ -61,6 +61,16 @@ pub struct AppState {
     pub gobrowser_proxy: Arc<gobrowser_proxy::GoBrowserProxy>,
 }
 
+/// The default set of site-specific handlers for the read pipeline.
+///
+/// Single source of truth — used by `AppState` (REST `/read`), `OxMcpServer`
+/// (MCP `read` tool), and the CLI `read` subcommand. Adding a handler here
+/// surfaces it on all three; previously each construction site duplicated
+/// `vec![site_twitter::make_twitter_handler()]` and silently drifted.
+pub fn default_site_handlers() -> Vec<SiteHandler> {
+    vec![site_twitter::make_twitter_handler()]
+}
+
 impl AppState {
     /// Build AppState with the default set of site handlers (including Twitter).
     #[allow(clippy::too_many_arguments)] // DI ctor wiring the shared dep set
@@ -72,7 +82,7 @@ impl AppState {
         media_config: ox_media::MediaConfig,
         gobrowser_proxy: Arc<gobrowser_proxy::GoBrowserProxy>,
     ) -> Self {
-        let handlers: Vec<SiteHandler> = vec![site_twitter::make_twitter_handler()];
+        let handlers = default_site_handlers();
         Self {
             provider,
             cache,

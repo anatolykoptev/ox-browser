@@ -61,7 +61,7 @@ impl OxMcpServer {
         media_config: ox_media::MediaConfig,
         gobrowser_proxy: Arc<GoBrowserProxy>,
     ) -> Self {
-        let handlers: Vec<SiteHandler> = vec![ox_js::site_twitter::make_twitter_handler()];
+        let handlers: Vec<SiteHandler> = ox_js::default_site_handlers();
         Self {
             provider,
             cache,
