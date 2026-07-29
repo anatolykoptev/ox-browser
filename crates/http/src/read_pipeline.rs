@@ -158,10 +158,13 @@ async fn read_page_inner(
     let resp = match http.get(&params.url).await {
         Ok(r) => r,
         Err(e) => {
-            // On Cloudflare error → check negcache; if domain is on cooldown set
-            // GiveUp so the next request fast-fails before reaching chrome_fallback.
-            if matches!(e, crate::HttpError::Cloudflare(_, _, _))
-                && let (Some(cache), Some(url)) = (&render_cache, &chrome_url)
+            // On Cloudflare error (genuine or inferred) → check negcache; if
+            // domain is on cooldown set GiveUp so the next request fast-fails
+            // before reaching chrome_fallback.
+            if matches!(
+                e,
+                crate::HttpError::Cloudflare(_, _, _) | crate::HttpError::CloudflareInferred(_, _)
+            ) && let (Some(cache), Some(url)) = (&render_cache, &chrome_url)
             {
                 let negcache_blocked = http
                     .config()

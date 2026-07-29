@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::cloudflare::ChallengeType;
+use crate::cloudflare::detect_cloudflare;
 use crate::error::HttpError;
 use crate::middleware::{Handler, MiddlewareFn, Request};
 use crate::{HttpResponse, Result};
@@ -38,18 +38,29 @@ impl Handler for QualityCheckHandler {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
         let resp = self.next.handle(req).await?;
 
-        // Non-200 fallback-worthy status → trigger solver
+        // If this is a GENUINE Cloudflare challenge (real CF markers + ray
+        // id), pass it through unchanged. `cloudflare_detect` (outer) will
+        // convert it to `HttpError::Cloudflare` — a genuine challenge where
+        // CF intercepted the request and the origin never saw it. The
+        // re-senders treat genuine CF as safe to retry on any method.
+        //
+        // Only responses WITHOUT CF markers are converted to
+        // `CloudflareInferred` below — those are bare status codes where the
+        // origin MAY have processed the request.
+        if detect_cloudflare(&resp).is_some() {
+            return Ok(resp);
+        }
+
+        // Non-200 fallback-worthy status → inferred challenge. The origin
+        // MAY have processed the request — carry the response so a gate that
+        // declines to re-send a non-idempotent method can return it intact.
         if should_fallback(resp.status) {
             tracing::info!(
                 url = %resp.url,
                 status = resp.status,
-                "quality: fallback-worthy status, triggering solver"
+                "quality: fallback-worthy status (inferred), triggering solver"
             );
-            return Err(HttpError::Cloudflare(
-                ChallengeType::JsChallenge,
-                resp.status,
-                String::new(),
-            ));
+            return Err(HttpError::CloudflareInferred(resp.status, Box::new(resp)));
         }
 
         // 200 but low-quality content → likely anti-bot stub page.
@@ -73,13 +84,9 @@ impl Handler for QualityCheckHandler {
                     url = %resp.url,
                     body_len = resp.body.len(),
                     visible_chars = visible,
-                    "quality: low-quality 200, triggering solver"
+                    "quality: low-quality 200 (inferred), triggering solver"
                 );
-                return Err(HttpError::Cloudflare(
-                    ChallengeType::JsChallenge,
-                    200,
-                    String::new(),
-                ));
+                return Err(HttpError::CloudflareInferred(200, Box::new(resp)));
             }
         }
 
@@ -132,31 +139,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn converts_403_to_cf_error() {
+    async fn converts_403_to_inferred_error() {
         let base: Arc<dyn Handler> = Arc::new(FixedHandler {
             status: 403,
             body: "Forbidden".into(),
         });
         let handler = chain(vec![quality_check_middleware()], base);
         let err = handler.handle(test_req()).await.unwrap_err();
-        assert!(matches!(
-            err,
-            HttpError::Cloudflare(ChallengeType::JsChallenge, 403, _)
-        ));
+        assert!(matches!(err, HttpError::CloudflareInferred(403, _)));
     }
 
     #[tokio::test]
-    async fn converts_503_to_cf_error() {
+    async fn converts_503_to_inferred_error() {
         let base: Arc<dyn Handler> = Arc::new(FixedHandler {
             status: 503,
             body: "Service Unavailable".into(),
         });
         let handler = chain(vec![quality_check_middleware()], base);
         let err = handler.handle(test_req()).await.unwrap_err();
-        assert!(matches!(
-            err,
-            HttpError::Cloudflare(ChallengeType::JsChallenge, 503, _)
-        ));
+        assert!(matches!(err, HttpError::CloudflareInferred(503, _)));
     }
 
     #[tokio::test]
@@ -168,6 +169,36 @@ mod tests {
         let handler = chain(vec![quality_check_middleware()], base);
         let resp = handler.handle(test_req()).await.unwrap();
         assert_eq!(resp.status, 404);
+    }
+
+    /// A genuine CF 503 (with CF markers) passes through as Ok —
+    /// `cloudflare_detect` (outer) converts it to a genuine `Cloudflare`
+    /// error, which the re-senders treat as safe to retry on any method.
+    /// This is the provenance seam: CF-marker responses are NOT inferred.
+    #[tokio::test]
+    async fn passes_through_genuine_cf_503() {
+        struct CfHandler;
+        #[async_trait]
+        impl Handler for CfHandler {
+            async fn handle(&self, req: Request) -> Result<HttpResponse> {
+                let mut headers = wreq::header::HeaderMap::new();
+                headers.insert("server", "cloudflare".parse().unwrap());
+                headers.insert("cf-ray", "abc123-SJC".parse().unwrap());
+                Ok(HttpResponse {
+                    status: 503,
+                    url: req.url,
+                    headers,
+                    body: r#"<script src="/cdn-cgi/challenge-platform/x.js"></script>"#.into(),
+                })
+            }
+        }
+        let base: Arc<dyn Handler> = Arc::new(CfHandler);
+        let handler = chain(vec![quality_check_middleware()], base);
+        let resp = handler.handle(test_req()).await.unwrap();
+        assert_eq!(
+            resp.status, 503,
+            "genuine CF 503 must pass through, not be converted to CloudflareInferred"
+        );
     }
 
     #[tokio::test]
@@ -184,10 +215,7 @@ mod tests {
         let base: Arc<dyn Handler> = Arc::new(FixedHandler { status: 200, body });
         let handler = chain(vec![quality_check_middleware()], base);
         let err = handler.handle(test_req()).await.unwrap_err();
-        assert!(matches!(
-            err,
-            HttpError::Cloudflare(ChallengeType::JsChallenge, 200, _)
-        ));
+        assert!(matches!(err, HttpError::CloudflareInferred(200, _)));
     }
 
     #[tokio::test]

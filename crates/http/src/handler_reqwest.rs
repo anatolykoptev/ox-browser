@@ -142,7 +142,7 @@ impl WreqHandler {
                 // typed `Method` validates the bytes; an invalid method
                 // surfaces as a request error here.
                 let method = wreq::Method::from_bytes(other.as_bytes())
-                    .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+                    .map_err(|e| HttpError::InvalidMethod(e.to_string()))?;
                 client.request(method, &req.url)
             }
         };

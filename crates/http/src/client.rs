@@ -207,9 +207,9 @@ impl HttpClient {
     ///
     /// `content_type` is added as a `content-type` header ONLY when `body`
     /// is `Some`. If the caller also passes a `content-type` in
-    /// `extra_headers`, the caller's value takes precedence — strip it from
-    /// `extra_headers` before passing it as `content_type` to avoid a
-    /// duplicate.
+    /// `extra_headers`, the caller's value wins and exactly one
+    /// `content-type` reaches the handler — `request` resolves the conflict
+    /// itself (F6).
     #[allow(clippy::too_many_arguments)]
     pub async fn request(
         &self,
@@ -223,6 +223,11 @@ impl HttpClient {
         for &(k, v) in extra_headers {
             req.headers.push((k.to_owned(), v.to_owned()));
         }
+        // F6: resolve duplicate content-type. `build_request` may have added
+        // one from `content_type`; `extra_headers` may append another. Keep
+        // exactly one, with the caller's `extra_headers` value winning (the
+        // explicit override). Preserves the position of the first entry.
+        dedup_content_type(&mut req.headers);
         self.handler.handle(req).await
     }
 
@@ -302,6 +307,42 @@ impl HttpClient {
     #[cfg(test)]
     pub fn with_handler(handler: Arc<dyn Handler>, config: HttpConfig) -> Self {
         Self { handler, config }
+    }
+}
+
+/// Ensure exactly one `content-type` header in the vector, with the last
+/// value (the caller's `extra_headers` override) winning. Preserves the
+/// position of the first `content-type` entry so header ordering for
+/// fingerprinting is not disrupted (F6).
+fn dedup_content_type(headers: &mut Vec<(String, String)>) {
+    // Find the last content-type value (extra_headers wins over build_request's).
+    let last_ct = headers
+        .iter()
+        .rev()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.clone());
+    let Some(value) = last_ct else {
+        return;
+    };
+    // Keep the first content-type position, drop the rest, set the winner's value.
+    let mut seen = false;
+    headers.retain(|(k, _)| {
+        if k.eq_ignore_ascii_case("content-type") {
+            if !seen {
+                seen = true;
+                true
+            } else {
+                false
+            }
+        } else {
+            true
+        }
+    });
+    if let Some(entry) = headers
+        .iter_mut()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+    {
+        entry.1 = value;
     }
 }
 
@@ -534,5 +575,55 @@ mod tests {
         assert_eq!(captured.method, "POST");
         assert_eq!(captured.body.as_deref(), Some(b"{\"x\":42}".as_slice()));
         assert_eq!(captured.content_type.as_deref(), Some("text/plain"));
+    }
+
+    /// F6: when both `content_type` and a `content-type` in `extra_headers`
+    /// are supplied, exactly one reaches the handler and the `extra_headers`
+    /// value wins. A warning is not a mechanism — `request` resolves the
+    /// conflict itself.
+    #[tokio::test]
+    async fn duplicate_content_type_extra_headers_wins() {
+        let (client, handler) = capture_client();
+        client
+            .request(
+                "POST",
+                "https://example.com/api",
+                Some(b"{}".to_vec()),
+                Some("application/json"),
+                &[("content-type", "text/xml")],
+            )
+            .await
+            .unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(
+            captured.content_type.as_deref(),
+            Some("text/xml"),
+            "extra_headers content-type must win over content_type arg"
+        );
+    }
+
+    /// F6: when only `content_type` is supplied (no override in
+    /// `extra_headers`), exactly one content-type reaches the handler.
+    #[tokio::test]
+    async fn single_content_type_no_duplicate() {
+        let (client, handler) = capture_client();
+        client
+            .request(
+                "POST",
+                "https://example.com/api",
+                Some(b"{}".to_vec()),
+                Some("application/json"),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let captured = handler.captured.lock().unwrap().take().unwrap();
+        assert_eq!(
+            captured.content_type.as_deref(),
+            Some("application/json"),
+            "content_type arg must reach the handler when no extra_headers override"
+        );
     }
 }

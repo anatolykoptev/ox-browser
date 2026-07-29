@@ -40,7 +40,13 @@ struct RetryHandler {
 /// Methods safe to repeat without risk of duplicate side-effects at the
 /// origin. POST and PATCH are excluded — re-issuing them can create
 /// duplicate resources or apply a patch twice.
-fn is_idempotent(method: &str) -> bool {
+///
+/// PUT and DELETE are classified as idempotent per RFC 9110 §9.2. This is
+/// the standard trade: the method is idempotent by specification, though a
+/// specific origin MAY not implement it idempotently. We follow the RFC
+/// rather than penalise every caller for a non-conformant minority; an
+/// origin that deviates from the RFC owns the consequence.
+pub(crate) fn is_idempotent(method: &str) -> bool {
     matches!(
         method.to_uppercase().as_str(),
         "GET" | "HEAD" | "OPTIONS" | "TRACE" | "PUT" | "DELETE"
@@ -54,12 +60,23 @@ impl Handler for RetryHandler {
         // transport error is returned after a single attempt — re-issuing
         // a POST that may have already been processed by the origin is a
         // duplicate-mutation hazard (issue #114).
+        //
+        // F1: a `CloudflareInferred` error (quality_check converted a bare
+        // 401/403/429/503) carries the original response. The origin MAY
+        // have processed the request, so we return the response as-is
+        // instead of surfacing an error — the caller sees the real status
+        // and body, not `status: 0` with an empty body.
+        //
+        // F2: a 500/502/504 response (NOT caught by quality_check, which
+        // only converts 401/403/429/503) is returned as-is. There is no
+        // retry to trigger for a non-idempotent method, so converting it to
+        // `RetryableStatus` would discard the body the origin sent — usually
+        // the error detail the caller needs.
         if !is_idempotent(&req.method) {
-            let resp = self.next.handle(req).await?;
-            if is_retryable_status(resp.status) {
-                return Err(HttpError::RetryableStatus(resp.status));
-            }
-            return Ok(resp);
+            return match self.next.handle(req).await {
+                Err(HttpError::CloudflareInferred(_, resp)) => Ok(*resp),
+                other => other,
+            };
         }
 
         let next = self.next.clone();
@@ -232,8 +249,9 @@ mod tests {
     // ── Idempotency gate (issue #114) ───────────────────────────────────
 
     /// A POST is NOT retried on a 503 — the origin must not see a duplicate
-    /// mutation. The 503 surfaces as a `RetryableStatus` error after a
-    /// single attempt.
+    /// mutation. The 503 response is returned as-is (F2: no retry to trigger
+    /// for a non-idempotent method, so the body the origin sent is preserved
+    /// instead of being discarded into a `RetryableStatus` error).
     ///
     /// **Mutation probe**: remove the `is_idempotent` gate in
     /// `RetryHandler::handle` (or make it always return `true`) and this
@@ -255,8 +273,11 @@ mod tests {
             proxy: None,
         };
 
-        let result = handler.handle(req).await;
-        assert!(result.is_err(), "POST on 503 must surface as an error");
+        let resp = handler.handle(req).await.unwrap();
+        assert_eq!(
+            resp.status, 503,
+            "POST on 503 returns the response, not an error"
+        );
         assert_eq!(
             call_count.load(Ordering::SeqCst),
             1,
@@ -264,7 +285,8 @@ mod tests {
         );
     }
 
-    /// A PATCH is also not retried (non-idempotent).
+    /// A PATCH is also not retried (non-idempotent). The response is
+    /// returned as-is.
     #[tokio::test]
     async fn patch_is_not_retried_on_503() {
         let call_count = Arc::new(AtomicUsize::new(0));
@@ -282,8 +304,51 @@ mod tests {
             proxy: None,
         };
 
-        let result = handler.handle(req).await;
-        assert!(result.is_err());
+        let resp = handler.handle(req).await.unwrap();
+        assert_eq!(resp.status, 503);
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    /// F2: a POST on 500/502/504 returns the response with body intact —
+    /// these statuses are NOT caught by quality_check (which only converts
+    /// 401/403/429/503), so they reach retry as `Ok(resp)`. There is no
+    /// retry to trigger for a non-idempotent method; converting to
+    /// `RetryableStatus` would discard the body the origin sent.
+    #[tokio::test]
+    async fn post_on_500_returns_response_with_body() {
+        struct BodyHandler {
+            call_count: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl Handler for BodyHandler {
+            async fn handle(&self, req: Request) -> Result<HttpResponse> {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                Ok(HttpResponse {
+                    status: 500,
+                    url: req.url,
+                    headers: HeaderMap::new(),
+                    body: r#"{"error":"internal","detail":"db connection lost"}"#.into(),
+                })
+            }
+        }
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let base: Arc<dyn Handler> = Arc::new(BodyHandler {
+            call_count: call_count.clone(),
+        });
+        let handler = chain(vec![retry_middleware(fast_config())], base);
+        let req = Request {
+            method: "POST".into(),
+            url: "https://example.com".into(),
+            headers: vec![],
+            body: Some(b"{}".to_vec()),
+            proxy: None,
+        };
+        let resp = handler.handle(req).await.unwrap();
+        assert_eq!(resp.status, 500);
+        assert!(
+            resp.body.contains("db connection lost"),
+            "POST on 500 must preserve the error body, not return empty"
+        );
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
 
