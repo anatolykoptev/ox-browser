@@ -390,7 +390,9 @@ pub static BODY_CAP_REJECTIONS_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// content. Each bump is also a `tracing::info!` with `reason=
 /// extraction_rejected_low_text_ratio`, and the response carries the same
 /// token in `ReadOutput::extraction_note`. Compare against
-/// `oxbrowser_fetch_total` for the rejection rate; a sustained non-zero
+/// `oxbrowser_read_total` for the rejection rate (renamed from
+/// `oxbrowser_fetch_total` in issue #128 — the extraction gate is on the
+/// read path only); a sustained non-zero
 /// rate on a given route means the extractor is mis-selecting on that site
 /// shape (which the fallback masks, so this counter is the only signal).
 pub static READ_EXTRACTION_REJECTED_TOTAL: AtomicU64 = AtomicU64::new(0);
