@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod doctor;
 mod fetch;
 mod read;
 mod serve;
@@ -86,6 +87,22 @@ enum Commands {
     },
     /// Show version info
     Version,
+    /// Self-check the running instance: fingerprint against the embedded
+    /// reference, reference age, config validity, solver / chrome-render /
+    /// proxy reachability. Makes live calls to third-party echo services —
+    /// runs only when invoked explicitly, never from `serve` or a health
+    /// check (issue #109).
+    Doctor {
+        /// Override the proxy URL (else taken from config.toml `[proxy]`).
+        #[arg(long)]
+        proxy: Option<String>,
+        /// Enable debug logging for the measured HTTP requests.
+        #[arg(long)]
+        debug: bool,
+        /// Emit the structured verdict as JSON on stdout (pipeable to jq).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[tokio::main]
@@ -145,6 +162,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Version => {
             println!("ox-browser {}", env!("CARGO_PKG_VERSION"));
+        }
+        Commands::Doctor { proxy, debug, json } => {
+            let args = doctor::DoctorArgs { proxy, debug, json };
+            doctor::run(args).await?;
         }
     }
     Ok(())
