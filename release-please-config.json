@@ -21,8 +21,7 @@
         { "type": "style", "hidden": true }
       ],
       "extra-files": [
-        "Cargo.toml",
-        "Cargo.lock"
+        "Cargo.toml"
       ]
     }
   }
