@@ -24,6 +24,12 @@ pub struct ReadInput {
     /// Max content length in chars. 0 = unlimited.
     #[serde(default)]
     pub max_length: usize,
+    /// Per-call deadline in seconds. `None` → seam default; `Some(s)` →
+    /// clamped to `[1, MAX_CALL_TIMEOUT_SECS]`. Bounds the whole read
+    /// pipeline, not one attempt. Same field/units/ceiling as `/fetch`,
+    /// `/read`, MCP `fetch`, and the CLI `--timeout` flag (issue #139).
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 fn default_format() -> String {
@@ -36,6 +42,7 @@ impl From<ReadInput> for ReadParams {
             url: i.url,
             format: i.format,
             max_length: i.max_length,
+            timeout_secs: i.timeout_secs,
         }
     }
 }

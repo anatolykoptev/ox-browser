@@ -36,6 +36,15 @@ pub struct ReadParams {
     pub format: String,
     #[serde(default)]
     pub max_length: usize,
+    /// Per-call deadline in seconds. `None` → the seam default
+    /// (`deadline::DEFAULT_CALL_TIMEOUT_SECS`); `Some(s)` → clamped to
+    /// `[1, deadline::MAX_CALL_TIMEOUT_SECS]`. Bounds the WHOLE read
+    /// pipeline (fetch + extract + solver escalation + rate-limit wait),
+    /// not one attempt — issue #139. Same field/name/units/ceiling as
+    /// `/fetch`'s `timeout`, the MCP `fetch`/`read` tools, and the CLI
+    /// `--timeout` flag.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 fn default_format() -> String {

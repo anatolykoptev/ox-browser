@@ -53,6 +53,10 @@ enum Commands {
         /// Ignored when no --data.
         #[arg(long)]
         content_type: Option<String>,
+        /// Per-call deadline in seconds. None → seam default (8s);
+        /// clamped to [1, 60]. Bounds the whole call, not one attempt.
+        #[arg(long)]
+        timeout: Option<u64>,
     },
     /// Read a URL through the content-extraction pipeline (readability,
     /// format conversion, LLM cleanup, chrome-render escalation). Same
@@ -78,6 +82,11 @@ enum Commands {
         /// Enable debug logging for HTTP requests
         #[arg(long)]
         debug: bool,
+        /// Per-call deadline in seconds. None → seam default (8s);
+        /// clamped to [1, 60]. Bounds the whole read pipeline, not one
+        /// attempt.
+        #[arg(long)]
+        timeout: Option<u64>,
     },
     /// Start HTTP API server
     Serve {
@@ -133,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
             method,
             data,
             content_type,
+            timeout,
         } => {
             let args = fetch::FetchArgs {
                 url,
@@ -144,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
                 method,
                 data,
                 content_type,
+                timeout,
             };
             fetch::run(args).await?;
         }
@@ -155,6 +166,7 @@ async fn main() -> anyhow::Result<()> {
             proxy,
             json,
             debug,
+            timeout,
         } => {
             let args = read::ReadArgs {
                 url,
@@ -164,6 +176,7 @@ async fn main() -> anyhow::Result<()> {
                 proxy,
                 json,
                 debug,
+                timeout,
             };
             read::run(args).await?;
         }

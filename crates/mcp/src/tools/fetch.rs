@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use ox_http::deadline::{CallOutcome, bounded, resolve_timeout};
 use ox_http::detect_cloudflare;
+use ox_http::metrics::{classify_fetch_outcome, record_fetch_outcome};
 use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 use rmcp::schemars;
@@ -18,7 +20,7 @@ use super::OxMcpServer;
 /// `method` defaults to GET (or POST when a `body` is supplied, curl
 /// `--data` convention). A `body` with an explicit `method: "GET"` is
 /// rejected. `content_type` defaults to `application/json` when a body is
-/// present.
+/// present. `timeout` is the per-call deadline in seconds (issue #139).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FetchInput {
     /// The URL to fetch.
@@ -35,6 +37,12 @@ pub struct FetchInput {
     /// body is present. Ignored when no body.
     #[serde(default)]
     pub content_type: Option<String>,
+    /// Per-call deadline in seconds. `None` → seam default; `Some(s)` →
+    /// clamped to `[1, MAX_CALL_TIMEOUT_SECS]`. Bounds the whole call,
+    /// not one attempt. Same field/units/ceiling as `/fetch`, `/read`,
+    /// MCP `read`, and the CLI `--timeout` flag (issue #139).
+    #[serde(default)]
+    pub timeout: Option<u64>,
 }
 
 /// Input parameters for the `fetch_smart` tool.
@@ -130,18 +138,27 @@ impl OxMcpServer {
             None
         };
 
-        match self
-            .http_client
-            .request(
+        // Bound the whole call (retry loop + solver escalation + rate-limit
+        // wait), not one attempt — issue #139. Same seam as /fetch.
+        let deadline = resolve_timeout(input.timeout);
+        let outcome = bounded(
+            deadline,
+            self.http_client.request(
                 &method,
                 &input.url,
                 body_bytes,
                 content_type.as_deref(),
                 &[],
-            )
-            .await
-        {
-            Ok(resp) => {
+            ),
+        )
+        .await;
+
+        // /fetch outcome counter — same classifier/counter as the REST
+        // /fetch handler, so the two surfaces cannot drift.
+        record_fetch_outcome(classify_fetch_outcome(&outcome));
+
+        match outcome {
+            CallOutcome::Ok(Ok(resp)) => {
                 let cf = detect_cloudflare(&resp);
                 let headers: HashMap<String, String> = resp
                     .headers
@@ -161,7 +178,7 @@ impl OxMcpServer {
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
                 Ok(CallToolResult::success(vec![Content::text(json)]))
             }
-            Err(e) => {
+            CallOutcome::Ok(Err(e)) => {
                 let result = FetchResult {
                     status: 0,
                     headers: HashMap::new(),
@@ -170,6 +187,22 @@ impl OxMcpServer {
                     cf_type: None,
                     elapsed_ms: elapsed(),
                     error: Some(e.to_string()),
+                };
+                let json = serde_json::to_string(&result)
+                    .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
+                Ok(CallToolResult::error(vec![Content::text(json)]))
+            }
+            // The per-call bound fired — distinct error string so a caller
+            // can tell "I bounded this" from "the site failed" (issue #139).
+            CallOutcome::DeadlineExceeded { secs } => {
+                let result = FetchResult {
+                    status: 0,
+                    headers: HashMap::new(),
+                    body: String::new(),
+                    cf_detected: false,
+                    cf_type: None,
+                    elapsed_ms: elapsed(),
+                    error: Some(format!("deadline exceeded ({secs}s per-call bound)")),
                 };
                 let json = serde_json::to_string(&result)
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
