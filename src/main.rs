@@ -41,6 +41,18 @@ enum Commands {
         /// Enable debug logging for HTTP requests
         #[arg(long)]
         debug: bool,
+        /// HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE).
+        /// Defaults to GET, or POST when --data is supplied (curl convention).
+        #[arg(short = 'X', long)]
+        method: Option<String>,
+        /// Request body. Implies POST when --method is not set.
+        /// Rejected when --method GET is explicit.
+        #[arg(long, alias = "body")]
+        data: Option<String>,
+        /// Content-Type for the body (default: application/json).
+        /// Ignored when no --data.
+        #[arg(long)]
+        content_type: Option<String>,
     },
     /// Read a URL through the content-extraction pipeline (readability,
     /// format conversion, LLM cleanup, chrome-render escalation). Same
@@ -118,6 +130,9 @@ async fn main() -> anyhow::Result<()> {
             profile,
             proxy,
             debug,
+            method,
+            data,
+            content_type,
         } => {
             let args = fetch::FetchArgs {
                 url,
@@ -126,6 +141,9 @@ async fn main() -> anyhow::Result<()> {
                 profile,
                 proxy,
                 debug,
+                method,
+                data,
+                content_type,
             };
             fetch::run(args).await?;
         }

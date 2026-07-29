@@ -36,6 +36,27 @@ impl Browser {
         Ok(Page::new(resp.url, resp.status, &resp.body))
     }
 
+    /// Fetch a URL with a custom method, optional body, and optional
+    /// content type. For plain GETs prefer [`page`](Self::page).
+    ///
+    /// The caller is responsible for method/body validation (e.g. rejecting
+    /// a body with GET). The retry middleware gates retries on method
+    /// idempotency — POST and PATCH are not retried (issue #114).
+    pub async fn request(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<Vec<u8>>,
+        content_type: Option<&str>,
+    ) -> Result<Page> {
+        let _guard = self.pool.acquire().await?;
+        let resp = self
+            .http
+            .request(method, url, body, content_type, &[])
+            .await?;
+        Ok(Page::new(resp.url, resp.status, &resp.body))
+    }
+
     pub fn close(&self) {
         self.pool.close();
     }
