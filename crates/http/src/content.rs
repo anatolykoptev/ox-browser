@@ -428,12 +428,27 @@ fn extract_title_from_html(html: &str) -> String {
 
 pub fn html_to_plain(html: &str) -> String {
     let doc = dom_query::Document::from(html);
+    // Strip tags whose text content is never visible to a reader (inline JS,
+    // CSS, `<noscript>` fallback). Without this, `body.text()` collects every
+    // `NodeData::Text` descendant with no tag filter — so when the extraction
+    // gate falls back to the whole document (issue #110), the Text output
+    // carries inline script/style source. Markdown already strips these via
+    // the same [`INVISIBLE_TAG_SELECTORS`] list; Text must too. One list, no
+    // drift. (Nav/footer/header text IS visible to a reader and stays — only
+    // the invisible tags are stripped here, unlike markdown which also drops
+    // chrome via [`NOISE_SELECTORS`].)
+    for sel in INVISIBLE_TAG_SELECTORS {
+        doc.select(sel).remove();
+    }
     let text = doc.select("body").text().to_string();
     collapse_whitespace(&text)
 }
 
 pub fn html_to_fit_markdown(html: &str) -> String {
     let doc = dom_query::Document::from(html);
+    for sel in INVISIBLE_TAG_SELECTORS {
+        doc.select(sel).remove();
+    }
     for sel in NOISE_SELECTORS {
         doc.select(sel).remove();
     }
@@ -443,6 +458,15 @@ pub fn html_to_fit_markdown(html: &str) -> String {
     crate::noise::remove_noise(&doc);
     htmd::convert(&doc.html()).unwrap_or_default()
 }
+
+/// Tags whose text content is never visible to a reader — inline JS (`script`),
+/// CSS (`style`), and `<noscript>` fallback. dom_query's `text_of` collects
+/// every `NodeData::Text` descendant with no tag filter, so without stripping
+/// these, `html_to_plain` leaks inline script/style source when the extraction
+/// gate falls back to the whole document (issue #110). Shared by
+/// `html_to_plain` and `html_to_fit_markdown` so the two formats cannot drift
+/// on which invisible tags they strip.
+const INVISIBLE_TAG_SELECTORS: &[&str] = &["script", "style", "noscript"];
 
 fn collapse_whitespace(s: &str) -> String {
     let mut r = String::with_capacity(s.len());
@@ -461,6 +485,9 @@ fn collapse_whitespace(s: &str) -> String {
     r.trim().to_string()
 }
 
+/// Boilerplate/chrome selectors stripped by `html_to_fit_markdown` (in
+/// addition to [`INVISIBLE_TAG_SELECTORS`]). Not applied to plain-text output
+/// — nav/footer/header text is visible to a reader and belongs in Text.
 pub const NOISE_SELECTORS: &[&str] = &[
     "nav",
     "footer",
@@ -478,9 +505,6 @@ pub const NOISE_SELECTORS: &[&str] = &[
     "[role=navigation]",
     "[role=banner]",
     "[role=contentinfo]",
-    "script",
-    "style",
-    "noscript",
     "iframe",
 ];
 

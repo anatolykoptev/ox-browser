@@ -111,6 +111,37 @@ fn craigslist_list_page_text_fallback_has_listing_text_not_just_curtain() {
             || result.content.contains("chef"),
         "text fallback must contain real listing text, not only the curtain"
     );
+
+    // The fallback is the whole document, which carries inline `<script>` and
+    // `<style>` source. `html_to_plain` must strip those (issue #110 M1):
+    // dom_query's `text_of` collects every text descendant with no tag filter,
+    // so without stripping, the Text output leaks inline JS/CSS source. The
+    // listings dominate the word count and mask the leak — so assert the
+    // script/style source is ABSENT, not merely that listing text is present.
+    // Markers taken from the fixture's inline scripts/styles.
+    assert!(
+        !result.content.contains("onpageshow"),
+        "text fallback must not leak inline script source (onpageshow)"
+    );
+    assert!(
+        !result.content.contains("cl.init"),
+        "text fallback must not leak inline script source (cl.init)"
+    );
+    assert!(
+        !result.content.contains("specialCurtainMessages"),
+        "text fallback must not leak inline script source (specialCurtainMessages)"
+    );
+    assert!(
+        !result.content.contains("unsupportedBrowser"),
+        "text fallback must not leak inline script/style source (unsupportedBrowser)"
+    );
+    // `window.` is a strong script-source signal; the fixture has it only in
+    // inline scripts. After stripping, zero occurrences.
+    assert_eq!(
+        result.content.matches("window.").count(),
+        0,
+        "text fallback must not contain any `window.` script-source markers"
+    );
 }
 
 // ─── Real articles must NOT trip ─────────────────────────────────────────────
