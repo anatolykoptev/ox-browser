@@ -77,6 +77,7 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 | `/read` | POST | Fetch + extract content (markdown/HTML/text) |
 | `/readability` | POST | **DEPRECATED** — use `/read` instead |
 | `/fetch` | POST | Raw HTTP fetch |
+| `/fetch-smart` | POST | Fetch with automatic Chrome fallback for JS-rendered pages |
 | `/solve` | POST | Solve Cloudflare challenge for URL |
 | `/crawl` | POST | Crawl a site (BFS) |
 | `/images/search` | POST | Multi-engine image search |
@@ -93,7 +94,7 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 claude mcp add -s user -t http ox-browser http://localhost:8901/mcp
 ```
 
-11 tools: `fetch`, `read`, `analyze`, `solve_cf`, `security_scan`, `crawl`, `image_search`, `reverse_image_search`, `media_download`, `site_audit` (+ deprecated `fetch_smart`, `readability`).
+13 tools: `fetch`, `read`, `analyze`, `solve_cf`, `security_scan`, `crawl`, `chrome_interact`, `image_search`, `reverse_image_search`, `media_download`, `site_audit` (+ deprecated `fetch_smart`, `readability`).
 
 ## Build
 
