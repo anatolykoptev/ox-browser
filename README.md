@@ -13,7 +13,7 @@ Self-hosted web data extraction in Rust. Turns arbitrary pages into clean, LLM-r
 - **Media download** — YouTube via InnerTube API, DASH audio+video merge via ffmpeg. Generic media extraction from HTML.
 - **Web crawler** — BFS with robots.txt respect, per-domain rate limiting, crawl budget, dedup, configurable depth/concurrency.
 - **Stealth HTTP** — wreq + BoringSSL TLS fingerprinting emulating real browsers (Chrome, Safari, Edge). SSRF-safe with redirect validation.
-- **Anti-bot handling** — integrates [Byparr](https://github.com/V4NSF/Byparr) (Camoufox-based) and [GoBrowser](https://github.com/gospider007/gobrowser) solvers. Optional Chromium fallback for hard challenges.
+- **Cloudflare and anti-bot handling** — integrates [Byparr](https://github.com/V4NSF/Byparr) (Camoufox-based) and [GoBrowser](https://github.com/gospider007/gobrowser) solvers. Optional Chromium fallback for hard challenges.
 - **Security scanning** — headers (CSP, HSTS, X-Frame-Options), cookies, CORS, SRI, supply chain, redirect chains, body content scan.
 - **Site audit** — tech stack fingerprinting (Wappalyzer), SEO analysis, performance metrics, accessibility checks.
 - **MCP server** — 11 tools for AI agents (Claude Desktop, Claude Code, any MCP client).
