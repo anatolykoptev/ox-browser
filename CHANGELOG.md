@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.9](https://github.com/anatolykoptev/ox-browser/compare/v0.8.8...v0.8.9) (2026-08-04)
+
+
+### Documentation
+
+* **readme:** correct the MCP tool count and add the missing route ([ac02a03](https://github.com/anatolykoptev/ox-browser/commit/ac02a03a765de825f812705732c147cb46ea3ffd))
+* **readme:** lead with content extraction and the quality gate ([4f7c714](https://github.com/anatolykoptev/ox-browser/commit/4f7c714b241ffe16deeaa25b3f2841561719b4eb))
+* **readme:** put Cloudflare back in the solver bullet ([fea9f05](https://github.com/anatolykoptev/ox-browser/commit/fea9f05cb345a02cb8e7d81485e92bfb825ad733))
+
 ## [0.8.8](https://github.com/anatolykoptev/ox-browser/compare/v0.8.7...v0.8.8) (2026-07-29)
 
 
