@@ -1,15 +1,19 @@
 # ox-browser
 
-Self-hosted stealth HTTP client with Cloudflare bypass, image search, reverse image search, media download, and security scanning. Exposes both a REST API and an MCP server for AI agents.
+Self-hosted web data extraction in Rust. Turns arbitrary pages into clean, LLM-ready text, with a robots-aware crawler, SPA content recovery, and quality gates that catch a bad extraction instead of shipping it. Also does image search, reverse image search, media download and security scanning. Exposes both a REST API and an MCP server for AI agents.
 
 ## Features
 
-- **Stealth HTTP** — wreq + BoringSSL TLS fingerprinting emulating real browsers (Chrome, Safari, Edge). SSRF-safe with redirect validation.
-- **Cloudflare bypass** — integrates [Byparr](https://github.com/V4NSF/Byparr) (Camoufox-based) and [GoBrowser](https://github.com/gospider007/gobrowser) solvers. Optional Chromium fallback for hard challenges.
+- **Content extraction** — Readability-style scoring (text density, semantic-tag bonus, link-density penalty) with recovery passes for H1s, hero paragraphs, section headings and footer content. Noise filtering matches class *tokens*, not substrings.
+- **LLM-ready output** — strips CSS class names, empty headings, alt-text noise and bare-number lines before the text reaches a model. Per-call body caps.
+- **SPA recovery** — JSON data islands (Next.js, Contentful) plus a QuickJS sandbox (250 ms timeout, 64 MB cap, interrupt handler) that runs inline scripts to capture `window.__PRELOADED_STATE__` and Next.js flight data from shells that ship no server HTML.
+- **Extraction quality gate** — a post-extraction check compares visible text in against visible text out, tripping only when the source is above an absolute floor *and* the extraction falls below a fraction of it. A page that yields its loading overlay instead of its content is reported, not returned as content.
 - **Image search** — Bing, DuckDuckGo, Brave, Pexels, Openverse. Reciprocal Rank Fusion across engines.
 - **Reverse image search** — Google Lens + Yandex. Stock photo detection.
 - **Media download** — YouTube via InnerTube API, DASH audio+video merge via ffmpeg. Generic media extraction from HTML.
-- **Web crawler** — BFS with robots.txt respect, per-domain rate limiting, dedup, configurable depth/concurrency.
+- **Web crawler** — BFS with robots.txt respect, per-domain rate limiting, crawl budget, dedup, configurable depth/concurrency.
+- **Stealth HTTP** — wreq + BoringSSL TLS fingerprinting emulating real browsers (Chrome, Safari, Edge). SSRF-safe with redirect validation.
+- **Anti-bot handling** — integrates [Byparr](https://github.com/V4NSF/Byparr) (Camoufox-based) and [GoBrowser](https://github.com/gospider007/gobrowser) solvers. Optional Chromium fallback for hard challenges.
 - **Security scanning** — headers (CSP, HSTS, X-Frame-Options), cookies, CORS, SRI, supply chain, redirect chains, body content scan.
 - **Site audit** — tech stack fingerprinting (Wappalyzer), SEO analysis, performance metrics, accessibility checks.
 - **MCP server** — 11 tools for AI agents (Claude Desktop, Claude Code, any MCP client).
@@ -21,7 +25,7 @@ Self-hosted stealth HTTP client with Cloudflare bypass, image search, reverse im
 ox-browser/
   crates/
     core/          # wreq+BoringSSL HTTP client, TLS fingerprinting
-    http/          # Stealth client, SSRF middleware, CF solvers, caches, metrics
+    http/          # Content extraction, LLM cleanup, SPA recovery, stealth client, SSRF middleware, solvers, metrics
     js/            # REST API routes (Axum)
     mcp/           # MCP server (rmcp, Streamable HTTP)
     security/      # Security scanning (headers, cookies, CORS, SRI, supply chain)
