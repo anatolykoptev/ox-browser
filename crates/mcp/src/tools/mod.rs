@@ -75,7 +75,7 @@ impl OxMcpServer {
     }
 }
 
-#[tool_router]
+#[tool_router(vis = "pub(crate)")]
 impl OxMcpServer {
     #[tool(
         name = "fetch",

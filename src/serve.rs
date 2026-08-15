@@ -158,6 +158,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         defaults,
         media_config,
         gobrowser_proxy,
+        config.server.mcp_allowed_hosts.clone(),
     );
     let app = rest_router.merge(mcp_router);
 
