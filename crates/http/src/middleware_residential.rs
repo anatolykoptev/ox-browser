@@ -10,15 +10,17 @@ use async_trait::async_trait;
 
 use crate::cloudflare::ChallengeType;
 use crate::error::HttpError;
+use crate::metrics::{SolverOutcome, record_solver_outcome};
 use crate::middleware::{Handler, MiddlewareFn, Request};
 use crate::middleware_retry::is_idempotent;
 use crate::{HttpResponse, Result};
 
 /// Returns a middleware that retries CF-blocked requests with a residential proxy.
 ///
-/// Position in chain: between `retry` and `solver` (i.e., after retry but
-/// before the headless solver). If the residential proxy also gets a CF
-/// response, the error bubbles up to the solver middleware.
+/// Position in chain: inside `retry`, which itself sits inside `solver`
+/// (issue #125: solver is outermost relative to retry). If the residential
+/// proxy also gets a CF response, the error bubbles up to the solver
+/// middleware.
 pub fn residential_proxy_middleware(proxy_url: String) -> MiddlewareFn {
     Arc::new(move |next: Arc<dyn Handler>| -> Arc<dyn Handler> {
         Arc::new(ResidentialHandler {
@@ -55,6 +57,7 @@ impl Handler for ResidentialHandler {
             // with a residential proxy. Return the original response so the
             // caller sees the real status + body.
             Err(HttpError::CloudflareInferred(_, resp)) if !is_idempotent(&req.method) => {
+                record_solver_outcome(SolverOutcome::InferredPassthrough);
                 tracing::info!(
                     url = %req.url,
                     method = %req.method,

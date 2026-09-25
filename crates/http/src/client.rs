@@ -31,7 +31,7 @@ impl HttpClient {
     /// Build the client and its middleware chain from config.
     ///
     /// Chain order (outermost first):
-    /// `[logging?] -> [rate_limit?] -> [retry?] -> [solver?] -> [residential?] -> [cloudflare?] -> [quality_check] -> [client_hints] -> wreq`
+    /// `[logging?] -> [rate_limit?] -> [solver?] -> [retry?] -> [residential?] -> [cloudflare?] -> [quality_check] -> [client_hints] -> wreq`
     pub fn new(config: HttpConfig) -> Result<Self> {
         // ONE identity source of truth: when `profile` is set, derive the
         // TLS/HTTP2 Emulation from it via `profile_to_emulation`. The

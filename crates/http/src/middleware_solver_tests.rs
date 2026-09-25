@@ -435,10 +435,13 @@ async fn one_solve_per_challenged_request_under_retry() {
 
     /// Always returns a genuine CF challenge — the solver's resend also
     /// fails, which is exactly when the old nesting multiplied solves.
-    struct AlwaysCfHandler;
+    struct AlwaysCfHandler {
+        call_count: Arc<AtomicUsize>,
+    }
     #[async_trait]
     impl Handler for AlwaysCfHandler {
         async fn handle(&self, _req: Request) -> Result<HttpResponse> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
             Err(HttpError::Cloudflare(
                 ChallengeType::JsChallenge,
                 503,
@@ -447,6 +450,7 @@ async fn one_solve_per_challenged_request_under_retry() {
         }
     }
 
+    let handler_calls = Arc::new(AtomicUsize::new(0));
     let provider_calls = Arc::new(AtomicUsize::new(0));
     let provider: Arc<dyn CookieProvider> = Arc::new(MockProvider {
         call_count: provider_calls.clone(),
@@ -465,7 +469,12 @@ async fn one_solve_per_challenged_request_under_retry() {
         quality_check: false,
         ..HttpConfig::default()
     };
-    let client = HttpClient::with_chain(Arc::new(AlwaysCfHandler), config);
+    let client = HttpClient::with_chain(
+        Arc::new(AlwaysCfHandler {
+            call_count: handler_calls.clone(),
+        }),
+        config,
+    );
 
     let err = client
         .request("GET", "https://example.com/page", None, None, &[])
@@ -479,6 +488,15 @@ async fn one_solve_per_challenged_request_under_retry() {
         provider_calls.load(Ordering::SeqCst),
         1,
         "one challenged request = exactly one solve attempt"
+    );
+    // CF errors are non-retryable (the solver owns re-send decisions): the
+    // upstream sees exactly two sends — the cold send and the post-solve
+    // resend — never a retry-loop burn. Mutation probe: restore
+    // Cloudflare->retryable and this count inflates to 2*(1+max_retries).
+    assert_eq!(
+        handler_calls.load(Ordering::SeqCst),
+        2,
+        "cold send + post-solve resend, no retry burn"
     );
 }
 
@@ -674,5 +692,94 @@ async fn stale_eviction_survives_solve_failure() {
     assert!(
         cache.get("example.com").is_none(),
         "stale entry must be evicted even when the re-solve fails"
+    );
+}
+
+/// Issue #125: pins the DELIBERATE ordering — solver outside retry — via an
+/// observable signal: a cached send that resolves through a transient
+/// failure must not re-enter the solver per retry pass. Under the reversed
+/// order every retry pass re-runs `handle`, counting another `cache_hit`.
+///
+/// Flow under the shipped order: stale send -> CF rejection -> evict ->
+/// solve -> resend traverses the retry subtree (Timeout retried inside,
+/// no solver re-entry) -> 200. Counters: cache_hit=1, attempted=1.
+#[tokio::test]
+async fn resend_transient_retry_does_not_reenter_solver() {
+    /// CF error on the first (stale-cookie) send, Timeout on the post-solve
+    /// send, then 200.
+    struct FlakyCfHandler {
+        call_count: Arc<AtomicUsize>,
+    }
+    #[async_trait]
+    impl Handler for FlakyCfHandler {
+        async fn handle(&self, req: Request) -> Result<HttpResponse> {
+            match self.call_count.fetch_add(1, Ordering::SeqCst) {
+                0 => Err(HttpError::Cloudflare(
+                    ChallengeType::JsChallenge,
+                    403,
+                    "ray".into(),
+                )),
+                1 => Err(HttpError::Timeout(Duration::from_secs(30))),
+                _ => Ok(HttpResponse {
+                    status: 200,
+                    url: req.url,
+                    headers: HeaderMap::new(),
+                    body: "ok".into(),
+                }),
+            }
+        }
+    }
+
+    let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
+    let mut stale = HashMap::new();
+    stale.insert("cf_clearance".into(), "stale-tok".into());
+    cache.put(
+        "example.com",
+        SolvedChallenge {
+            cookies: stale,
+            user_agent: "Old/1.0".into(),
+            body: None,
+        },
+    );
+
+    let provider_calls = Arc::new(AtomicUsize::new(0));
+    let provider: Arc<dyn CookieProvider> = Arc::new(MockProvider {
+        call_count: provider_calls.clone(),
+    });
+    let config = crate::config::HttpConfig {
+        retry: Some(crate::retry::RetryConfig {
+            max_retries: 3,
+            initial_wait: Duration::from_millis(1),
+            max_wait: Duration::from_millis(2),
+            multiplier: 1.0,
+            jitter_pct: 0.0,
+        }),
+        cookie_provider: Some(provider),
+        cookie_cache: Some(Arc::clone(&cache)),
+        solver_negcache: Some(Arc::new(crate::solver_negcache::SolverNegCache::default())),
+        quality_check: false,
+        ..crate::config::HttpConfig::default()
+    };
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let client = crate::client::HttpClient::with_chain(
+        Arc::new(FlakyCfHandler {
+            call_count: handler_calls.clone(),
+        }),
+        config,
+    );
+
+    let resp = client
+        .request("GET", "https://example.com/page", None, None, &[])
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 200);
+    assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
+    // The post-solve resend's transient Timeout was retried INSIDE the retry
+    // subtree (timeout -> 200 on the next pass) — the solver never re-runs.
+    // Sends: stale-cookie send, resend timeout, retried resend = 3.
+    assert_eq!(
+        handler_calls.load(Ordering::SeqCst),
+        3,
+        "stale send + resend timeout + retried resend"
     );
 }

@@ -15,11 +15,11 @@ use crate::{HttpResponse, Result};
 /// Returns a middleware that detects Cloudflare challenges in responses.
 ///
 /// When a challenge is detected, the response is converted to
-/// [`HttpError::Cloudflare`]. This integrates with retry middleware:
-/// place cloudflare detection *inside* retry so retries happen
-/// automatically with a different proxy.
+/// [`HttpError::Cloudflare`]. The error is NOT retryable — the solver
+/// middleware (outside the retry loop) owns the re-send decision, and the
+/// residential middleware provides the designed per-send IP-change retry.
 ///
-/// Chain order: `retry -> cloudflare_detect -> client_hints -> wreq`
+/// Chain order: `solver -> retry -> residential -> cloudflare_detect -> client_hints -> wreq`
 pub fn cloudflare_detect_middleware() -> MiddlewareFn {
     Arc::new(|next: Arc<dyn Handler>| -> Arc<dyn Handler> {
         Arc::new(CloudflareDetectHandler { next })

@@ -59,6 +59,24 @@ impl SolverHandler {
     /// request, the origin never saw it) and inferred challenges (idempotent
     /// methods only — the caller gates the non-idempotent case before
     /// reaching here).
+    /// Shared cooldown gate: if the domain is on negcache cooldown, count the
+    /// skip and return the solver-decision error. Called from both the top of
+    /// `handle` (pre-send fast-fail) and `solve_and_retry` (covers the
+    /// stale-evict path, which returns before `handle`'s own check).
+    fn negcache_reject(&self, domain: &str) -> Option<HttpError> {
+        if !self.negcache.is_blocked(domain) {
+            return None;
+        }
+        record_solver_giveup(domain);
+        record_solver_outcome(SolverOutcome::NegcacheSkip);
+        // Return ProxyPool (not Cloudflare) — this is a solver decision,
+        // not a fresh CF challenge. Consistent with the N failures before
+        // cooldown trips; the GiveUp gate in read_pipeline fast-fails either way.
+        Some(HttpError::ProxyPool(format!(
+            "solver negcache: domain {domain} on cooldown"
+        )))
+    }
+
     async fn solve_and_retry(
         &self,
         mut req: Request,
@@ -68,15 +86,8 @@ impl SolverHandler {
         // Retry-storm guard: if this domain is on cooldown after repeated
         // solve failures, skip the 15-25s solver and surface the CF error
         // immediately. A success below clears the cooldown.
-        if self.negcache.is_blocked(domain) {
-            record_solver_giveup(domain);
-            record_solver_outcome(SolverOutcome::NegcacheSkip);
-            // Return ProxyPool (not Cloudflare) — this is a solver decision,
-            // not a fresh CF challenge. Consistent with the N failures before
-            // cooldown trips; the GiveUp gate in read_pipeline fast-fails either way.
-            return Err(HttpError::ProxyPool(format!(
-                "solver negcache: domain {domain} on cooldown"
-            )));
+        if let Some(err) = self.negcache_reject(domain) {
+            return Err(err);
         }
 
         record_solver_outcome(SolverOutcome::Attempted);
@@ -204,7 +215,7 @@ impl SolverHandler {
 
 #[async_trait]
 impl Handler for SolverHandler {
-    async fn handle(&self, mut req: Request) -> Result<HttpResponse> {
+    async fn handle(&self, req: Request) -> Result<HttpResponse> {
         let domain = domain_from_url(&req.url);
 
         // Check cache first — inject cookies if we have a prior solution.
@@ -214,15 +225,22 @@ impl Handler for SolverHandler {
         if let Some(solution) = self.cache.get(&domain) {
             info!(domain = %domain, "solver: using cached cookies");
             record_solver_outcome(SolverOutcome::CacheHit);
-            inject_solution(&mut req, &solution);
-            return match self.next.handle(req.clone()).await {
+            // Inject into a CLONE: if the cached send is rejected we pass the
+            // PRISTINE request to resolve_challenge — otherwise the resend
+            // would inherit the evicted session's user-agent (inject_solution
+            // only overrides it when the fresh solution provides one; a
+            // provider returning an empty UA would mix stale fingerprint with
+            // fresh clearance, and CF UA-binding would reject the resend).
+            let mut send_req = req.clone();
+            inject_solution(&mut send_req, &solution);
+            return match self.next.handle(send_req).await {
                 // The cached solution was rejected with a fresh challenge —
                 // it is stale (CF rotated the clearance or it was bound to a
                 // different fingerprint/IP). Evict once, then resolve the
                 // challenge for real. Before this, stale entries were replayed
                 // forever — nothing revalidated them (issue #125).
                 Err(e @ (HttpError::Cloudflare(..) | HttpError::CloudflareInferred(..))) => {
-                    self.cache.remove(&domain);
+                    self.cache.remove_if(&domain, &solution);
                     record_solver_outcome(SolverOutcome::StaleEvicted);
                     info!(
                         domain = %domain,
@@ -240,12 +258,8 @@ impl Handler for SolverHandler {
         // (The solver sits OUTSIDE the retry middleware — see
         // build_middlewares — so this check is what preserves the storm
         // guard's fast-fail semantics.)
-        if self.negcache.is_blocked(&domain) {
-            record_solver_giveup(&domain);
-            record_solver_outcome(SolverOutcome::NegcacheSkip);
-            return Err(HttpError::ProxyPool(format!(
-                "solver negcache: domain {domain} on cooldown"
-            )));
+        if let Some(err) = self.negcache_reject(&domain) {
+            return Err(err);
         }
 
         // No cached cookies — try the request normally.

@@ -388,6 +388,7 @@ static SOLVER_OUTCOME_ROWS: &[(&str, &AtomicU64)] = &[
 /// Solver decision branches — the `outcome` label of
 /// `oxbrowser_solver_outcome_total`. Each variant maps to exactly one
 /// decision point in `middleware_solver` (see [`SOLVER_OUTCOME_CACHE_HIT`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolverOutcome {
     /// A stored solution was injected for the send.
     CacheHit,
