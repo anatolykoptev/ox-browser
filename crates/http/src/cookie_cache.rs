@@ -118,6 +118,21 @@ impl CookieCache {
         self.publish_gauge();
     }
 
+    /// Removes the cached solution for `domain`, if present.
+    ///
+    /// Called by the solver middleware when a cached solution is rejected by a
+    /// fresh CF challenge — the entry is stale (CF rotated the clearance or it
+    /// was bound to a different fingerprint/IP) and must not be replayed.
+    pub fn remove(&self, domain: &str) {
+        let removed = {
+            let mut entries = self.entries.write().expect("lock poisoned");
+            entries.remove(domain).is_some()
+        };
+        if removed {
+            self.publish_gauge();
+        }
+    }
+
     /// Removes all expired entries from the cache.
     pub fn evict_expired(&self) {
         let mut entries = self.entries.write().expect("lock poisoned");

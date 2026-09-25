@@ -56,7 +56,11 @@ impl HttpError {
             Self::Timeout(_) => true,
             Self::Request(e) => e.is_timeout() || e.is_connect(),
             Self::Cloudflare(_, _, _) => true,
-            Self::CloudflareInferred(_, _) => true,
+            // Inferred challenges carry the origin's real response; whether
+            // to re-send is the solver's idempotency-guarded decision, not
+            // the retry loop's (retry now sits INSIDE the solver — without
+            // this, a non-idempotent request would be replayed per pass).
+            Self::CloudflareInferred(_, _) => false,
             Self::InvalidUrl(_)
             | Self::InvalidMethod(_)
             | Self::ProxyPool(_)
