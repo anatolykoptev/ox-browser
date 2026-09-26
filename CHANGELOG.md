@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.10](https://github.com/anatolykoptev/ox-browser/compare/v0.8.9...v0.8.10) (2026-09-26)
+
+
+### Fixed
+
+* **api:** bound every remaining outbound surface at router/dispatch level ([#155](https://github.com/anatolykoptev/ox-browser/issues/155)) ([6d246fc](https://github.com/anatolykoptev/ox-browser/commit/6d246fc327e5a5c70b650ec820880d5ca3d44cd1))
+
 ## [0.8.9](https://github.com/anatolykoptev/ox-browser/compare/v0.8.8...v0.8.9) (2026-09-26)
 
 
