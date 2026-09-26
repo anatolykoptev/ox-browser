@@ -70,6 +70,26 @@ impl CookieProvider for MockProvider {
     }
 }
 
+/// Mock provider that returns a solved page body alongside cookies.
+struct BodyProvider;
+
+#[async_trait]
+impl CookieProvider for BodyProvider {
+    async fn solve(
+        &self,
+        _url: &str,
+        _ct: ChallengeType,
+    ) -> std::result::Result<SolvedChallenge, String> {
+        let mut cookies = HashMap::new();
+        cookies.insert("cf_clearance".into(), "token".into());
+        Ok(SolvedChallenge {
+            cookies,
+            user_agent: "Test/1.0".into(),
+            body: Some("<html>solved content</html>".into()),
+        })
+    }
+}
+
 #[tokio::test]
 async fn solves_js_challenge_and_retries() {
     let handler_calls = Arc::new(AtomicUsize::new(0));
@@ -351,25 +371,6 @@ async fn returns_body_from_solver_directly() {
                 503,
                 "ray".into(),
             ))
-        }
-    }
-
-    // Mock provider that returns a body along with cookies
-    struct BodyProvider;
-    #[async_trait]
-    impl CookieProvider for BodyProvider {
-        async fn solve(
-            &self,
-            _url: &str,
-            _ct: ChallengeType,
-        ) -> std::result::Result<SolvedChallenge, String> {
-            let mut cookies = HashMap::new();
-            cookies.insert("cf_clearance".into(), "token".into());
-            Ok(SolvedChallenge {
-                cookies,
-                user_agent: "Test/1.0".into(),
-                body: Some("<html>solved content</html>".into()),
-            })
         }
     }
 
@@ -840,4 +841,39 @@ async fn resend_transient_retry_does_not_reenter_solver() {
         3,
         "stale send + resend timeout + retried resend"
     );
+}
+
+/// ox-browser#162: a solver-returned body is a GET render — it must never
+/// answer a non-GET request. A POST that hit a CF challenge was intercepted
+/// before reaching the origin, so cookie+UA resend is safe and correct;
+/// substituting the GET body would silently fabricate a POST response.
+///
+/// RED-on-revert: removing `req.method.eq_ignore_ascii_case("GET")` in
+/// solve_and_retry makes the POST return "<html>solved content</html>" and
+/// the echo assertion fails.
+#[tokio::test]
+async fn body_from_solver_not_served_for_post() {
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let base: Arc<dyn Handler> = Arc::new(CfThenOkHandler {
+        call_count: handler_calls.clone(),
+    });
+    let provider: Arc<dyn CookieProvider> = Arc::new(BodyProvider);
+    let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
+    let handler = chain(vec![solver_middleware(provider, cache)], base);
+    let req = Request {
+        method: "POST".into(),
+        url: "https://example.com/submit".into(),
+        headers: vec![],
+        body: Some(b"payload".to_vec()),
+        proxy: None,
+    };
+    let resp = handler.handle(req).await.unwrap();
+    assert_eq!(resp.status, 200);
+    assert!(
+        resp.body.contains("cf_clearance="),
+        "POST must take the cookie-resend path, got: {}",
+        resp.body
+    );
+    assert_ne!(resp.body, "<html>solved content</html>");
+    assert_eq!(handler_calls.load(Ordering::SeqCst), 2);
 }

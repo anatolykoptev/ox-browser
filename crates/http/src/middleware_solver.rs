@@ -120,12 +120,25 @@ impl SolverHandler {
                 return Err(HttpError::ProxyPool(format!("solver failed: {e}")));
             }
         };
-        self.cache.put(domain, solution.clone());
+        // Strip the body before caching: the cache is keyed by domain while
+        // the body belongs to this exact URL — a cached body replayed for a
+        // different path would serve wrong content, and holding a large HTML
+        // string for the TTL is dead weight (the cache path reads cookies+UA
+        // only).
+        let mut cached = solution.clone();
+        cached.body = None;
+        self.cache.put(domain, cached);
         // A real solution ends any storm for this domain.
         self.negcache.record_success(domain);
 
-        // If solver returned the page body directly, use it (avoids IP mismatch on retry)
-        if let Some(ref body) = solution.body {
+        // If the solver returned the cleared page body, serve it directly for
+        // GET — the only method a browser navigation answers correctly
+        // (avoids replaying cf_clearance through a client fingerprint CF
+        // rejects, ox-browser#162). Non-GET falls through to the cookie+UA
+        // resend: a GET-rendered page must not answer a POST/PUT/etc.
+        if req.method.eq_ignore_ascii_case("GET")
+            && let Some(ref body) = solution.body
+        {
             info!(domain = %domain, "solver: using body from solve response");
             return Ok(HttpResponse {
                 status: 200,
