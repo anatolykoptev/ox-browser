@@ -10,6 +10,15 @@ use anyhow::Result;
 /// makes a bomb guard useless).
 const SITEMAP_MAX_DECOMPRESSED_BYTES: u64 = 50 * 1024 * 1024;
 
+/// Maximum URL entries collected from one sitemap document (50,000 — the
+/// sitemap protocol's per-file URL limit, the same bound Google and the
+/// common sitemap libraries enforce). The byte cap above bounds input size
+/// but not heap growth: 50 MB of small `<loc>` blocks still materializes on
+/// the order of a million `SitemapEntry`/`String` allocations. Truncation,
+/// not an error — a file past the protocol limit still yields its first
+/// 50k legitimate URLs for discovery (issue #150).
+const MAX_SITEMAP_URLS: usize = 50_000;
+
 /// A single URL entry from a sitemap urlset.
 #[derive(Debug, Clone)]
 pub struct SitemapEntry {
@@ -115,8 +124,12 @@ fn parse_index(reader: &mut quick_xml::Reader<&[u8]>, buf: &mut Vec<u8>) -> Resu
                 in_loc = true;
             }
             Ok(Event::Text(ref e)) if in_loc => {
-                urls.push(e.unescape()?.trim().to_string());
+                urls.push(e.xml10_content()?.trim().to_string());
                 in_loc = false;
+                if urls.len() >= MAX_SITEMAP_URLS {
+                    tracing::warn!(MAX_SITEMAP_URLS, "sitemap index URL count capped");
+                    break;
+                }
             }
             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"loc" => {
                 in_loc = false;
@@ -161,7 +174,7 @@ fn parse_urlset_xml(
             }
             Ok(Event::Text(ref e)) => {
                 if let Some(ref mut entry) = current {
-                    let text = e.unescape()?.trim().to_string();
+                    let text = e.xml10_content()?.trim().to_string();
                     match current_tag.as_str() {
                         "loc" => entry.url = text,
                         "lastmod" => entry.lastmod = Some(text),
@@ -178,6 +191,10 @@ fn parse_urlset_xml(
                     && !entry.url.is_empty()
                 {
                     entries.push(entry);
+                    if entries.len() >= MAX_SITEMAP_URLS {
+                        tracing::warn!(MAX_SITEMAP_URLS, "sitemap urlset entries capped");
+                        break;
+                    }
                 }
                 current_tag.clear();
             }
@@ -292,6 +309,39 @@ mod tests {
             }
             _ => panic!("expected UrlSet"),
         }
+    }
+
+    /// A urlset past the protocol's 50k URL limit is truncated, not grown
+    /// without bound — the byte cap alone does not bound heap growth.
+    #[test]
+    fn urlset_caps_entries_at_protocol_limit() {
+        let mut xml = String::from("<urlset>");
+        for i in 0..MAX_SITEMAP_URLS + 1 {
+            xml.push_str(&format!("<url><loc>https://a.test/{i}</loc></url>"));
+        }
+        xml.push_str("</urlset>");
+        let out = parse_sitemap(xml.as_bytes()).unwrap();
+        let SitemapContent::UrlSet(entries) = out else {
+            panic!("expected urlset");
+        };
+        assert_eq!(entries.len(), MAX_SITEMAP_URLS);
+    }
+
+    /// Same cap on a sitemap index's child list.
+    #[test]
+    fn index_caps_children_at_protocol_limit() {
+        let mut xml = String::from("<sitemapindex>");
+        for i in 0..MAX_SITEMAP_URLS + 1 {
+            xml.push_str(&format!(
+                "<sitemap><loc>https://a.test/{i}.xml</loc></sitemap>"
+            ));
+        }
+        xml.push_str("</sitemapindex>");
+        let out = parse_sitemap(xml.as_bytes()).unwrap();
+        let SitemapContent::Index(urls) = out else {
+            panic!("expected index");
+        };
+        assert_eq!(urls.len(), MAX_SITEMAP_URLS);
     }
 
     #[test]
