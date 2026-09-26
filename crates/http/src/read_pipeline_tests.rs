@@ -614,9 +614,10 @@ async fn read_page_timeout_zero_clamps_to_one_sec() {
 }
 
 /// `read_page` with `timeout: Some(600)` MUST clamp down to the
-/// ceiling (60 s), not use 600 s. Against a handler that sleeps 2 s, the
-/// call completes successfully — the ceiling (60 s) does not fire. This
-/// is the upper-clamp test: `resolve_timeout(Some(600))` → 60 s, not 600 s.
+/// ceiling (`MAX_CALL_TIMEOUT_SECS`), not use 600 s. Against a handler
+/// that sleeps 100 ms, the call completes successfully — the ceiling
+/// does not fire. This is the upper-clamp test:
+/// `resolve_timeout(Some(600))` → the ceiling, not 600 s.
 #[tokio::test]
 async fn read_page_timeout_above_ceiling_clamps_down() {
     let handler_calls = Arc::new(AtomicUsize::new(0));
@@ -635,10 +636,10 @@ async fn read_page_timeout_above_ceiling_clamps_down() {
 
     let out = read_page(&http, &p, &[]).await;
 
-    // 600 s clamped to 60 s should NOT fire on a 100 ms response.
+    // 600 s clamped to the ceiling should NOT fire on a 100 ms response.
     assert!(
         out.error.is_none(),
-        "600s should clamp to 60s ceiling; got error: {:?}",
+        "600s should clamp to MAX_CALL_TIMEOUT_SECS ceiling; got error: {:?}",
         out.error
     );
     assert_eq!(handler_calls.load(Ordering::SeqCst), 1);

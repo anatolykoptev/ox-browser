@@ -4,6 +4,7 @@ mod analyze;
 pub mod analyze_types;
 mod chrome_interact;
 mod crawl;
+mod deadline_layer;
 mod fetch;
 mod fetch_smart;
 pub mod gobrowser_proxy;
@@ -97,11 +98,14 @@ impl AppState {
 
 /// Builds the Axum router with all REST endpoints.
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/health", get(health))
-        .route("/metrics", get(metrics))
+    // Outbound surfaces without a handler-level bound (issue #147): the
+    // layer pulls `timeout`/`timeout_secs` out of the JSON body and bounds
+    // the whole handler future — retry loops, solver escalation,
+    // multi-engine fan-out — as a unit. `/fetch` bounds itself at the
+    // handler and `/read` inside `read_pipeline::read_page`; both keep
+    // their typed deadline bodies, so they stay outside the layer.
+    let guarded = Router::new()
         .route("/solve", post(solve::solve))
-        .route("/fetch", post(fetch::fetch))
         .route("/fetch-smart", post(fetch_smart::fetch_smart))
         .route("/analyze", post(analyze::analyze))
         .route("/security", post(security::security_scan))
@@ -109,9 +113,7 @@ pub fn router(state: AppState) -> Router {
         .route("/images/reverse", post(reverse_search::reverse_search))
         .route("/media/download", post(media_download::media_download))
         .route("/readability", post(readability::readability))
-        .route("/crawl", post(crawl::crawl))
         .route("/site-audit", post(site_audit::site_audit))
-        .route("/read", post(read::read))
         .route(
             "/chrome/interact",
             post(chrome_interact::chrome_interact_handler),
@@ -120,6 +122,20 @@ pub fn router(state: AppState) -> Router {
             "/chrome/session/{id}",
             axum::routing::delete(chrome_interact::destroy_session_handler),
         )
+        .layer(axum::middleware::from_fn(deadline_layer::deadline_guard));
+
+    Router::new()
+        .route("/health", get(health))
+        .route("/metrics", get(metrics))
+        .route("/fetch", post(fetch::fetch))
+        .route("/read", post(read::read))
+        // /crawl answers SSE — the request resolves when the stream is
+        // produced, so a request-level bound would cover only discovery
+        // while looking like it covers the crawl. The discovery await is
+        // bounded inside the handler; the page stream is bounded by the
+        // crawler's own max_pages and per-page timeouts.
+        .route("/crawl", post(crawl::crawl))
+        .merge(guarded)
         .with_state(state)
 }
 
@@ -278,5 +294,99 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(state.cache.get("cached.example.com").is_some());
+    }
+
+    /// Issue #147 wiring check through the REAL router: a `/chrome/interact`
+    /// call whose upstream (go-browser proxy) accepts the connection but
+    /// never responds must be cut by the guard at the caller's `timeout`,
+    /// not run to the proxy client's 60 s ceiling. Without the layer this
+    /// test fails by timeout, not assertion.
+    #[tokio::test]
+    async fn guarded_route_bounds_hanging_outbound() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // Accept and hold — dropping the socket would answer with RST, not
+        // a hang; held sockets keep the client's request in flight forever.
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+
+        let mut state = test_state();
+        state.gobrowser_proxy = Arc::new(gobrowser_proxy::GoBrowserProxy::new(format!(
+            "http://127.0.0.1:{port}"
+        )));
+        let app = router(state);
+
+        let resp = tokio::time::timeout(
+            Duration::from_secs(15),
+            app.oneshot(
+                axum::http::Request::post("/chrome/interact")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"timeout": 1, "action": "noop"}"#))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .expect("guard must bound the hanging outbound call")
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::GATEWAY_TIMEOUT);
+    }
+
+    /// Partition pin for issue #147: `/fetch` must keep its typed
+    /// `FetchResponse` deadline body — i.e. stay OUTSIDE the layer. If it
+    /// were moved into the guarded router, the outer bound (armed on the
+    /// same `timeout` field) would fire first and answer the generic
+    /// `{"error": ...}` shape instead.
+    #[tokio::test]
+    async fn fetch_route_keeps_typed_deadline_body() {
+        struct HangingHandler;
+        #[async_trait]
+        impl ox_http::Handler for HangingHandler {
+            async fn handle(
+                &self,
+                req: ox_http::Request,
+            ) -> ox_http::Result<ox_http::HttpResponse> {
+                let _ = req;
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+        }
+
+        let mut state = test_state();
+        state.http_client = Arc::new(HttpClient::with_chain(
+            Arc::new(HangingHandler),
+            HttpConfig::default(),
+        ));
+        let app = router(state);
+        let resp = tokio::time::timeout(
+            Duration::from_secs(10),
+            app.oneshot(
+                axum::http::Request::post("/fetch")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"url": "https://example.com", "timeout": 1}"#,
+                    ))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .expect("typed deadline must fire")
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::GATEWAY_TIMEOUT);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // Typed FetchResponse shape — the layer's generic body has only
+        // {"error"}; `cf_detected`/`elapsed_ms` exist only on the typed path.
+        assert_eq!(v["cf_detected"], false);
+        assert!(v.get("elapsed_ms").is_some());
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("deadline exceeded (1s")
+        );
     }
 }

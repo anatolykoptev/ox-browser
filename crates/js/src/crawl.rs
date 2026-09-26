@@ -42,6 +42,13 @@ pub struct CrawlRequest {
     pub sitemap_max_files: Option<usize>,
     #[serde(default)]
     pub save_to_file: Option<bool>,
+    /// Per-call deadline in seconds for the discovery phase (seed/sitemap
+    /// fetch). `None` → the designed bound; `Some(s)` → clamped to
+    /// `[1, bound]`. The page stream itself is bounded by `max_pages` and
+    /// the crawler's per-page timeouts — an SSE body cannot be
+    /// deadline-wrapped once produced (issue #147).
+    #[serde(default, alias = "timeout_secs")]
+    pub timeout: Option<u64>,
 }
 
 fn default_max_depth() -> u32 {
@@ -107,7 +114,22 @@ pub async fn crawl(
 
     let discovery_mode = config.discovery.clone();
     let crawler = Crawler::new(Arc::clone(&state.http_client), config);
-    let (mut rx, discovery, output_dir) = crawler.crawl(&req.url).await;
+    // The SSE stream leaves this handler before the crawl finishes, so only
+    // the discovery await can be request-bounded here (issue #147).
+    let (mut rx, discovery, output_dir) = match ox_http::deadline::bounded(
+        ox_http::deadline::resolve_timeout_for(req.timeout, ox_http::deadline::CRAWL_BOUND_SECS),
+        crawler.crawl(&req.url),
+    )
+    .await
+    {
+        ox_http::deadline::CallOutcome::Ok(v) => v,
+        ox_http::deadline::CallOutcome::DeadlineExceeded { secs } => {
+            return Err((
+                StatusCode::GATEWAY_TIMEOUT,
+                format!("deadline exceeded ({secs}s per-call bound)"),
+            ));
+        }
+    };
     let start = std::time::Instant::now();
 
     let stream = async_stream::stream! {
