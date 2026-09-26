@@ -156,6 +156,54 @@ mod tests {
         }
     }
 
+    /// #153: an inferred challenge on a non-idempotent method is passed
+    /// through as the original response AND increments
+    /// `inferred_passthrough` exactly once — the production arm, not just
+    /// the counter helper.
+    #[tokio::test]
+    async fn inferred_cf_on_post_returns_response_and_counts_outcome() {
+        struct InferredCfHandler {
+            call_count: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl Handler for InferredCfHandler {
+            async fn handle(&self, req: Request) -> Result<HttpResponse> {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                Err(HttpError::CloudflareInferred(
+                    403,
+                    Box::new(HttpResponse {
+                        status: 403,
+                        url: req.url,
+                        headers: HeaderMap::new(),
+                        body: "cf-body".to_owned(),
+                    }),
+                ))
+            }
+        }
+
+        let before = crate::metrics::SOLVER_OUTCOME_INFERRED_PASSTHROUGH.load(Ordering::Relaxed);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let base: Arc<dyn Handler> = Arc::new(InferredCfHandler {
+            call_count: calls.clone(),
+        });
+        let handler = chain(vec![retry_middleware(fast_config())], base);
+        let req = Request {
+            method: "POST".into(),
+            url: "https://example.com".into(),
+            headers: vec![],
+            body: Some("payload".into()),
+            proxy: None,
+        };
+        let resp = handler.handle(req).await.unwrap();
+        assert_eq!(resp.status, 403, "original response status passes through");
+        assert_eq!(resp.body, "cf-body", "original body passes through");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "POST is sent exactly once");
+        assert!(
+            crate::metrics::SOLVER_OUTCOME_INFERRED_PASSTHROUGH.load(Ordering::Relaxed) > before,
+            "inferred_passthrough must increment on the non-idempotent arm"
+        );
+    }
+
     #[tokio::test]
     async fn retries_on_503_then_succeeds() {
         let call_count = Arc::new(AtomicUsize::new(0));

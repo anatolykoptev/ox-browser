@@ -96,6 +96,64 @@ async fn solves_js_challenge_and_retries() {
     assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
 }
 
+/// Mock handler that always answers a CF challenge — drives the post-solve
+/// resend back into a fresh challenge (issue #154).
+struct AlwaysCfHandler {
+    call_count: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Handler for AlwaysCfHandler {
+    async fn handle(&self, _req: Request) -> Result<HttpResponse> {
+        let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+        Err(HttpError::Cloudflare(
+            ChallengeType::JsChallenge,
+            503,
+            format!("ray-{n}"),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn post_solve_rechallenge_is_counted() {
+    // Mutation check: deleting the `PostSolveRechallenge` record arm makes
+    // the counter assertion fail — the resend's fresh challenge would be
+    // indistinguishable from a solve that ended the challenge.
+    let before = crate::metrics::SOLVER_OUTCOME_POST_SOLVE_RECHALLENGE.load(Ordering::Relaxed);
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let provider_calls = Arc::new(AtomicUsize::new(0));
+    let base: Arc<dyn Handler> = Arc::new(AlwaysCfHandler {
+        call_count: handler_calls.clone(),
+    });
+    let provider: Arc<dyn CookieProvider> = Arc::new(MockProvider {
+        call_count: provider_calls.clone(),
+    });
+    let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
+    let handler = chain(vec![solver_middleware(provider, cache)], base);
+    let req = Request {
+        method: "GET".into(),
+        url: "https://example.com/page".into(),
+        headers: vec![],
+        body: None,
+        proxy: None,
+    };
+    let err = handler.handle(req).await.unwrap_err();
+    assert!(
+        matches!(err, HttpError::Cloudflare(..)),
+        "rechallenge error must propagate, got {err:?}"
+    );
+    assert_eq!(
+        handler_calls.load(Ordering::SeqCst),
+        2,
+        "bare send + resend"
+    );
+    assert_eq!(provider_calls.load(Ordering::SeqCst), 1, "one solve");
+    assert!(
+        crate::metrics::SOLVER_OUTCOME_POST_SOLVE_RECHALLENGE.load(Ordering::Relaxed) > before,
+        "post_solve_rechallenge must increment when the resend is rechallenged"
+    );
+}
+
 #[tokio::test]
 async fn uses_cached_cookies() {
     let provider_calls = Arc::new(AtomicUsize::new(0));

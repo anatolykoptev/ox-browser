@@ -358,9 +358,18 @@ pub static SOLVER_CONFIGURED: AtomicU64 = AtomicU64::new(0);
 ///   (intentional — a block is not a solvable challenge).
 /// - `inferred_passthrough` — a `CloudflareInferred` error on a non-idempotent
 ///   method returned the original response instead of risking a duplicate send.
+/// - `post_solve_rechallenge` — a fresh solve succeeded, but the resend was
+///   answered by another CF challenge or a Block (the sold clearance was
+///   rejected). Counts only rechallenges that surface to the solver as an
+///   error — an inferred challenge on a non-idempotent resend is converted
+///   to `inferred_passthrough` by the inner F1 arm before the solver sees
+///   it. Intended to co-fire with `solved`: `solved` is the provider's
+///   claim, `post_solve_rechallenge` is the resend's verdict (issue #154).
 pub static SOLVER_OUTCOME_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
 /// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
 pub static SOLVER_OUTCOME_STALE_EVICTED: AtomicU64 = AtomicU64::new(0);
+/// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
+pub static SOLVER_OUTCOME_POST_SOLVE_RECHALLENGE: AtomicU64 = AtomicU64::new(0);
 /// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
 pub static SOLVER_OUTCOME_ATTEMPTED: AtomicU64 = AtomicU64::new(0);
 /// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
@@ -377,6 +386,10 @@ pub static SOLVER_OUTCOME_INFERRED_PASSTHROUGH: AtomicU64 = AtomicU64::new(0);
 static SOLVER_OUTCOME_ROWS: &[(&str, &AtomicU64)] = &[
     ("cache_hit", &SOLVER_OUTCOME_CACHE_HIT),
     ("stale_evicted", &SOLVER_OUTCOME_STALE_EVICTED),
+    (
+        "post_solve_rechallenge",
+        &SOLVER_OUTCOME_POST_SOLVE_RECHALLENGE,
+    ),
     ("attempted", &SOLVER_OUTCOME_ATTEMPTED),
     ("solved", &SOLVER_OUTCOME_SOLVED),
     ("provider_failed", &SOLVER_OUTCOME_PROVIDER_FAILED),
@@ -394,6 +407,9 @@ pub enum SolverOutcome {
     CacheHit,
     /// A cached solution was rejected by a fresh CF challenge and evicted.
     StaleEvicted,
+    /// The resend after a successful solve was answered by a fresh CF
+    /// challenge — the sold clearance was rejected (issue #154).
+    PostSolveRechallenge,
     /// `provider.solve()` was invoked.
     Attempted,
     /// `provider.solve()` returned Ok.
@@ -413,6 +429,7 @@ pub fn record_solver_outcome(outcome: SolverOutcome) {
     let counter = match outcome {
         SolverOutcome::CacheHit => &SOLVER_OUTCOME_CACHE_HIT,
         SolverOutcome::StaleEvicted => &SOLVER_OUTCOME_STALE_EVICTED,
+        SolverOutcome::PostSolveRechallenge => &SOLVER_OUTCOME_POST_SOLVE_RECHALLENGE,
         SolverOutcome::Attempted => &SOLVER_OUTCOME_ATTEMPTED,
         SolverOutcome::Solved => &SOLVER_OUTCOME_SOLVED,
         SolverOutcome::ProviderFailed => &SOLVER_OUTCOME_PROVIDER_FAILED,
@@ -573,7 +590,7 @@ pub fn render() -> String {
         },
         LabelledCounter {
             name: "oxbrowser_solver_outcome_total",
-            help: "CF-solver decisions, labelled by outcome. Incremented in middleware_solver at each decision branch — distinguishes a never-run solver from a failed solve from a stale-cache replay (issue #125). Labels: cache_hit, stale_evicted, attempted, solved, provider_failed, negcache_skip, block_passthrough, inferred_passthrough.",
+            help: "CF-solver decisions, labelled by outcome. Incremented in middleware_solver at each decision branch — distinguishes a never-run solver from a failed solve from a stale-cache replay (issue #125). Labels: cache_hit, stale_evicted, attempted, solved, provider_failed, negcache_skip, block_passthrough, inferred_passthrough, post_solve_rechallenge (issue #154).",
             label: "outcome",
             rows: SOLVER_OUTCOME_ROWS,
         },
@@ -753,7 +770,7 @@ mod tests {
             "missing TYPE line for oxbrowser_fetch_outcome_total: {body}"
         );
         // The labelled solver outcome counter (issue #125): one TYPE line,
-        // eight labelled sample lines — every branch must be visible.
+        // nine labelled sample lines — every branch must be visible.
         assert!(
             body.contains("# TYPE oxbrowser_solver_outcome_total counter"),
             "missing TYPE line for oxbrowser_solver_outcome_total: {body}"
@@ -761,6 +778,7 @@ mod tests {
         for label in [
             "cache_hit",
             "stale_evicted",
+            "post_solve_rechallenge",
             "attempted",
             "solved",
             "provider_failed",

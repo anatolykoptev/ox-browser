@@ -9,6 +9,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
+use ox_http::deadline::{CallOutcome, bounded, resolve_timeout};
+
 use crate::AppState;
 
 #[derive(Deserialize)]
@@ -42,9 +44,20 @@ pub async fn fetch_smart(
     let save = req.save_to_file.unwrap_or(false);
     let url = req.url.clone();
 
+    // `None` → the configured endpoint default (`fetch.smart_timeout_secs`
+    // → `EndpointDefaults::smart_timeout_secs`); a caller-supplied
+    // `timeout` wins (issue #156). The outer deadline layer bounds the same
+    // call — this is the first route that is BOTH layer-guarded and
+    // internally bounded: for an explicit `timeout` the layer arms first
+    // with the identical clamped duration, so the outer bound wins that
+    // race and answers the generic 504 shape; the inner typed arm below is
+    // reachable on the no-timeout path (inner 30s < outer 130s), which is
+    // exactly the case this bound exists for. `OUTBOUND_INFLIGHT` counts
+    // both bounds while the inner future runs — cosmetic.
+    let deadline = resolve_timeout(req.timeout.or(Some(state.defaults.smart_timeout_secs)));
     // Middleware chain handles CF detect + solve + retry automatically
-    match state.http_client.get(&req.url).await {
-        Ok(resp) => (
+    match bounded(deadline, state.http_client.get(&req.url)).await {
+        CallOutcome::Ok(Ok(resp)) => (
             StatusCode::OK,
             Json(make_response(
                 resp.status,
@@ -57,7 +70,7 @@ pub async fn fetch_smart(
                 None,
             )),
         ),
-        Err(e) => (
+        CallOutcome::Ok(Err(e)) => (
             StatusCode::BAD_GATEWAY,
             Json(make_response(
                 0,
@@ -68,6 +81,19 @@ pub async fn fetch_smart(
                 save,
                 &url,
                 Some(e.to_string()),
+            )),
+        ),
+        CallOutcome::DeadlineExceeded { secs } => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(make_response(
+                0,
+                String::new(),
+                "auto",
+                false,
+                start,
+                save,
+                &url,
+                Some(format!("deadline exceeded ({secs}s per-call bound)")),
             )),
         ),
     }
@@ -110,6 +136,64 @@ fn make_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gobrowser_proxy::GoBrowserProxy;
+    use crate::{AppState, EndpointDefaults};
+    use async_trait::async_trait;
+    use ox_http::{CookieCache, HttpClient, HttpConfig};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// Minimal AppState for handler-level tests (mirrors fetch.rs tests).
+    fn test_state() -> AppState {
+        AppState::new(
+            Arc::new(crate::tests::MockProvider),
+            Arc::new(CookieCache::new(Duration::from_secs(300))),
+            Arc::new(HttpClient::new(HttpConfig::default()).unwrap()),
+            EndpointDefaults::default(),
+            ox_media::MediaConfig::default(),
+            Arc::new(GoBrowserProxy::new("http://127.0.0.1:8906".to_string())),
+        )
+    }
+
+    /// #156: `fetch.smart_timeout_secs` is the real /fetch-smart default —
+    /// a hanging upstream must trip at the configured bound (1 s), not
+    /// sail to the outer layer's 130 s bound. Deleting the
+    /// `.or(Some(state.defaults.smart_timeout_secs))` arm makes the
+    /// error report `(8s` — or never fire — and this test fails.
+    #[tokio::test]
+    async fn fetch_smart_uses_configured_default_timeout() {
+        struct HangingHandler;
+        #[async_trait]
+        impl ox_http::Handler for HangingHandler {
+            async fn handle(
+                &self,
+                req: ox_http::Request,
+            ) -> ox_http::Result<ox_http::HttpResponse> {
+                let _ = req;
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+        }
+
+        let mut state = test_state();
+        state.http_client = Arc::new(HttpClient::with_chain(
+            Arc::new(HangingHandler),
+            HttpConfig::default(),
+        ));
+        state.defaults.smart_timeout_secs = 1;
+        let req = FetchSmartRequest {
+            url: "http://1.1.1.1".into(),
+            timeout: None,
+            save_to_file: None,
+        };
+        let (status, json) = fetch_smart(State(state), Json(req)).await;
+        assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(
+            json.error.as_deref(),
+            Some("deadline exceeded (1s per-call bound)"),
+            "configured default bound, not the 8s seam default"
+        );
+    }
 
     #[test]
     fn fetch_smart_request_defaults() {
