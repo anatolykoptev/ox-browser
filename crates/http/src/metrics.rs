@@ -143,7 +143,7 @@ pub fn record_read_extraction_rejected() {
 // `deadline::bounded` seam (via `OutboundGuard`), so a surface that forgets
 // the seam cannot forget the gauge.
 
-/// Outbound fetch/read calls currently in flight (point-in-time, can go up
+/// Outbound calls currently in flight across every deadline-bounded surface (point-in-time, can go up
 /// and down). Incremented on entry to `deadline::bounded` and decremented
 /// on exit — including when the deadline fires and the inner future is
 /// dropped. Covers all six outbound surfaces (the seam is the single
@@ -582,7 +582,7 @@ pub fn render() -> String {
     let gauges = [
         Gauge {
             name: "oxbrowser_outbound_inflight",
-            help: "Outbound fetch/read calls currently in flight (point-in-time, can go down). Inc/dec by the deadline::bounded seam; a value above baseline after a caller disconnect indicates orphaned work surviving its bound (issues #128/#139).",
+            help: "Outbound calls currently in flight across every deadline-bounded surface (point-in-time, can go down). Inc/dec by the deadline::bounded seam; a value above baseline after a caller disconnect indicates orphaned work surviving its bound (issues #128/#139).",
             value: OUTBOUND_INFLIGHT.load(Ordering::Relaxed),
         },
         Gauge {
