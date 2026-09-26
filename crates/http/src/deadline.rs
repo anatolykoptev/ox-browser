@@ -82,6 +82,9 @@ pub fn timeout_from_json(args: &serde_json::Map<String, serde_json::Value>) -> O
 /// for the matched surface: callers may tighten a call below its designed
 /// bound but never extend past it — beyond it the surface's own inner
 /// timeout fires first regardless.
+/// Sized against the DEPLOYED `byparr_timeout_secs` (120 in the shipped
+/// config.toml); raising the solver timeout past ~120 without bumping this
+/// constant would invert the outer >= inner invariant.
 pub const SOLVER_CALL_BOUND_SECS: u64 = 130;
 /// `crates/media`'s DOWNLOAD_TIMEOUT (120 s) + margin.
 pub const MEDIA_DOWNLOAD_BOUND_SECS: u64 = 130;
