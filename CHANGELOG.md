@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.12](https://github.com/anatolykoptev/ox-browser/compare/v0.8.11...v0.8.12) (2026-09-26)
+
+
+### Fixed
+
+* **http:** label post-solve rechallenge, pin inferred_passthrough, wire timeout defaults ([#160](https://github.com/anatolykoptev/ox-browser/issues/160)) ([107a28f](https://github.com/anatolykoptev/ox-browser/commit/107a28f78a69a46e69e96bc11c14d88a26f5d28f))
+
 ## [0.8.11](https://github.com/anatolykoptev/ox-browser/compare/v0.8.10...v0.8.11) (2026-09-26)
 
 
