@@ -54,6 +54,20 @@ pub fn resolve_timeout(caller: Option<u64>) -> Duration {
     Duration::from_secs(secs)
 }
 
+/// Pull a caller-supplied `timeout`/`timeout_secs` (seconds) out of a JSON
+/// arguments object — shared by the REST router layer and the MCP dispatch
+/// bound so every surface honors the same field names without either side
+/// knowing the route's input type (issue #147).
+///
+/// Tolerant by contract: a missing key or a non-u64 value yields `None` →
+/// [`resolve_timeout`] applies the default bound. Fail-closed: an
+/// unparseable caller hint still bounds the call, just at the default.
+pub fn timeout_from_json(args: &serde_json::Map<String, serde_json::Value>) -> Option<u64> {
+    args.get("timeout")
+        .or_else(|| args.get("timeout_secs"))
+        .and_then(serde_json::Value::as_u64)
+}
+
 /// The outcome of a deadline-bounded call. The caller can distinguish
 /// "the bound fired" ([`CallOutcome::DeadlineExceeded`]) from "the site
 /// failed" ([`CallOutcome::Ok`] carrying an `Err`), which a plain
@@ -162,6 +176,32 @@ mod tests {
         match outcome {
             CallOutcome::DeadlineExceeded { secs } => assert_eq!(secs, 0),
             other => panic!("expected DeadlineExceeded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn timeout_from_json_picks_timeout() {
+        let v = serde_json::json!({"timeout": 5});
+        assert_eq!(timeout_from_json(v.as_object().unwrap()), Some(5));
+    }
+
+    #[test]
+    fn timeout_from_json_accepts_timeout_secs_alias() {
+        let v = serde_json::json!({"timeout_secs": 7});
+        assert_eq!(timeout_from_json(v.as_object().unwrap()), Some(7));
+    }
+
+    #[test]
+    fn timeout_from_json_ignores_missing_and_non_u64() {
+        let missing = serde_json::Map::new();
+        assert_eq!(timeout_from_json(&missing), None);
+        // Non-integer / negative / float all resolve to the default bound.
+        for bad in [
+            serde_json::json!({"timeout": "8"}),
+            serde_json::json!({"timeout": -1}),
+            serde_json::json!({"timeout": 2.5}),
+        ] {
+            assert_eq!(timeout_from_json(bad.as_object().unwrap()), None);
         }
     }
 }
