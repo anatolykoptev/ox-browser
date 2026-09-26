@@ -155,7 +155,7 @@ fn parse_index(reader: &mut quick_xml::Reader<&[u8]>, buf: &mut Vec<u8>) -> Resu
             Ok(Event::CData(ref e)) if in_loc => {
                 text.push_str(&e.decode()?);
             }
-            Ok(Event::End(ref e)) if e.local_name().as_ref() == b"loc" => {
+            Ok(Event::End(ref e)) if in_loc && e.local_name().as_ref() == b"loc" => {
                 in_loc = false;
                 let url = text.trim();
                 if !url.is_empty() {
@@ -233,12 +233,19 @@ fn parse_urlset_xml(
                     current_tag.clear();
                 } else if name.as_ref() == current_tag.as_bytes() {
                     let value = text.trim();
+                    // Empty <lastmod></lastmod> records None, not Some("") —
+                    // parity with the 0.37 text-event assign, and "" would
+                    // fail filter_since's `lastmod >= since` comparison.
                     if let Some(ref mut entry) = current {
                         match current_tag.as_str() {
                             "loc" => entry.url = value.to_string(),
-                            "lastmod" => entry.lastmod = Some(value.to_string()),
+                            "lastmod" => {
+                                entry.lastmod = (!value.is_empty()).then(|| value.to_string())
+                            }
                             "priority" => entry.priority = value.parse().ok(),
-                            "changefreq" => entry.changefreq = Some(value.to_string()),
+                            "changefreq" => {
+                                entry.changefreq = (!value.is_empty()).then(|| value.to_string())
+                            }
                             _ => {}
                         }
                     }
