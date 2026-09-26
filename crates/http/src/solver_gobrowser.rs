@@ -41,7 +41,26 @@ struct SolveReq {
 struct SolveResp {
     status: String,
     cookies: Option<HashMap<String, String>>,
+    user_agent: Option<String>,
+    body: Option<String>,
     error: Option<String>,
+}
+
+impl SolveResp {
+    /// Map the go-browser v0.20.8+ response (FlareSolverr-shaped: cookies +
+    /// user_agent + body + final_url) onto SolvedChallenge. An empty body
+    /// string means the page never settled past the CF interstitial — treat
+    /// it as absent so the caller takes the cookie-resend path instead of
+    /// serving the challenge page as content. Older go-wowa versions omit
+    /// the new fields entirely; they decode as None → cookie-only replay,
+    /// same as before.
+    fn into_challenge(self) -> SolvedChallenge {
+        SolvedChallenge {
+            cookies: self.cookies.unwrap_or_default(),
+            user_agent: self.user_agent.unwrap_or_default(),
+            body: self.body.filter(|b| !b.is_empty()),
+        }
+    }
 }
 
 impl GoBrowserSolver {
@@ -93,10 +112,10 @@ impl CookieProvider for GoBrowserSolver {
             return Err(body.error.unwrap_or_else(|| "unknown error".into()));
         }
 
-        Ok(SolvedChallenge {
-            cookies: body.cookies.unwrap_or_default(),
-            user_agent: String::new(),
-            body: None,
-        })
+        Ok(body.into_challenge())
     }
 }
+
+#[cfg(test)]
+#[path = "solver_gobrowser_tests.rs"]
+mod tests;
