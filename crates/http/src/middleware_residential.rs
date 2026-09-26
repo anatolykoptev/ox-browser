@@ -165,6 +165,58 @@ mod tests {
         assert_eq!(proxy.as_deref(), Some("http://residential:8080"));
     }
 
+    /// #153: the residential F1 arm — an inferred challenge on a
+    /// non-idempotent method returns the original response and increments
+    /// `inferred_passthrough` once.
+    #[tokio::test]
+    async fn inferred_cf_on_post_passthrough_counts_outcome() {
+        struct InferredCfHandler {
+            call_count: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl Handler for InferredCfHandler {
+            async fn handle(&self, req: Request) -> Result<HttpResponse> {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                Err(HttpError::CloudflareInferred(
+                    403,
+                    Box::new(HttpResponse {
+                        status: 403,
+                        url: req.url,
+                        headers: HeaderMap::new(),
+                        body: "cf-body".to_owned(),
+                    }),
+                ))
+            }
+        }
+
+        let before = crate::metrics::SOLVER_OUTCOME_INFERRED_PASSTHROUGH.load(Ordering::Relaxed);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let base: Arc<dyn Handler> = Arc::new(InferredCfHandler {
+            call_count: calls.clone(),
+        });
+        let handler = chain(
+            vec![residential_proxy_middleware(
+                "http://residential:8080".to_owned(),
+            )],
+            base,
+        );
+        let req = Request {
+            method: "POST".into(),
+            url: "https://example.com".into(),
+            headers: vec![],
+            body: Some("payload".into()),
+            proxy: None,
+        };
+        let resp = handler.handle(req).await.unwrap();
+        assert_eq!(resp.status, 403);
+        assert_eq!(resp.body, "cf-body");
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "POST is sent exactly once");
+        assert!(
+            crate::metrics::SOLVER_OUTCOME_INFERRED_PASSTHROUGH.load(Ordering::Relaxed) > before,
+            "inferred_passthrough must increment on the residential F1 arm"
+        );
+    }
+
     #[tokio::test]
     async fn passes_through_without_cf() {
         struct AlwaysOkHandler {

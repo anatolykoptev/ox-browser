@@ -358,9 +358,15 @@ pub static SOLVER_CONFIGURED: AtomicU64 = AtomicU64::new(0);
 ///   (intentional — a block is not a solvable challenge).
 /// - `inferred_passthrough` — a `CloudflareInferred` error on a non-idempotent
 ///   method returned the original response instead of risking a duplicate send.
+/// - `post_solve_rechallenge` — a fresh solve succeeded, but the resend was
+///   answered by another CF challenge (the sold clearance was rejected).
+///   Counted separately from `solved`, which only measures the provider's
+///   claim (issue #154).
 pub static SOLVER_OUTCOME_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
 /// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
 pub static SOLVER_OUTCOME_STALE_EVICTED: AtomicU64 = AtomicU64::new(0);
+/// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
+pub static SOLVER_OUTCOME_POST_SOLVE_RECHALLENGE: AtomicU64 = AtomicU64::new(0);
 /// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
 pub static SOLVER_OUTCOME_ATTEMPTED: AtomicU64 = AtomicU64::new(0);
 /// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
@@ -377,6 +383,10 @@ pub static SOLVER_OUTCOME_INFERRED_PASSTHROUGH: AtomicU64 = AtomicU64::new(0);
 static SOLVER_OUTCOME_ROWS: &[(&str, &AtomicU64)] = &[
     ("cache_hit", &SOLVER_OUTCOME_CACHE_HIT),
     ("stale_evicted", &SOLVER_OUTCOME_STALE_EVICTED),
+    (
+        "post_solve_rechallenge",
+        &SOLVER_OUTCOME_POST_SOLVE_RECHALLENGE,
+    ),
     ("attempted", &SOLVER_OUTCOME_ATTEMPTED),
     ("solved", &SOLVER_OUTCOME_SOLVED),
     ("provider_failed", &SOLVER_OUTCOME_PROVIDER_FAILED),
@@ -394,6 +404,9 @@ pub enum SolverOutcome {
     CacheHit,
     /// A cached solution was rejected by a fresh CF challenge and evicted.
     StaleEvicted,
+    /// The resend after a successful solve was answered by a fresh CF
+    /// challenge — the sold clearance was rejected (issue #154).
+    PostSolveRechallenge,
     /// `provider.solve()` was invoked.
     Attempted,
     /// `provider.solve()` returned Ok.
@@ -413,6 +426,7 @@ pub fn record_solver_outcome(outcome: SolverOutcome) {
     let counter = match outcome {
         SolverOutcome::CacheHit => &SOLVER_OUTCOME_CACHE_HIT,
         SolverOutcome::StaleEvicted => &SOLVER_OUTCOME_STALE_EVICTED,
+        SolverOutcome::PostSolveRechallenge => &SOLVER_OUTCOME_POST_SOLVE_RECHALLENGE,
         SolverOutcome::Attempted => &SOLVER_OUTCOME_ATTEMPTED,
         SolverOutcome::Solved => &SOLVER_OUTCOME_SOLVED,
         SolverOutcome::ProviderFailed => &SOLVER_OUTCOME_PROVIDER_FAILED,

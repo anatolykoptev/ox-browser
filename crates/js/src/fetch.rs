@@ -42,8 +42,8 @@ pub struct FetchRequest {
     pub content_type: Option<String>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    /// Per-call deadline in seconds. `None` → the seam default
-    /// (`deadline::DEFAULT_CALL_TIMEOUT_SECS`); `Some(s)` → clamped to
+    /// Per-call deadline in seconds. `None` → the configured endpoint
+    /// default (`fetch.default_timeout_secs`); `Some(s)` → clamped to
     /// `[1, deadline::MAX_CALL_TIMEOUT_SECS]`. Bounds the WHOLE call
     /// (retry loop + solver escalation + rate-limit wait), not one
     /// attempt — issue #139. Same field/name/units/ceiling as `/read`'s
@@ -134,7 +134,11 @@ pub async fn fetch(
     // the ceiling. On elapsed the inner future is dropped, cancelling the
     // in-flight request; the in-flight gauge (managed by `bounded`)
     // decrements with it.
-    let deadline = resolve_timeout(req.timeout);
+    // `None` → the configured endpoint default (`fetch.default_timeout_secs`
+    // → `EndpointDefaults::fetch_timeout_secs`), not the hard-coded seam
+    // default — the configured default only wins when the caller gave no
+    // timeout (issue #156).
+    let deadline = resolve_timeout(req.timeout.or(Some(state.defaults.fetch_timeout_secs)));
     let outcome = bounded(
         deadline,
         state.http_client.request(
@@ -278,6 +282,68 @@ mod tests {
     // and `Err(e)` → HTTP 502 with `status: 0` and `error` set. These two
     // tests pin both shapes at the handler level so a future change to the
     // wrapper or the retry gate cannot silently move the contract.
+
+    /// #156: `fetch.default_timeout_secs` is the real /fetch default —
+    /// a hanging upstream must trip at the configured bound (1 s), not
+    /// the hard-coded 8 s seam default. Deleting the
+    /// `.or(Some(state.defaults.fetch_timeout_secs))` arm makes the
+    /// error string report `(8s` and this test fails.
+    #[tokio::test]
+    async fn fetch_uses_configured_default_timeout() {
+        struct HangingHandler;
+        #[async_trait]
+        impl ox_http::Handler for HangingHandler {
+            async fn handle(
+                &self,
+                req: ox_http::Request,
+            ) -> ox_http::Result<ox_http::HttpResponse> {
+                let _ = req;
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+        }
+
+        let mut state = state_with_500_handler();
+        state.http_client = Arc::new(ox_http::HttpClient::with_chain(
+            Arc::new(HangingHandler),
+            ox_http::HttpConfig::default(),
+        ));
+        state.defaults.fetch_timeout_secs = 1;
+        let req = FetchRequest {
+            url: "http://1.1.1.1".into(),
+            method: None,
+            body: None,
+            content_type: None,
+            headers: std::collections::HashMap::new(),
+            timeout: None,
+        };
+        let (status, json) = fetch(State(state), Json(req)).await;
+        assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(
+            json.error.as_deref(),
+            Some("deadline exceeded (1s per-call bound)"),
+            "configured default bound, not the 8s seam default"
+        );
+    }
+
+    /// The configured default only fills the `None` case — a caller
+    /// `timeout` still wins.
+    #[tokio::test]
+    async fn fetch_caller_timeout_beats_configured_default() {
+        let mut state = state_with_500_handler();
+        state.defaults.fetch_timeout_secs = 1;
+        let req = FetchRequest {
+            url: "http://1.1.1.1".into(),
+            method: Some("POST".into()),
+            body: Some("x".into()),
+            content_type: None,
+            headers: std::collections::HashMap::new(),
+            timeout: Some(120),
+        };
+        let (status, json) = fetch(State(state), Json(req)).await;
+        assert_eq!(status, StatusCode::OK, "caller timeout → no 1s bound");
+        assert_eq!(json.status, 500);
+    }
 
     /// POST on 500 → HTTP 200, `status: 500`, `error: None`, body present.
     /// POST is non-idempotent: retry returns the response as-is (no retry

@@ -9,6 +9,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
+use ox_http::deadline::{CallOutcome, bounded, resolve_timeout};
+
 use crate::AppState;
 
 #[derive(Deserialize)]
@@ -42,9 +44,14 @@ pub async fn fetch_smart(
     let save = req.save_to_file.unwrap_or(false);
     let url = req.url.clone();
 
+    // `None` → the configured endpoint default (`fetch.smart_timeout_secs`
+    // → `EndpointDefaults::smart_timeout_secs`); a caller-supplied
+    // `timeout` wins (issue #156). The outer deadline layer bounds the same
+    // call — this inner bound answers with the endpoint's error shape.
+    let deadline = resolve_timeout(req.timeout.or(Some(state.defaults.smart_timeout_secs)));
     // Middleware chain handles CF detect + solve + retry automatically
-    match state.http_client.get(&req.url).await {
-        Ok(resp) => (
+    match bounded(deadline, state.http_client.get(&req.url)).await {
+        CallOutcome::Ok(Ok(resp)) => (
             StatusCode::OK,
             Json(make_response(
                 resp.status,
@@ -57,7 +64,7 @@ pub async fn fetch_smart(
                 None,
             )),
         ),
-        Err(e) => (
+        CallOutcome::Ok(Err(e)) => (
             StatusCode::BAD_GATEWAY,
             Json(make_response(
                 0,
@@ -68,6 +75,19 @@ pub async fn fetch_smart(
                 save,
                 &url,
                 Some(e.to_string()),
+            )),
+        ),
+        CallOutcome::DeadlineExceeded { secs } => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(make_response(
+                0,
+                String::new(),
+                "auto",
+                false,
+                start,
+                save,
+                &url,
+                Some(format!("deadline exceeded ({secs}s per-call bound)")),
             )),
         ),
     }

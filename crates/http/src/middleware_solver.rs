@@ -137,7 +137,15 @@ impl SolverHandler {
 
         // No body — retry with cookies + UA
         inject_solution(&mut req, &solution);
-        self.next.handle(req).await
+        let res = self.next.handle(req).await;
+        // A fresh challenge answering the resend means the clearance the
+        // provider just sold us was rejected — count it separately from
+        // `solved` (which only measures the provider's claim) so a solve
+        // that does not end the challenge is visible (issue #154).
+        if let Err(HttpError::Cloudflare(..) | HttpError::CloudflareInferred(..)) = &res {
+            record_solver_outcome(SolverOutcome::PostSolveRechallenge);
+        }
+        res
     }
 }
 
