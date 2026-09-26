@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.11](https://github.com/anatolykoptev/ox-browser/compare/v0.8.10...v0.8.11) (2026-09-26)
+
+
+### Fixed
+
+* **deps:** quick-xml 0.41 + 50k URL cap for sitemap parsing ([#158](https://github.com/anatolykoptev/ox-browser/issues/158)) ([14eeca4](https://github.com/anatolykoptev/ox-browser/commit/14eeca4af52dfca7026a8f4f144d29d5da9d8e6d))
+
 ## [0.8.10](https://github.com/anatolykoptev/ox-browser/compare/v0.8.9...v0.8.10) (2026-09-26)
 
 
