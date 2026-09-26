@@ -620,7 +620,7 @@ async fn inferred_challenge_on_post_returns_original_response() {
 /// otherwise the next request replays the same stale entry again (the
 /// pre-fix behaviour: stale entries were never revalidated).
 ///
-/// Mutation probe: delete `self.cache.remove(&domain)` in the cached-send
+/// Mutation probe: delete the `self.cache.remove_if(&domain, &solution)`
 /// branch and this test fails — `cache.get` still returns the stale entry.
 #[tokio::test]
 async fn stale_eviction_survives_solve_failure() {

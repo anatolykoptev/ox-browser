@@ -127,7 +127,7 @@ Two-level system:
 
 ### Retry
 
-Exponential backoff with jitter. `is_retryable_status()` classifies 429/5xx + CF errors.
+Exponential backoff with jitter. `is_retryable_status()` classifies 429/5xx (CF errors are non-retryable; solver-owned).
 `parse_retry_after()` handles integer seconds and HTTP-date. `retry_do()` is async executor.
 
 ## Core Interfaces

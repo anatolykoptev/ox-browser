@@ -329,7 +329,7 @@ fn status_504_ignored() {
 }
 
 // ==========================================================================
-// MANAGED CHALLENGE (200) — retryable and solvable
+// MANAGED CHALLENGE (200) — solvable (non-retryable; solver-owned)
 // ==========================================================================
 
 /// ManagedChallenge is decided by the solver, not replayed by retry (issue

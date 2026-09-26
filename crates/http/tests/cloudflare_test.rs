@@ -239,8 +239,8 @@ fn realistic_block_page() {
 }
 
 // ── Edge case 13: Retry + CF middleware integration ─────────────────
-// Verifies that CF errors are retried automatically when both
-// middlewares are in the chain (retry wrapping cloudflare).
+// Verifies that CF errors are NOT retried by generic retry — the solver
+// owns the re-send decision (issue #125).
 
 struct CfThenOkHandler {
     responses: Vec<(u16, String, String)>, // (status, body, server)

@@ -324,7 +324,8 @@ fn build_middlewares(config: &HttpConfig) -> Vec<MiddlewareFn> {
         middlewares.push(residential_proxy_middleware(proxy.clone()));
     }
 
-    // Cloudflare detection (inside retry so CF triggers auto-retry).
+    // Cloudflare detection — classify blocked responses into CF errors for
+    // the solver (CF errors are non-retryable; solver owns re-sends).
     if config.cloudflare_detect {
         middlewares.push(cloudflare_detect_middleware());
     }
