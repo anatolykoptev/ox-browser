@@ -359,9 +359,12 @@ pub static SOLVER_CONFIGURED: AtomicU64 = AtomicU64::new(0);
 /// - `inferred_passthrough` — a `CloudflareInferred` error on a non-idempotent
 ///   method returned the original response instead of risking a duplicate send.
 /// - `post_solve_rechallenge` — a fresh solve succeeded, but the resend was
-///   answered by another CF challenge (the sold clearance was rejected).
-///   Counted separately from `solved`, which only measures the provider's
-///   claim (issue #154).
+///   answered by another CF challenge or a Block (the sold clearance was
+///   rejected). Counts only rechallenges that surface to the solver as an
+///   error — an inferred challenge on a non-idempotent resend is converted
+///   to `inferred_passthrough` by the inner F1 arm before the solver sees
+///   it. Intended to co-fire with `solved`: `solved` is the provider's
+///   claim, `post_solve_rechallenge` is the resend's verdict (issue #154).
 pub static SOLVER_OUTCOME_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
 /// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
 pub static SOLVER_OUTCOME_STALE_EVICTED: AtomicU64 = AtomicU64::new(0);
@@ -587,7 +590,7 @@ pub fn render() -> String {
         },
         LabelledCounter {
             name: "oxbrowser_solver_outcome_total",
-            help: "CF-solver decisions, labelled by outcome. Incremented in middleware_solver at each decision branch — distinguishes a never-run solver from a failed solve from a stale-cache replay (issue #125). Labels: cache_hit, stale_evicted, attempted, solved, provider_failed, negcache_skip, block_passthrough, inferred_passthrough.",
+            help: "CF-solver decisions, labelled by outcome. Incremented in middleware_solver at each decision branch — distinguishes a never-run solver from a failed solve from a stale-cache replay (issue #125). Labels: cache_hit, stale_evicted, attempted, solved, provider_failed, negcache_skip, block_passthrough, inferred_passthrough, post_solve_rechallenge (issue #154).",
             label: "outcome",
             rows: SOLVER_OUTCOME_ROWS,
         },
@@ -767,7 +770,7 @@ mod tests {
             "missing TYPE line for oxbrowser_fetch_outcome_total: {body}"
         );
         // The labelled solver outcome counter (issue #125): one TYPE line,
-        // eight labelled sample lines — every branch must be visible.
+        // nine labelled sample lines — every branch must be visible.
         assert!(
             body.contains("# TYPE oxbrowser_solver_outcome_total counter"),
             "missing TYPE line for oxbrowser_solver_outcome_total: {body}"
@@ -775,6 +778,7 @@ mod tests {
         for label in [
             "cache_hit",
             "stale_evicted",
+            "post_solve_rechallenge",
             "attempted",
             "solved",
             "provider_failed",

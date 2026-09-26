@@ -40,9 +40,14 @@ pub const DEFAULT_CALL_TIMEOUT_SECS: u64 = 8;
 /// ceiling is [`SOLVER_CALL_BOUND_SECS`]: a fetch that escalates to a
 /// cold solver pass is configured for up to 120 s behind Byparr — a
 /// lower ceiling would turn a legitimate cold solve into a guaranteed
-/// deadline error. Only an explicit caller `timeout` reaches this high;
-/// the DEFAULT stays 8 s so silent consumers keep the
-/// go-search-calibrated bound.
+/// deadline error. Only an explicit caller `timeout` reaches this high.
+///
+/// NOTE (issue #156): `/fetch`, `/fetch-smart` and the MCP `fetch` tool
+/// resolve `None` → the configured endpoint defaults
+/// (`fetch.default_timeout_secs` = 15, `fetch.smart_timeout_secs` = 30),
+/// NOT to this constant — a silent consumer relying on the 8 s bound must
+/// send an explicit `timeout`. `/read`, MCP `read` and the CLI keep the
+/// 8 s default; this constant remains their seam default.
 pub const MAX_CALL_TIMEOUT_SECS: u64 = SOLVER_CALL_BOUND_SECS;
 
 /// Resolve a caller-supplied timeout (seconds) into the effective

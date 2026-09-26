@@ -37,7 +37,8 @@ pub struct FetchInput {
     /// body is present. Ignored when no body.
     #[serde(default)]
     pub content_type: Option<String>,
-    /// Per-call deadline in seconds. `None` → seam default; `Some(s)` →
+    /// Per-call deadline in seconds. `None` → the configured endpoint
+    /// default (`fetch.default_timeout_secs`); `Some(s)` →
     /// clamped to `[1, MAX_CALL_TIMEOUT_SECS]`. Bounds the whole call,
     /// not one attempt. Same field/units/ceiling as `/fetch`, `/read`,
     /// MCP `read`, and the CLI `--timeout` flag (issue #139). The legacy
@@ -141,8 +142,11 @@ impl OxMcpServer {
         };
 
         // Bound the whole call (retry loop + solver escalation + rate-limit
-        // wait), not one attempt — issue #139. Same seam as /fetch.
-        let deadline = resolve_timeout(input.timeout);
+        // wait), not one attempt — issue #139. Same seam as /fetch, and the
+        // same `None` → configured endpoint default
+        // (`fetch.default_timeout_secs`) — parity, not divergence (issue
+        // #156).
+        let deadline = resolve_timeout(input.timeout.or(Some(self.defaults.fetch_timeout_secs)));
         let outcome = bounded(
             deadline,
             self.http_client.request(
