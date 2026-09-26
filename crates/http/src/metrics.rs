@@ -337,6 +337,92 @@ pub static PROXY_DISABLED: AtomicU64 = AtomicU64::new(0);
 /// solve time — is visible to Prometheus alerting (issue #29, silent_downgrade).
 pub static SOLVER_CONFIGURED: AtomicU64 = AtomicU64::new(0);
 
+/// CF-solver decisions, labelled by `outcome`. Incremented in
+/// `middleware_solver` at each decision branch — this is the counter that
+/// distinguishes "the solver never ran" from "ran and failed" (issue #125:
+/// `solver_giveup_total` alone cannot tell a negcache skip from a missing
+/// attempt or a stale cache replay).
+///
+/// Labels (each maps to exactly one branch in middleware_solver.rs):
+/// - `cache_hit`            — a stored solution was injected for the send.
+/// - `stale_evicted`        — a cached solution was answered by a fresh CF
+///   challenge; the entry was evicted and the challenge resolved fresh.
+/// - `attempted`            — `provider.solve()` was invoked (a real,
+///   potentially 15-25s solve started — the line issue #125 needed to see).
+/// - `solved`               — `provider.solve()` returned Ok.
+/// - `provider_failed`      — `provider.solve()` returned Err (also feeds the
+///   per-domain negcache cooldown).
+/// - `negcache_skip`        — the solver negative cache suppressed the attempt
+///   (same branch as `oxbrowser_solver_giveup_total`, kept for continuity).
+/// - `block_passthrough`    — `ChallengeType::Block` passed through unsolved
+///   (intentional — a block is not a solvable challenge).
+/// - `inferred_passthrough` — a `CloudflareInferred` error on a non-idempotent
+///   method returned the original response instead of risking a duplicate send.
+pub static SOLVER_OUTCOME_CACHE_HIT: AtomicU64 = AtomicU64::new(0);
+/// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
+pub static SOLVER_OUTCOME_STALE_EVICTED: AtomicU64 = AtomicU64::new(0);
+/// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
+pub static SOLVER_OUTCOME_ATTEMPTED: AtomicU64 = AtomicU64::new(0);
+/// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
+pub static SOLVER_OUTCOME_SOLVED: AtomicU64 = AtomicU64::new(0);
+/// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
+pub static SOLVER_OUTCOME_PROVIDER_FAILED: AtomicU64 = AtomicU64::new(0);
+/// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
+pub static SOLVER_OUTCOME_NEGCACHE_SKIP: AtomicU64 = AtomicU64::new(0);
+/// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
+pub static SOLVER_OUTCOME_BLOCK_PASSTHROUGH: AtomicU64 = AtomicU64::new(0);
+/// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
+pub static SOLVER_OUTCOME_INFERRED_PASSTHROUGH: AtomicU64 = AtomicU64::new(0);
+
+static SOLVER_OUTCOME_ROWS: &[(&str, &AtomicU64)] = &[
+    ("cache_hit", &SOLVER_OUTCOME_CACHE_HIT),
+    ("stale_evicted", &SOLVER_OUTCOME_STALE_EVICTED),
+    ("attempted", &SOLVER_OUTCOME_ATTEMPTED),
+    ("solved", &SOLVER_OUTCOME_SOLVED),
+    ("provider_failed", &SOLVER_OUTCOME_PROVIDER_FAILED),
+    ("negcache_skip", &SOLVER_OUTCOME_NEGCACHE_SKIP),
+    ("block_passthrough", &SOLVER_OUTCOME_BLOCK_PASSTHROUGH),
+    ("inferred_passthrough", &SOLVER_OUTCOME_INFERRED_PASSTHROUGH),
+];
+
+/// Solver decision branches — the `outcome` label of
+/// `oxbrowser_solver_outcome_total`. Each variant maps to exactly one
+/// decision point in `middleware_solver` (see [`SOLVER_OUTCOME_CACHE_HIT`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolverOutcome {
+    /// A stored solution was injected for the send.
+    CacheHit,
+    /// A cached solution was rejected by a fresh CF challenge and evicted.
+    StaleEvicted,
+    /// `provider.solve()` was invoked.
+    Attempted,
+    /// `provider.solve()` returned Ok.
+    Solved,
+    /// `provider.solve()` returned Err.
+    ProviderFailed,
+    /// The per-domain cooldown suppressed a solve attempt.
+    NegcacheSkip,
+    /// A `Block` challenge was passed through unsolved.
+    BlockPassthrough,
+    /// A non-idempotent inferred challenge returned the original response.
+    InferredPassthrough,
+}
+
+/// Increment `oxbrowser_solver_outcome_total{outcome}` for the given branch.
+pub fn record_solver_outcome(outcome: SolverOutcome) {
+    let counter = match outcome {
+        SolverOutcome::CacheHit => &SOLVER_OUTCOME_CACHE_HIT,
+        SolverOutcome::StaleEvicted => &SOLVER_OUTCOME_STALE_EVICTED,
+        SolverOutcome::Attempted => &SOLVER_OUTCOME_ATTEMPTED,
+        SolverOutcome::Solved => &SOLVER_OUTCOME_SOLVED,
+        SolverOutcome::ProviderFailed => &SOLVER_OUTCOME_PROVIDER_FAILED,
+        SolverOutcome::NegcacheSkip => &SOLVER_OUTCOME_NEGCACHE_SKIP,
+        SolverOutcome::BlockPassthrough => &SOLVER_OUTCOME_BLOCK_PASSTHROUGH,
+        SolverOutcome::InferredPassthrough => &SOLVER_OUTCOME_INFERRED_PASSTHROUGH,
+    };
+    counter.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Per-domain rate-limiter entry count at scrape time (point-in-time, can
 /// shrink). Updated after each insert and after `evict_expired` sweeps stale
 /// domains so operators can confirm bounded growth (issue #20,
@@ -478,12 +564,20 @@ pub fn render() -> String {
     // /fetch outcome — labelled by `outcome`. Incremented in the /fetch and
     // MCP fetch handlers (NOT in read_page_inner). One counter, five labels;
     // each label's branch is documented on the matching FETCH_OUTCOME_* static.
-    let labelled = [LabelledCounter {
-        name: "oxbrowser_fetch_outcome_total",
-        help: "/fetch (and MCP fetch) outcomes, labelled by outcome. Incremented in the fetch handler, not the read pipeline. Labels: ok, upstream_error, challenge, rate_limited, timeout (the per-call bound, distinct from a wreq per-attempt timeout).",
-        label: "outcome",
-        rows: FETCH_OUTCOME_ROWS,
-    }];
+    let labelled = [
+        LabelledCounter {
+            name: "oxbrowser_fetch_outcome_total",
+            help: "/fetch (and MCP fetch) outcomes, labelled by outcome. Incremented in the fetch handler, not the read pipeline. Labels: ok, upstream_error, challenge, rate_limited, timeout (the per-call bound, distinct from a wreq per-attempt timeout).",
+            label: "outcome",
+            rows: FETCH_OUTCOME_ROWS,
+        },
+        LabelledCounter {
+            name: "oxbrowser_solver_outcome_total",
+            help: "CF-solver decisions, labelled by outcome. Incremented in middleware_solver at each decision branch — distinguishes a never-run solver from a failed solve from a stale-cache replay (issue #125). Labels: cache_hit, stale_evicted, attempted, solved, provider_failed, negcache_skip, block_passthrough, inferred_passthrough.",
+            label: "outcome",
+            rows: SOLVER_OUTCOME_ROWS,
+        },
+    ];
 
     let gauges = [
         Gauge {
@@ -658,6 +752,29 @@ mod tests {
             body.contains("# TYPE oxbrowser_fetch_outcome_total counter"),
             "missing TYPE line for oxbrowser_fetch_outcome_total: {body}"
         );
+        // The labelled solver outcome counter (issue #125): one TYPE line,
+        // eight labelled sample lines — every branch must be visible.
+        assert!(
+            body.contains("# TYPE oxbrowser_solver_outcome_total counter"),
+            "missing TYPE line for oxbrowser_solver_outcome_total: {body}"
+        );
+        for label in [
+            "cache_hit",
+            "stale_evicted",
+            "attempted",
+            "solved",
+            "provider_failed",
+            "negcache_skip",
+            "block_passthrough",
+            "inferred_passthrough",
+        ] {
+            assert!(
+                body.lines().any(|l| l.starts_with(&format!(
+                    "oxbrowser_solver_outcome_total{{outcome=\"{label}\"}}"
+                ))),
+                "missing solver_outcome sample for outcome={label}: {body}"
+            );
+        }
         for label in [
             "ok",
             "upstream_error",

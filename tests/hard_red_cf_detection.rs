@@ -329,20 +329,24 @@ fn status_504_ignored() {
 }
 
 // ==========================================================================
-// MANAGED CHALLENGE (200) — retryable and solvable
+// MANAGED CHALLENGE (200) — solvable (non-retryable; solver-owned)
 // ==========================================================================
 
-/// ManagedChallenge should be retryable (same as other CF errors).
+/// ManagedChallenge is decided by the solver, not replayed by retry (issue
+/// #125: CF errors are non-retryable — the solver sits outside the retry
+/// loop and owns every CF re-send).
 #[test]
-fn managed_challenge_is_retryable() {
+fn managed_challenge_is_not_retryable() {
     use ox_http::HttpError;
     let err = HttpError::Cloudflare(ChallengeType::ManagedChallenge, 200, "ray".into());
-    assert!(err.is_retryable());
+    assert!(!err.is_retryable());
 }
 
-/// All challenge types should be retryable.
+/// All challenge types are non-retryable — the solver middleware owns every
+/// CF re-send decision (issue #125); the dumb retry loop must not replay a
+/// challenge before the solver sees it.
 #[test]
-fn all_challenge_types_retryable() {
+fn all_challenge_types_not_retryable() {
     use ox_http::HttpError;
     for ct in [
         ChallengeType::JsChallenge,
@@ -351,7 +355,7 @@ fn all_challenge_types_retryable() {
         ChallengeType::Block,
     ] {
         let err = HttpError::Cloudflare(ct, 403, "ray".into());
-        assert!(err.is_retryable(), "{ct} should be retryable");
+        assert!(!err.is_retryable(), "{ct} should not be retryable");
     }
 }
 

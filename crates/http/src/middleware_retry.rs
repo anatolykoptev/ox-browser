@@ -8,6 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::error::HttpError;
+use crate::metrics::{SolverOutcome, record_solver_outcome};
 use crate::middleware::{Handler, MiddlewareFn, Request};
 use crate::retry::{RetryConfig, is_retryable_status, retry_do};
 use crate::{HttpResponse, Result};
@@ -88,7 +89,13 @@ impl Handler for RetryHandler {
         // `is_idempotent` doc comment.
         if !is_idempotent(&req.method) {
             return match self.next.handle(req).await {
-                Err(HttpError::CloudflareInferred(_, resp)) => Ok(*resp),
+                // The passthrough is decided HERE (inside the solver under the
+                // issue-#125 chain order) — count it so the solver outcome
+                // metric sees the decision wherever in the chain it happens.
+                Err(HttpError::CloudflareInferred(_, resp)) => {
+                    record_solver_outcome(SolverOutcome::InferredPassthrough);
+                    Ok(*resp)
+                }
                 other => other,
             };
         }

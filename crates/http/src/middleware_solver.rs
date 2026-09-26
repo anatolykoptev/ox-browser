@@ -3,12 +3,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tracing::debug;
+use tracing::{info, warn};
 
 use crate::cloudflare::ChallengeType;
 use crate::cookie_cache::CookieCache;
 use crate::cookie_provider::{CookieProvider, SolvedChallenge};
 use crate::error::HttpError;
+use crate::metrics::{SolverOutcome, record_solver_outcome};
 use crate::middleware::{Handler, MiddlewareFn, Request};
 use crate::middleware_retry::is_idempotent;
 use crate::solver_negcache::{SolverNegCache, record_solver_giveup};
@@ -58,6 +59,24 @@ impl SolverHandler {
     /// request, the origin never saw it) and inferred challenges (idempotent
     /// methods only — the caller gates the non-idempotent case before
     /// reaching here).
+    /// Shared cooldown gate: if the domain is on negcache cooldown, count the
+    /// skip and return the solver-decision error. Called from both the top of
+    /// `handle` (pre-send fast-fail) and `solve_and_retry` (covers the
+    /// stale-evict path, which returns before `handle`'s own check).
+    fn negcache_reject(&self, domain: &str) -> Option<HttpError> {
+        if !self.negcache.is_blocked(domain) {
+            return None;
+        }
+        record_solver_giveup(domain);
+        record_solver_outcome(SolverOutcome::NegcacheSkip);
+        // Return ProxyPool (not Cloudflare) — this is a solver decision,
+        // not a fresh CF challenge. Consistent with the N failures before
+        // cooldown trips; the GiveUp gate in read_pipeline fast-fails either way.
+        Some(HttpError::ProxyPool(format!(
+            "solver negcache: domain {domain} on cooldown"
+        )))
+    }
+
     async fn solve_and_retry(
         &self,
         mut req: Request,
@@ -67,20 +86,31 @@ impl SolverHandler {
         // Retry-storm guard: if this domain is on cooldown after repeated
         // solve failures, skip the 15-25s solver and surface the CF error
         // immediately. A success below clears the cooldown.
-        if self.negcache.is_blocked(domain) {
-            record_solver_giveup(domain);
-            // Return ProxyPool (not Cloudflare) — this is a solver decision,
-            // not a fresh CF challenge. Consistent with the N failures before
-            // cooldown trips; the GiveUp gate in read_pipeline fast-fails either way.
-            return Err(HttpError::ProxyPool(format!(
-                "solver negcache: domain {domain} on cooldown"
-            )));
+        if let Some(err) = self.negcache_reject(domain) {
+            return Err(err);
         }
 
-        debug!(domain = %domain, challenge = %challenge_type, "solver: solving challenge");
+        record_solver_outcome(SolverOutcome::Attempted);
+        let started = std::time::Instant::now();
+        info!(domain = %domain, challenge = %challenge_type, "solver: solving challenge");
         let solution = match self.provider.solve(&req.url, challenge_type).await {
-            Ok(s) => s,
+            Ok(s) => {
+                record_solver_outcome(SolverOutcome::Solved);
+                info!(
+                    domain = %domain,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "solver: challenge solved"
+                );
+                s
+            }
             Err(e) => {
+                record_solver_outcome(SolverOutcome::ProviderFailed);
+                warn!(
+                    domain = %domain,
+                    error = %e,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "solver: solve failed"
+                );
                 // NOTE: we count all solver errors (including transient
                 // 502/timeout) toward the cooldown. A go-browser blip trips
                 // a 5-min per-domain cooldown which auto-recovers — acceptable
@@ -96,7 +126,7 @@ impl SolverHandler {
 
         // If solver returned the page body directly, use it (avoids IP mismatch on retry)
         if let Some(ref body) = solution.body {
-            debug!(domain = %domain, "solver: using body from solve response");
+            info!(domain = %domain, "solver: using body from solve response");
             return Ok(HttpResponse {
                 status: 200,
                 url: req.url.clone(),
@@ -136,33 +166,29 @@ fn inject_solution(req: &mut Request, solution: &SolvedChallenge) {
     }
 }
 
-#[async_trait]
-impl Handler for SolverHandler {
-    async fn handle(&self, mut req: Request) -> Result<HttpResponse> {
-        let domain = domain_from_url(&req.url);
-
-        // Check cache first — inject cookies if we have a prior solution.
-        // This is the first (and only) send of the request with cached
-        // cookies — not a re-send of a failed attempt, so the F1
-        // idempotency gate does not apply here.
-        if let Some(solution) = self.cache.get(&domain) {
-            debug!(domain = %domain, "solver: using cached cookies");
-            inject_solution(&mut req, &solution);
-            return self.next.handle(req).await;
-        }
-
-        // No cached cookies — try the request normally.
-        match self.next.handle(req.clone()).await {
+impl SolverHandler {
+    /// Route a CF-error result to the right solver action. Shared by the cold
+    /// path (no cached solution) and the stale-eviction path (cached solution
+    /// rejected) so both make identical decisions (issue #125).
+    async fn resolve_challenge(
+        &self,
+        req: Request,
+        domain: &str,
+        err: HttpError,
+    ) -> Result<HttpResponse> {
+        match err {
             // Block errors are not solvable — pass through.
-            Err(HttpError::Cloudflare(ChallengeType::Block, status, ray)) => {
+            HttpError::Cloudflare(ChallengeType::Block, status, ray) => {
+                record_solver_outcome(SolverOutcome::BlockPassthrough);
                 Err(HttpError::Cloudflare(ChallengeType::Block, status, ray))
             }
             // F1: inferred-from-status challenge on a non-idempotent method.
             // The origin MAY have processed the request — do not re-send.
             // Return the original response so the caller sees the real
             // status + body instead of a synthesised empty error.
-            Err(HttpError::CloudflareInferred(_, resp)) if !is_idempotent(&req.method) => {
-                debug!(
+            HttpError::CloudflareInferred(_, resp) if !is_idempotent(&req.method) => {
+                record_solver_outcome(SolverOutcome::InferredPassthrough);
+                info!(
                     domain = %domain,
                     method = %req.method,
                     "solver: inferred challenge on non-idempotent method — returning original response, not re-sending"
@@ -172,14 +198,74 @@ impl Handler for SolverHandler {
             // Genuine CF challenge (any method) — solve and retry once.
             // CF intercepted the request; the origin never saw it, so
             // re-sending is safe even for POST.
-            Err(HttpError::Cloudflare(challenge_type, _status, _ray)) => {
-                self.solve_and_retry(req, &domain, challenge_type).await
+            HttpError::Cloudflare(challenge_type, _status, _ray) => {
+                self.solve_and_retry(req, domain, challenge_type).await
             }
             // Inferred challenge on an idempotent method — solve as a
             // JsChallenge (the quality_check default) and retry once.
-            Err(HttpError::CloudflareInferred(_, _)) => {
-                self.solve_and_retry(req, &domain, ChallengeType::JsChallenge)
+            HttpError::CloudflareInferred(_, _) => {
+                self.solve_and_retry(req, domain, ChallengeType::JsChallenge)
                     .await
+            }
+            // Everything else passes through.
+            other => Err(other),
+        }
+    }
+}
+
+#[async_trait]
+impl Handler for SolverHandler {
+    async fn handle(&self, req: Request) -> Result<HttpResponse> {
+        let domain = domain_from_url(&req.url);
+
+        // Check cache first — inject cookies if we have a prior solution.
+        // This is the first (and only) send of the request with cached
+        // cookies — not a re-send of a failed attempt, so the F1
+        // idempotency gate does not apply here.
+        if let Some(solution) = self.cache.get(&domain) {
+            info!(domain = %domain, "solver: using cached cookies");
+            record_solver_outcome(SolverOutcome::CacheHit);
+            // Inject into a CLONE: if the cached send is rejected we pass the
+            // PRISTINE request to resolve_challenge — otherwise the resend
+            // would inherit the evicted session's user-agent (inject_solution
+            // only overrides it when the fresh solution provides one; a
+            // provider returning an empty UA would mix stale fingerprint with
+            // fresh clearance, and CF UA-binding would reject the resend).
+            let mut send_req = req.clone();
+            inject_solution(&mut send_req, &solution);
+            return match self.next.handle(send_req).await {
+                // The cached solution was rejected with a fresh challenge —
+                // it is stale (CF rotated the clearance or it was bound to a
+                // different fingerprint/IP). Evict once, then resolve the
+                // challenge for real. Before this, stale entries were replayed
+                // forever — nothing revalidated them (issue #125).
+                Err(e @ (HttpError::Cloudflare(..) | HttpError::CloudflareInferred(..))) => {
+                    self.cache.remove_if(&domain, &solution);
+                    record_solver_outcome(SolverOutcome::StaleEvicted);
+                    info!(
+                        domain = %domain,
+                        "solver: cached solution rejected — evicted, resolving fresh"
+                    );
+                    self.resolve_challenge(req, &domain, e).await
+                }
+                other => other,
+            };
+        }
+
+        // No cached cookies — fast-fail before paying for the inner retry
+        // loop: a domain on cooldown would burn N upstream requests before
+        // the error reached the negcache check inside solve_and_retry.
+        // (The solver sits OUTSIDE the retry middleware — see
+        // build_middlewares — so this check is what preserves the storm
+        // guard's fast-fail semantics.)
+        if let Some(err) = self.negcache_reject(&domain) {
+            return Err(err);
+        }
+
+        // No cached cookies — try the request normally.
+        match self.next.handle(req.clone()).await {
+            Err(e @ (HttpError::Cloudflare(..) | HttpError::CloudflareInferred(..))) => {
+                self.resolve_challenge(req, &domain, e).await
             }
             // Everything else passes through.
             other => other,

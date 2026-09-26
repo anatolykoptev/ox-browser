@@ -118,6 +118,31 @@ impl CookieCache {
         self.publish_gauge();
     }
 
+    /// Removes the cached solution for `domain` only if the stored entry is
+    /// still `expected` — compare-and-remove.
+    ///
+    /// Called by the solver middleware when a cached solution is rejected by a
+    /// fresh CF challenge — the entry is stale (CF rotated the clearance or it
+    /// was bound to a different fingerprint/IP) and must not be replayed. The
+    /// equality guard prevents a concurrent request's fresher solution from
+    /// being evicted by an older in-flight rejection (get → send → remove
+    /// TOCTOU). Returns true if an entry was removed.
+    pub fn remove_if(&self, domain: &str, expected: &SolvedChallenge) -> bool {
+        let removed = {
+            let mut entries = self.entries.write().expect("lock poisoned");
+            if entries.get(domain).map(|e| &e.solution) == Some(expected) {
+                entries.remove(domain);
+                true
+            } else {
+                false
+            }
+        };
+        if removed {
+            self.publish_gauge();
+        }
+        removed
+    }
+
     /// Removes all expired entries from the cache.
     pub fn evict_expired(&self) {
         let mut entries = self.entries.write().expect("lock poisoned");

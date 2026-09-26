@@ -55,8 +55,17 @@ impl HttpError {
             Self::RetryableStatus(_) => true,
             Self::Timeout(_) => true,
             Self::Request(e) => e.is_timeout() || e.is_connect(),
-            Self::Cloudflare(_, _, _) => true,
-            Self::CloudflareInferred(_, _) => true,
+            // CF challenges are decided by the solver middleware, which sits
+            // OUTSIDE the retry loop (issue #125): a retryable Cloudflare
+            // error would burn the whole retry budget in bare re-sends before
+            // the solver sees it — and would delay stale-cache eviction until
+            // exhaustion. The residential middleware keeps its designed
+            // once-per-send IP-change retry inside the chain.
+            Self::Cloudflare(_, _, _) => false,
+            // Inferred challenges carry the origin's real response; whether
+            // to re-send is the solver's idempotency-guarded decision, not
+            // the retry loop's.
+            Self::CloudflareInferred(_, _) => false,
             Self::InvalidUrl(_)
             | Self::InvalidMethod(_)
             | Self::ProxyPool(_)

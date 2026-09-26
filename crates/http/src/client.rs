@@ -31,7 +31,7 @@ impl HttpClient {
     /// Build the client and its middleware chain from config.
     ///
     /// Chain order (outermost first):
-    /// `[logging?] -> [rate_limit?] -> [retry?] -> [solver?] -> [residential?] -> [cloudflare?] -> [quality_check] -> [client_hints] -> wreq`
+    /// `[logging?] -> [rate_limit?] -> [solver?] -> [retry?] -> [residential?] -> [cloudflare?] -> [quality_check] -> [client_hints] -> wreq`
     pub fn new(config: HttpConfig) -> Result<Self> {
         // ONE identity source of truth: when `profile` is set, derive the
         // TLS/HTTP2 Emulation from it via `profile_to_emulation`. The
@@ -263,9 +263,13 @@ impl HttpClient {
 }
 
 /// Build the middleware stack from config, in chain order (outermost first):
-/// `[ssrf] -> [logging?] -> [rate_limit?] -> [retry?] -> [solver?] ->
+/// `[ssrf] -> [logging?] -> [rate_limit?] -> [solver?] -> [retry?] ->
 /// [residential?] -> [cloudflare_detect?] -> [quality_check?] ->
 /// [client_hints?]`.
+///
+/// The solver is deliberately OUTSIDE retry (issue #125): one challenged
+/// request costs at most one `provider.solve()` call; the solver's resend
+/// still traverses the retry subtree.
 ///
 /// Extracted from [`HttpClient::new`] so test constructors can build the
 /// real config→chain wiring with a mock base handler (`with_chain`).
@@ -285,14 +289,18 @@ fn build_middlewares(config: &HttpConfig) -> Vec<MiddlewareFn> {
         middlewares.push(rate_limit_middleware(Arc::clone(limiter)));
     }
 
-    // Retry with exponential backoff.
-    if let Some(ref retry_cfg) = config.retry {
-        middlewares.push(retry_middleware(retry_cfg.clone()));
-    }
-
-    // CF solver (between retry and cloudflare_detect).
-    // Use the shared negcache when available so read_pipeline can check is_blocked()
-    // and set RenderMode::GiveUp instead of retrying doomed solve attempts.
+    // CF solver — OUTSIDE the retry middleware (issue #125): a solve can take
+    // 15-25 s, so letting the retry loop re-enter the solver would multiply
+    // that cost per request (and burn a go-wowa session per pass). Placing the
+    // solver outermost gives one challenged request at most one
+    // provider.solve() call structurally; the solver's own post-solve resend
+    // still traverses the retry subtree, so transient failures after cookie
+    // injection keep their retry budget. The negcache fast-fail check at the
+    // top of SolverHandler::handle preserves the storm guard across requests.
+    //
+    // Use the shared negcache when available so read_pipeline can check
+    // is_blocked() and set RenderMode::GiveUp instead of retrying doomed
+    // solve attempts.
     if let (Some(provider), Some(cache)) = (&config.cookie_provider, &config.cookie_cache) {
         if let Some(ref nc) = config.solver_negcache {
             middlewares.push(solver_middleware_with_negcache(
@@ -305,13 +313,19 @@ fn build_middlewares(config: &HttpConfig) -> Vec<MiddlewareFn> {
         }
     }
 
+    // Retry with exponential backoff (inside the solver — see above).
+    if let Some(ref retry_cfg) = config.retry {
+        middlewares.push(retry_middleware(retry_cfg.clone()));
+    }
+
     // Residential proxy retry (between solver and cloudflare_detect).
     // On CF error, retries once with residential IP before falling back to solver.
     if let Some(ref proxy) = config.residential_proxy {
         middlewares.push(residential_proxy_middleware(proxy.clone()));
     }
 
-    // Cloudflare detection (inside retry so CF triggers auto-retry).
+    // Cloudflare detection — classify blocked responses into CF errors for
+    // the solver (CF errors are non-retryable; solver owns re-sends).
     if config.cloudflare_detect {
         middlewares.push(cloudflare_detect_middleware());
     }

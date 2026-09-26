@@ -239,8 +239,8 @@ fn realistic_block_page() {
 }
 
 // ── Edge case 13: Retry + CF middleware integration ─────────────────
-// Verifies that CF errors are retried automatically when both
-// middlewares are in the chain (retry wrapping cloudflare).
+// Verifies that CF errors are NOT retried by generic retry — the solver
+// owns the re-send decision (issue #125).
 
 struct CfThenOkHandler {
     responses: Vec<(u16, String, String)>, // (status, body, server)
@@ -267,8 +267,11 @@ impl Handler for CfThenOkHandler {
     }
 }
 
+/// Issue #125: CF errors are non-retryable — the solver middleware owns the
+/// re-send decision, so the retry loop must surface the challenge after ONE
+/// send instead of replaying it.
 #[tokio::test]
-async fn retry_middleware_retries_on_cloudflare_error() {
+async fn retry_middleware_does_not_retry_cloudflare_error() {
     let call_count = Arc::new(AtomicUsize::new(0));
     let base: Arc<dyn Handler> = Arc::new(CfThenOkHandler {
         responses: vec![
@@ -298,20 +301,27 @@ async fn retry_middleware_retries_on_cloudflare_error() {
         body: None,
         proxy: None,
     };
-    let resp = handler.handle(req).await.unwrap();
-    assert_eq!(resp.status, 200);
+    let err = handler.handle(req).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            HttpError::Cloudflare(ChallengeType::JsChallenge, 503, _)
+        ),
+        "CF challenge must surface immediately, got {err:?}"
+    );
     assert_eq!(
         call_count.load(Ordering::SeqCst),
-        2,
-        "should have retried once after CF detection"
+        1,
+        "CF error must not be replayed by the retry loop — the solver owns it"
     );
 }
 
-// ── Edge case 14: Persistent CF block exhausts retries ──────────────
-// All attempts hit CF → final error should be Cloudflare variant.
+// ── Edge case 14: Persistent CF block surfaces immediately ──────────
+// CF errors are non-retryable (issue #125): a persistent block returns
+// the Cloudflare variant after a single send — the solver owns re-sends.
 
 #[tokio::test]
-async fn persistent_cf_block_exhausts_retries() {
+async fn persistent_cf_block_surfaces_immediately() {
     let call_count = Arc::new(AtomicUsize::new(0));
     let base: Arc<dyn Handler> = Arc::new(CfThenOkHandler {
         responses: vec![
@@ -350,8 +360,8 @@ async fn persistent_cf_block_exhausts_retries() {
         }
         other => panic!("expected Cloudflare error, got {other:?}"),
     }
-    // 1 initial + 3 retries = 4 total attempts
-    assert_eq!(call_count.load(Ordering::SeqCst), 4);
+    // Non-retryable: one send, then the solver (not the retry loop) decides.
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
 }
 
 // ── Edge case 15: Middleware propagates inner handler errors ─────────

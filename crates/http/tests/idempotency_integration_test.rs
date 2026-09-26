@@ -1,6 +1,6 @@
 //! Integration tests for the F1 idempotency-provenance seam.
 //!
-//! These exercise the FULL middleware chain (retry → solver → quality_check)
+//! These exercise the FULL middleware chain (solver → retry → quality_check)
 //! and the residential-proxy variant, asserting the two contracts that the
 //! `Cloudflare` vs `CloudflareInferred` split enforces:
 //!
@@ -13,7 +13,7 @@
 //!    origin never saw it, so re-sending is safe.
 //!
 //! The chain order under test mirrors production:
-//!   retry → solver → [residential] → cloudflare_detect → quality_check → wreq
+//!   solver → retry → [residential] → cloudflare_detect → quality_check → wreq
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -113,11 +113,12 @@ async fn post_behind_inferred_challenge_processed_once() {
     });
     let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
 
-    // Chain: retry → solver → cloudflare_detect → quality_check → base
-    // (residential omitted — the inferred gate fires in solver first.)
+    // Chain: solver → retry → cloudflare_detect → quality_check → base
+    // (production order since issue #125; residential omitted — the inferred
+    // gate fires in retry/solver first.)
     let middlewares: Vec<MiddlewareFn> = vec![
-        retry_middleware(fast_retry()),
         solver_middleware(provider, cache),
+        retry_middleware(fast_retry()),
         cloudflare_detect_middleware(),
         quality_check_middleware(),
     ];
@@ -204,8 +205,8 @@ async fn get_behind_inferred_challenge_is_solved_and_resent() {
     let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
 
     let middlewares: Vec<MiddlewareFn> = vec![
-        retry_middleware(fast_retry()),
         solver_middleware(provider, cache),
+        retry_middleware(fast_retry()),
         cloudflare_detect_middleware(),
         quality_check_middleware(),
     ];
@@ -277,8 +278,8 @@ async fn post_behind_genuine_cf_is_solved_and_resent() {
     let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
 
     let middlewares: Vec<MiddlewareFn> = vec![
-        retry_middleware(fast_retry()),
         solver_middleware(provider, cache),
+        retry_middleware(fast_retry()),
         cloudflare_detect_middleware(),
         quality_check_middleware(),
     ];
@@ -348,9 +349,9 @@ async fn residential_proxy_does_not_resend_post_behind_inferred() {
     let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
 
     let middlewares: Vec<MiddlewareFn> = vec![
+        solver_middleware(provider, cache),
         retry_middleware(fast_retry()),
         residential_proxy_middleware("http://residential-proxy:8080".into()),
-        solver_middleware(provider, cache),
         cloudflare_detect_middleware(),
         quality_check_middleware(),
     ];
@@ -412,8 +413,8 @@ async fn post_on_500_through_full_chain_returns_body() {
     let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
 
     let middlewares: Vec<MiddlewareFn> = vec![
-        retry_middleware(fast_retry()),
         solver_middleware(provider, cache),
+        retry_middleware(fast_retry()),
         cloudflare_detect_middleware(),
         quality_check_middleware(),
     ];

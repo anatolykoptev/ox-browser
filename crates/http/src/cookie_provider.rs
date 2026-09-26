@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use crate::cloudflare::ChallengeType;
 
 /// Result of a successfully solved Cloudflare challenge.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SolvedChallenge {
     pub cookies: HashMap<String, String>,
     pub user_agent: String,

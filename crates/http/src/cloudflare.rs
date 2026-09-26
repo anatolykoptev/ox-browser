@@ -212,10 +212,13 @@ mod tests {
     }
 
     #[test]
-    fn cloudflare_error_is_retryable() {
+    fn cloudflare_error_is_not_retryable() {
+        // Issue #125: CF errors are decided by the solver (which sits outside
+        // the retry loop), not replayed by it — the residential middleware is
+        // the designed per-send IP-change retry inside the chain.
         use crate::HttpError;
         let err = HttpError::Cloudflare(ChallengeType::Block, 403, "ray".into());
-        assert!(err.is_retryable());
+        assert!(!err.is_retryable());
     }
 
     #[test]
