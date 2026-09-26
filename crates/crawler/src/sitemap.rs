@@ -10,6 +10,15 @@ use anyhow::Result;
 /// makes a bomb guard useless).
 const SITEMAP_MAX_DECOMPRESSED_BYTES: u64 = 50 * 1024 * 1024;
 
+/// Maximum URL entries collected from one sitemap document (50,000 — the
+/// sitemap protocol's per-file URL limit, the same bound Google and the
+/// common sitemap libraries enforce). The byte cap above bounds input size
+/// but not heap growth: 50 MB of small `<loc>` blocks still materializes on
+/// the order of a million `SitemapEntry`/`String` allocations. Truncation,
+/// not an error — a file past the protocol limit still yields its first
+/// 50k legitimate URLs for discovery (issue #150).
+const MAX_SITEMAP_URLS: usize = 50_000;
+
 /// A single URL entry from a sitemap urlset.
 #[derive(Debug, Clone)]
 pub struct SitemapEntry {
@@ -103,23 +112,59 @@ pub fn parse_sitemap_with_cap(xml: &[u8], max_decompressed_bytes: u64) -> Result
     }
 }
 
+/// Resolve one `&ref;` event into `text`: `&#N;` char refs via
+/// `resolve_char_ref`, the five predefined XML entities via
+/// `resolve_predefined_entity` — the same table 0.37's `unescape()`
+/// used — and anything else is a parse error (fail-closed, matching
+/// the old behavior on `&nbsp;`-style HTML entities).
+fn push_ref(text: &mut String, e: &quick_xml::events::BytesRef<'_>) -> Result<()> {
+    if let Some(ch) = e.resolve_char_ref()? {
+        text.push(ch);
+        return Ok(());
+    }
+    let name = e.decode()?;
+    match quick_xml::escape::resolve_predefined_entity(&name) {
+        Some(resolved) => text.push_str(resolved),
+        None => return Err(anyhow::anyhow!("XML parse error: unknown entity &{name};")),
+    }
+    Ok(())
+}
+
 fn parse_index(reader: &mut quick_xml::Reader<&[u8]>, buf: &mut Vec<u8>) -> Result<SitemapContent> {
     use quick_xml::events::Event;
 
     let mut urls = Vec::new();
     let mut in_loc = false;
+    // quick-xml >= 0.38 splits every `&ref;` out of Text into a separate
+    // GeneralRef event, so a <loc> body arrives as fragments — accumulate
+    // them and push the joined, trimmed text on </loc>.
+    let mut text = String::new();
 
     loop {
         match reader.read_event_into(buf) {
             Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"loc" => {
                 in_loc = true;
+                text.clear();
             }
             Ok(Event::Text(ref e)) if in_loc => {
-                urls.push(e.unescape()?.trim().to_string());
-                in_loc = false;
+                text.push_str(&e.xml10_content()?);
             }
-            Ok(Event::End(ref e)) if e.local_name().as_ref() == b"loc" => {
+            Ok(Event::GeneralRef(ref e)) if in_loc => {
+                push_ref(&mut text, e)?;
+            }
+            Ok(Event::CData(ref e)) if in_loc => {
+                text.push_str(&e.decode()?);
+            }
+            Ok(Event::End(ref e)) if in_loc && e.local_name().as_ref() == b"loc" => {
                 in_loc = false;
+                let url = text.trim();
+                if !url.is_empty() {
+                    urls.push(url.to_string());
+                    if urls.len() >= MAX_SITEMAP_URLS {
+                        tracing::warn!(MAX_SITEMAP_URLS, "sitemap index URL count capped");
+                        break;
+                    }
+                }
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(anyhow::anyhow!("XML parse error: {e}")),
@@ -139,6 +184,10 @@ fn parse_urlset_xml(
     let mut entries = Vec::new();
     let mut current: Option<SitemapEntry> = None;
     let mut current_tag = String::new();
+    // See parse_index: element text arrives fragmented across
+    // Text/GeneralRef/CData events; accumulate and assign on the
+    // element's End tag.
+    let mut text = String::new();
 
     loop {
         match reader.read_event_into(buf) {
@@ -155,31 +204,53 @@ fn parse_urlset_xml(
                     }
                     "loc" | "lastmod" | "priority" | "changefreq" => {
                         current_tag = name;
+                        text.clear();
                     }
                     _ => {}
                 }
             }
-            Ok(Event::Text(ref e)) => {
-                if let Some(ref mut entry) = current {
-                    let text = e.unescape()?.trim().to_string();
-                    match current_tag.as_str() {
-                        "loc" => entry.url = text,
-                        "lastmod" => entry.lastmod = Some(text),
-                        "priority" => entry.priority = text.parse().ok(),
-                        "changefreq" => entry.changefreq = Some(text),
-                        _ => {}
-                    }
-                }
+            Ok(Event::Text(ref e)) if !current_tag.is_empty() => {
+                text.push_str(&e.xml10_content()?);
+            }
+            Ok(Event::GeneralRef(ref e)) if !current_tag.is_empty() => {
+                push_ref(&mut text, e)?;
+            }
+            Ok(Event::CData(ref e)) if !current_tag.is_empty() => {
+                text.push_str(&e.decode()?);
             }
             Ok(Event::End(ref e)) => {
-                let name = e.local_name().as_ref().to_vec();
-                if name == b"url"
-                    && let Some(entry) = current.take()
-                    && !entry.url.is_empty()
-                {
-                    entries.push(entry);
+                let name = e.local_name();
+                if name.as_ref() == b"url" {
+                    if let Some(entry) = current.take()
+                        && !entry.url.is_empty()
+                    {
+                        entries.push(entry);
+                        if entries.len() >= MAX_SITEMAP_URLS {
+                            tracing::warn!(MAX_SITEMAP_URLS, "sitemap urlset entries capped");
+                            break;
+                        }
+                    }
+                    current_tag.clear();
+                } else if name.as_ref() == current_tag.as_bytes() {
+                    let value = text.trim();
+                    // Empty <lastmod></lastmod> records None, not Some("") —
+                    // parity with the 0.37 text-event assign, and "" would
+                    // fail filter_since's `lastmod >= since` comparison.
+                    if let Some(ref mut entry) = current {
+                        match current_tag.as_str() {
+                            "loc" => entry.url = value.to_string(),
+                            "lastmod" => {
+                                entry.lastmod = (!value.is_empty()).then(|| value.to_string())
+                            }
+                            "priority" => entry.priority = value.parse().ok(),
+                            "changefreq" => {
+                                entry.changefreq = (!value.is_empty()).then(|| value.to_string())
+                            }
+                            _ => {}
+                        }
+                    }
+                    current_tag.clear();
                 }
-                current_tag.clear();
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(anyhow::anyhow!("XML parse error: {e}")),
@@ -292,6 +363,73 @@ mod tests {
             }
             _ => panic!("expected UrlSet"),
         }
+    }
+
+    /// `&amp;`-style references are MANDATORY escaping for query-string
+    /// URLs in sitemaps. quick-xml >= 0.38 emits them as GeneralRef
+    /// events — a parser that drops them truncates URLs at `&`, one that
+    /// assigns per-fragment keeps only the tail.
+    #[test]
+    fn urlset_resolves_entity_refs_in_loc() {
+        let xml = br#"<urlset><url><loc>https://a.test/?x=1&amp;y=2</loc></url></urlset>"#;
+        let SitemapContent::UrlSet(entries) = parse_sitemap(xml).unwrap() else {
+            panic!("expected urlset");
+        };
+        assert_eq!(entries[0].url, "https://a.test/?x=1&y=2");
+    }
+
+    /// Character refs (`&#38;` = `&`) resolve the same way, and the
+    /// sitemap-index <loc> arm gets the identical treatment.
+    #[test]
+    fn index_resolves_char_refs_in_loc() {
+        let xml = br#"<sitemapindex><sitemap><loc>https://a.test/s.xml&#63;p=1</loc></sitemap></sitemapindex>"#;
+        let SitemapContent::Index(urls) = parse_sitemap(xml).unwrap() else {
+            panic!("expected index");
+        };
+        assert_eq!(urls[0], "https://a.test/s.xml?p=1");
+    }
+
+    /// CDATA inside <loc> is literal text — accumulated like the rest.
+    #[test]
+    fn urlset_reads_cdata_in_loc() {
+        let xml = br#"<urlset><url><loc><![CDATA[https://a.test/?x=1&y=2]]></loc></url></urlset>"#;
+        let SitemapContent::UrlSet(entries) = parse_sitemap(xml).unwrap() else {
+            panic!("expected urlset");
+        };
+        assert_eq!(entries[0].url, "https://a.test/?x=1&y=2");
+    }
+
+    /// A urlset past the protocol's 50k URL limit is truncated, not grown
+    /// without bound — the byte cap alone does not bound heap growth.
+    #[test]
+    fn urlset_caps_entries_at_protocol_limit() {
+        let mut xml = String::from("<urlset>");
+        for i in 0..MAX_SITEMAP_URLS + 1 {
+            xml.push_str(&format!("<url><loc>https://a.test/{i}</loc></url>"));
+        }
+        xml.push_str("</urlset>");
+        let out = parse_sitemap(xml.as_bytes()).unwrap();
+        let SitemapContent::UrlSet(entries) = out else {
+            panic!("expected urlset");
+        };
+        assert_eq!(entries.len(), MAX_SITEMAP_URLS);
+    }
+
+    /// Same cap on a sitemap index's child list.
+    #[test]
+    fn index_caps_children_at_protocol_limit() {
+        let mut xml = String::from("<sitemapindex>");
+        for i in 0..MAX_SITEMAP_URLS + 1 {
+            xml.push_str(&format!(
+                "<sitemap><loc>https://a.test/{i}.xml</loc></sitemap>"
+            ));
+        }
+        xml.push_str("</sitemapindex>");
+        let out = parse_sitemap(xml.as_bytes()).unwrap();
+        let SitemapContent::Index(urls) = out else {
+            panic!("expected index");
+        };
+        assert_eq!(urls.len(), MAX_SITEMAP_URLS);
     }
 
     #[test]
