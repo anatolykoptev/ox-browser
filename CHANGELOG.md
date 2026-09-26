@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.13](https://github.com/anatolykoptev/ox-browser/compare/v0.8.12...v0.8.13) (2026-09-26)
+
+
+### Added
+
+* **http:** consume go-browser solve body, serve it for GET instead of replaying cookies ([#163](https://github.com/anatolykoptev/ox-browser/issues/163)) ([13721d2](https://github.com/anatolykoptev/ox-browser/commit/13721d2df4618838c89c402521b455d7ae1ac8de))
+
 ## [0.8.12](https://github.com/anatolykoptev/ox-browser/compare/v0.8.11...v0.8.12) (2026-09-26)
 
 
