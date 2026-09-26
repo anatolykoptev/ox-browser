@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use ox_http::deadline::{
-    CHROME_PROXY_BOUND_SECS, CRAWL_BOUND_SECS, CallOutcome, SOLVER_CALL_BOUND_SECS, bounded,
-    resolve_timeout_for, timeout_from_json,
+    CHROME_PROXY_BOUND_SECS, CRAWL_BOUND_SECS, CallOutcome, MEDIA_DOWNLOAD_BOUND_SECS,
+    SOLVER_CALL_BOUND_SECS, bounded, resolve_timeout_for, timeout_from_json,
 };
 use ox_http::{CookieCache, CookieProvider, HttpClient};
 use ox_js::EndpointDefaults;
@@ -43,6 +43,7 @@ fn tool_default_secs(name: &str) -> u64 {
     match name {
         "chrome_interact" => CHROME_PROXY_BOUND_SECS,
         "crawl" => CRAWL_BOUND_SECS,
+        "media_download" => MEDIA_DOWNLOAD_BOUND_SECS,
         _ => SOLVER_CALL_BOUND_SECS,
     }
 }
@@ -171,7 +172,7 @@ mod tests {
         );
         assert_eq!(
             dispatch_deadline("media_download", None),
-            Some(Duration::from_secs(130))
+            Some(Duration::from_secs(MEDIA_DOWNLOAD_BOUND_SECS))
         );
     }
 

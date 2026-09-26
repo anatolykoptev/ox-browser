@@ -7,8 +7,9 @@
 //! The caller-supplied `timeout`/`timeout_secs` field is pulled out of the
 //! JSON body here; each route's input type stays opaque to the layer.
 //! Bodies are buffered under a cap — these routes take small JSON arg
-//! objects, and an oversize body fails closed with 413 rather than
-//! bypassing the bound.
+//! objects, and a body that cannot be read fails closed — 413 when it
+//! exceeds the cap, 400 on a mid-read failure — rather than bypassing
+//! the bound.
 //!
 //! The deadline default is PER ROUTE (`route_default_secs`), sized at
 //! least to each surface's own inner designed bound: the fetch-calibrated
@@ -175,6 +176,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// A body that fails mid-read is a client error, not "too large":
+    /// the layer must answer 400, not 413.
+    #[tokio::test]
+    async fn guard_maps_body_read_failure_to_400() {
+        let body = Body::from_stream(async_stream::stream! {
+            yield Ok::<&'static str, std::io::Error>("{}");
+            yield Err::<&'static str, std::io::Error>(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "reset mid-body",
+            ));
+        });
+        let resp = guarded(post(fast), "/analyze")
+            .oneshot(
+                Request::post("/analyze")
+                    .header("content-type", "application/json")
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

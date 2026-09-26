@@ -36,11 +36,14 @@ pub const DEFAULT_CALL_TIMEOUT_SECS: u64 = 8;
 
 /// Hard ceiling on the caller-supplied deadline (seconds). The `timeout`
 /// field is attacker-influenced (anyone who can reach `/fetch` can set
-/// it), so a caller asking for 600 s gets the ceiling, not 600 s. 60 s
-/// is the largest legitimate single-page read (a slow origin behind a
-/// solver escalation); anything beyond that is a misconfiguration or
-/// abuse.
-pub const MAX_CALL_TIMEOUT_SECS: u64 = 60;
+/// it), so a caller asking for 600 s gets the ceiling, not 600 s. The
+/// ceiling is [`SOLVER_CALL_BOUND_SECS`]: a fetch that escalates to a
+/// cold solver pass is configured for up to 120 s behind Byparr — a
+/// lower ceiling would turn a legitimate cold solve into a guaranteed
+/// deadline error. Only an explicit caller `timeout` reaches this high;
+/// the DEFAULT stays 8 s so silent consumers keep the
+/// go-search-calibrated bound.
+pub const MAX_CALL_TIMEOUT_SECS: u64 = SOLVER_CALL_BOUND_SECS;
 
 /// Resolve a caller-supplied timeout (seconds) into the effective
 /// deadline: `None` → [`DEFAULT_CALL_TIMEOUT_SECS`], `Some(s)` → `s`
@@ -92,6 +95,7 @@ pub const CRAWL_BOUND_SECS: u64 = 120;
 /// (issue #147): `None` → `default_secs`; `Some(s)` → `s` clamped to
 /// `[1, default_secs]`.
 pub fn resolve_timeout_for(caller: Option<u64>, default_secs: u64) -> Duration {
+    debug_assert!(default_secs >= 1, "per-surface bound must be >= 1 s");
     Duration::from_secs(caller.unwrap_or(default_secs).clamp(1, default_secs))
 }
 
