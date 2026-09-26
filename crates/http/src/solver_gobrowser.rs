@@ -58,7 +58,7 @@ impl SolveResp {
         SolvedChallenge {
             cookies: self.cookies.unwrap_or_default(),
             user_agent: self.user_agent.unwrap_or_default(),
-            body: self.body.filter(|b| !b.is_empty()),
+            body: self.body.filter(|b| !b.trim().is_empty()),
         }
     }
 }

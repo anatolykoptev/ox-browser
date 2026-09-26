@@ -120,7 +120,14 @@ impl SolverHandler {
                 return Err(HttpError::ProxyPool(format!("solver failed: {e}")));
             }
         };
-        self.cache.put(domain, solution.clone());
+        // Strip the body before caching: the cache is keyed by domain while
+        // the body belongs to this exact URL — a cached body replayed for a
+        // different path would serve wrong content, and holding a large HTML
+        // string for the TTL is dead weight (the cache path reads cookies+UA
+        // only).
+        let mut cached = solution.clone();
+        cached.body = None;
+        self.cache.put(domain, cached);
         // A real solution ends any storm for this domain.
         self.negcache.record_success(domain);
 
