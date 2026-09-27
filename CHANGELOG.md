@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.14](https://github.com/anatolykoptev/ox-browser/compare/v0.8.13...v0.8.14) (2026-09-27)
+
+
+### Fixed
+
+* **build:** regenerate Cargo.lock for v0.8.13 ([#167](https://github.com/anatolykoptev/ox-browser/issues/167)) ([83e1b9f](https://github.com/anatolykoptev/ox-browser/commit/83e1b9f9703f8212fbc967eafb4f15c6a2943cea))
+
 ## [0.8.13](https://github.com/anatolykoptev/ox-browser/compare/v0.8.12...v0.8.13) (2026-09-26)
 
 
