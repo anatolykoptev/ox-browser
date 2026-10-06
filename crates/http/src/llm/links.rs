@@ -23,9 +23,7 @@ static LINK_RE: Lazy<Regex> =
 /// the `- label: href` shape.
 fn dest_href(dest: &str) -> &str {
     let d = dest.trim().trim_start_matches(['<', '"', '\'']);
-    let end = d
-        .find(|c| c == '"' || c == '\'' || c == '>')
-        .unwrap_or(d.len());
+    let end = d.find(|c| ['"', '\'', '>'].contains(&c)).unwrap_or(d.len());
     d[..end].trim()
 }
 
