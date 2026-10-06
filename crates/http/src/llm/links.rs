@@ -11,8 +11,23 @@ use regex::Regex;
 // Link extraction
 // ---------------------------------------------------------------------------
 
-/// Matches `[text](url)`. Images are already stripped, so no `!` prefix concern.
-static LINK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap());
+/// Matches `[text](dest)` (images are already stripped, so no `!` prefix concern). `dest` may be `url`, `url "title"`, or carry
+/// balanced parens inside (titles like "(CPU, memory, etc)") — one nesting
+/// level is allowed, otherwise `[^)]+` stops at the title's first `)` and
+/// the leftover `.")` leaks into body text.
+static LINK_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\[([^\]]*)\]\(((?:[^()]|\([^()]*\))+)\)").unwrap());
+
+/// Returns the URL part of a Markdown link destination, dropping an optional
+/// title — `url "title"`, `"url" "title"`, `<url>` — so footer entries keep
+/// the `- label: href` shape.
+fn dest_href(dest: &str) -> &str {
+    let d = dest.trim().trim_start_matches(['<', '"', '\'']);
+    let end = d
+        .find(|c| c == '"' || c == '\'' || c == '>')
+        .unwrap_or(d.len());
+    d[..end].trim()
+}
 
 /// Extract all links from markdown, replacing inline `[text](url)` with just `text`.
 /// Returns the cleaned text and a deduplicated list of (label, href) pairs.
@@ -22,7 +37,7 @@ pub(crate) fn extract_and_strip_links(input: &str) -> (String, Vec<(String, Stri
 
     let replaced = LINK_RE.replace_all(input, |caps: &regex::Captures| {
         let text = caps.get(1).map_or("", |m| m.as_str()).trim().to_string();
-        let href = caps.get(2).map_or("", |m| m.as_str()).trim().to_string();
+        let href = dest_href(caps.get(2).map_or("", |m| m.as_str())).to_string();
 
         let skip = href.starts_with('#')
             || href.starts_with("javascript:")
@@ -207,6 +222,21 @@ mod tests {
             clean_link_label("Research found an external link between incidents"),
             "Research found an external link between incidents"
         );
+    }
+
+    #[test]
+    fn link_title_with_parens_leaves_no_residue() {
+        // kubernetes.io glossary tooltips render `title=...(CPU, memory, etc).`
+        // — the naive `[^)]+` destination stops at the title's first `)` and
+        // leaks `.")` into body text.
+        let input = r#"pods to reclaim [resource]("https://k8s.io/g#term" "A defined amount of infrastructure available for consumption (CPU, memory, etc).") on nodes."#;
+        let (text, links) = extract_and_strip_links(input);
+        assert!(
+            text.contains("reclaim resource on nodes"),
+            "residue in text: {text}"
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].1, "https://k8s.io/g#term");
     }
 
     #[test]
