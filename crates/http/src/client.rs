@@ -16,7 +16,7 @@ use crate::middleware_ssrf::ssrf_middleware;
 use crate::profile::{BrowserProfile, profile_to_emulation};
 use crate::profile_hints::browser_headers;
 use crate::ssrf_connect::{SsrfGuardedResolver, ssrf_redirect_policy};
-use crate::{HttpConfig, HttpError, HttpResponse, Result};
+use crate::{HttpConfig, HttpResponse, Result};
 
 /// HTTP client that routes requests through a middleware chain.
 ///
@@ -431,7 +431,10 @@ fn wreq_transport_core(
     }
 
     if let Some(url) = proxy {
-        let proxy = wreq::Proxy::all(url).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
+        // Same canonicalising builder as the pool and per-request paths: a raw
+        // `SOCKS5://…` or empty-port value would otherwise go direct, and the
+        // wreq error would echo the credentials.
+        let proxy = crate::handler_reqwest::build_proxy(url)?;
         builder = builder.proxy(proxy);
     } else {
         // Clear `auto_sys_proxy` so an ambient `HTTP_PROXY` cannot silently

@@ -361,44 +361,30 @@ impl Handler for WreqHandler {
     }
 }
 
-/// Build a wreq proxy from a proxy URL.
+/// Build a wreq proxy from a proxy URL, dialling its canonical form.
 ///
-/// A scheme-less value is accepted only in the bare `host:port` form (numeric
-/// port, no userinfo) and treated as `http://host:port`; anything else
-/// without a scheme fails closed. The wreq error is never surfaced: its
-/// Display can echo the URI including `user:password@`, so the error carries
-/// only a fixed message plus the redacted URL.
-fn build_proxy(proxy_url: &str) -> Result<wreq::Proxy> {
+/// wreq re-parses the string it is given and disagrees with the url crate in
+/// ways that silently send the request DIRECT (case-sensitive socks scheme,
+/// empty port) or to a different host (the non-special-scheme parser
+/// differential), so the raw value is never handed to wreq: it goes through
+/// [`crate::middleware_ssrf::canonicalise_proxy_url`] first. That does NOT vet
+/// the target — pool and static proxies are operator-configured and may be
+/// private (e.g. a local Tor); caller proxies are vetted by
+/// `validate_proxy_url` before they get here.
+///
+/// The wreq error is never surfaced: its Display can echo the URI including
+/// `user:password@`, so the error carries only a fixed message plus the
+/// redacted URL.
+pub(crate) fn build_proxy(proxy_url: &str) -> Result<wreq::Proxy> {
     let invalid = || {
         HttpError::InvalidUrl(format!(
             "invalid proxy URL: {}",
             crate::middleware_ssrf::redact_proxy_userinfo(proxy_url)
         ))
     };
-    let normalised;
-    let url = if proxy_url.contains("://") {
-        proxy_url
-    } else {
-        let bare_host_port = !proxy_url.contains('@')
-            && proxy_url.rsplit_once(':').is_some_and(|(h, p)| {
-                !h.is_empty() && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())
-            });
-        if !bare_host_port {
-            return Err(invalid());
-        }
-        normalised = format!("http://{proxy_url}");
-        &normalised
-    };
-    // Known schemes only: wreq ignores a proxy with any other scheme and
-    // would send the request DIRECT while we count it as proxied.
-    let scheme = url
-        .split_once("://")
-        .map_or("", |(s, _)| s)
-        .to_ascii_lowercase();
-    if !crate::middleware_ssrf::ALLOWED_PROXY_SCHEMES.contains(&scheme.as_str()) {
-        return Err(invalid());
-    }
-    wreq::Proxy::all(url).map_err(|_| invalid())
+    let canonical =
+        crate::middleware_ssrf::canonicalise_proxy_url(proxy_url).map_err(|_| invalid())?;
+    wreq::Proxy::all(canonical.url.as_str()).map_err(|_| invalid())
 }
 
 #[cfg(test)]
@@ -473,11 +459,8 @@ mod tests {
     }
 
     /// Handler-level: both build_proxy call sites must fail closed without
-    /// echoing proxy credentials. The pool call site (handler_reqwest ~:197)
-    /// is driven here; the per-request site (~:163) is driven by the
-    /// unit tests on build_proxy plus validate_proxy_url (which refuses a
-    /// credentialed malformed proxy before build_proxy, with no creds in its
-    /// message).
+    /// echoing proxy credentials. The pool call site is driven here; the
+    /// per-request site by `per_request_proxy_refusal_does_not_leak_credentials`.
     ///
     /// Falsification: revert either build_proxy call site to
     /// `wreq::Proxy::all(..).map_err(|e| HttpError::InvalidUrl(e.to_string()))`
@@ -508,40 +491,57 @@ mod tests {
         );
     }
 
-    /// The per-request call site: a credentialed, malformed req.proxy is
-    /// refused with no credentials in the error. Note: this input is refused
-    /// by `validate_proxy_url`, which runs first; after it, `build_proxy` only
-    /// ever sees the canonical `scheme://[userinfo@]host:port` it returned
-    /// (known scheme, valid host, numeric port), so the per-request
-    /// `build_proxy` error branch is believed unreachable with today's
-    /// canonicalisation. This test therefore guards the validate-refusal path
-    /// only and makes no falsification claim about that `build_proxy` site;
-    /// the pool site is covered by `pool_proxy_error_does_not_leak_credentials`.
+    /// The per-request call site: a credentialed req.proxy that is refused
+    /// must not echo the credentials, on both refusal branches.
+    ///
+    /// - `ex ample.com` is refused by `validate_proxy_url` (illegal byte).
+    /// - `a{b}.example` (SEC-CR-019) PASSES `validate_proxy_url` — the url
+    ///   crate allows `{`/`}` in a domain — but `http::Uri` cannot carry it,
+    ///   so `build_proxy(&dial)` fails. This is the input that reaches the
+    ///   per-request `build_proxy` error branch.
+    ///
+    /// Falsification: make `build_proxy`'s error echo the raw URL
+    /// (`format!("invalid proxy URL: {proxy_url}")`) and the `a{b}` row leaks
+    /// the password → RED; with only the `ex ample` row the same mutation
+    /// stays green, which is why the `a{b}` row is here. (wreq's own error
+    /// for this input, "builder error: invalid uri character", happens not
+    /// to echo the userinfo, so reverting the call site to surface it would
+    /// not be caught by this input.)
     #[tokio::test]
     async fn per_request_proxy_refusal_does_not_leak_credentials() {
         let client = wreq::Client::new();
         let handler = WreqHandler::new(client, false, 5, 1 << 20);
-        let err = handler
-            .handle(Request {
-                method: "GET".into(),
-                url: "http://example.com/".into(),
-                headers: vec![],
-                body: None,
-                proxy: Some("http://alice:s3cret@ex ample.com:80".into()),
-            })
-            .await
-            .expect_err("invalid req.proxy must fail closed");
-        let msg = err.to_string();
-        assert!(
-            !msg.contains("s3cret"),
-            "per-request proxy error leaked credentials: {msg}"
-        );
+        for proxy in [
+            "http://alice:s3cret@ex ample.com:80",
+            "http://alice:s3cret@a{b}.example:3128",
+        ] {
+            assert!(
+                proxy.contains(' ') || crate::middleware_ssrf::validate_proxy_url(proxy).is_ok(),
+                "{proxy}: must pass validation so the build_proxy branch is exercised"
+            );
+            let err = handler
+                .handle(Request {
+                    method: "GET".into(),
+                    url: "http://example.com/".into(),
+                    headers: vec![],
+                    body: None,
+                    proxy: Some(proxy.into()),
+                })
+                .await
+                .expect_err("invalid req.proxy must fail closed");
+            let msg = err.to_string();
+            assert!(
+                !msg.contains("s3cret"),
+                "per-request proxy error leaked credentials for {proxy}: {msg}"
+            );
+        }
     }
 
     /// SEC-CR-012 on the pool path: build_proxy refuses a scheme wreq would
     /// ignore (which would mean a direct request counted as proxied).
     ///
-    /// Falsification: drop the ALLOWED_PROXY_SCHEMES check in build_proxy → RED.
+    /// Falsification: drop the ALLOWED_PROXY_SCHEMES check in
+    /// `canonicalise_proxy_url` (which build_proxy calls) → RED.
     #[test]
     fn build_proxy_refuses_unknown_schemes() {
         for raw in ["ftp://8.8.8.8:21", "socks://8.8.8.8:1080"] {

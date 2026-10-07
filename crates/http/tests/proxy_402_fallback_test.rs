@@ -860,13 +860,12 @@ async fn e_max_redirects_zero_blocks_first_redirect() {
 // while still being counted as proxied. It must be refused instead.
 // ---------------------------------------------------------------------------
 
-/// The scheme check exists at two layers (validate_proxy_url for the
-/// per-request path, build_proxy for the pool path and as a second line here).
-/// Falsification: drop the ALLOWED_PROXY_SCHEMES check from both
-/// (middleware_ssrf.rs and handler_reqwest.rs) and wreq ignores the ftp proxy,
-/// the request goes direct and returns the origin's "direct-success" 200 →
-/// RED (checked). Dropping either one alone is caught by its own unit test
-/// (validate_proxy_url_refuses_unknown_schemes / build_proxy_refuses_unknown_schemes).
+/// The scheme check lives in `canonicalise_proxy_url` (middleware_ssrf.rs),
+/// which both validate_proxy_url (per-request) and build_proxy (pool, static,
+/// and per-request again) call.
+/// Falsification: drop the ALLOWED_PROXY_SCHEMES check there and wreq ignores
+/// the ftp proxy, the request goes direct and returns the origin's
+/// "direct-success" 200 → RED.
 #[tokio::test]
 #[serial]
 async fn unknown_proxy_scheme_is_refused_not_served_direct() {
@@ -909,5 +908,92 @@ async fn unknown_proxy_scheme_is_refused_not_served_direct() {
         hits.load(Ordering::SeqCst),
         0,
         "the origin was reached directly through an ignored proxy"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SEC-CR-018: the pool path must dial the proxy it was given, never fall
+// through to direct. wreq's socks matcher is case-sensitive and treats an
+// empty port as "no proxy", so a raw `SOCKS5://…` or `socks5://host:` pool
+// entry used to send the request DIRECT from the real IP while it was counted
+// as proxied. build_proxy now canonicalises (lowercase scheme, explicit port).
+// ---------------------------------------------------------------------------
+
+/// Covers the pool entry and the static `proxy_url` (client.rs, which now
+/// uses the same `build_proxy`).
+///
+/// Falsification: in `build_proxy` (handler_reqwest.rs) pass the raw
+/// `proxy_url` to `wreq::Proxy::all` instead of the canonical URL, or revert
+/// the static path in `wreq_transport_core` (client.rs) to
+/// `wreq::Proxy::all(url)`, and the rows reach the origin directly (origin
+/// hits > 0, proxy hits 0) → RED.
+#[tokio::test]
+#[serial]
+async fn pool_and_static_proxy_scheme_case_and_empty_port_never_go_direct() {
+    use ox_http::Request;
+    use ox_http::proxy_pool::StaticPool;
+
+    let (origin_port, origin_hits) = spawn_ok_origin_with_counter().await;
+    // Not a SOCKS server: it only counts connections, so a request that
+    // really went through it fails, and one that bypassed it does not.
+    let (proxy_port, proxy_hits) = spawn_ok_origin_with_counter().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // SAFETY: see note in a_http_402_with_forged_marker_not_degraded.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin_port}"),
+        );
+    }
+    let rows = [
+        (format!("SOCKS5://127.0.0.1:{proxy_port}"), true),
+        ("socks5://127.0.0.1:".to_string(), false),
+    ];
+    for (pool_entry, expect_proxy_hit, via_pool) in rows
+        .iter()
+        .flat_map(|(e, hit)| [(e.clone(), *hit, true), (e.clone(), *hit, false)])
+    {
+        let before = proxy_hits.load(Ordering::SeqCst);
+        let config = if via_pool {
+            HttpConfig {
+                timeout: Duration::from_secs(5),
+                proxy_pool: Some(Arc::new(StaticPool::new(vec![pool_entry.clone()]))),
+                ..Default::default()
+            }
+        } else {
+            HttpConfig {
+                timeout: Duration::from_secs(5),
+                proxy_url: Some(pool_entry.clone()),
+                ..Default::default()
+            }
+        };
+        let client = HttpClient::new(config).expect("build client");
+        let result = client
+            .execute(Request {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{origin_port}/test"),
+                headers: vec![],
+                body: None,
+                proxy: None,
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "{pool_entry} (pool={via_pool}): must fail through the fake proxy, got {result:?}"
+        );
+        if expect_proxy_hit {
+            assert!(
+                proxy_hits.load(Ordering::SeqCst) > before,
+                "{pool_entry} (pool={via_pool}): the proxy was never dialled"
+            );
+        }
+    }
+    unsafe {
+        std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+    }
+    assert_eq!(
+        origin_hits.load(Ordering::SeqCst),
+        0,
+        "a pool proxy was bypassed and the origin reached directly"
     );
 }
