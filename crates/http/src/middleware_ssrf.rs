@@ -146,6 +146,72 @@ pub fn is_allowlisted(host: &str, port: u16) -> bool {
         .any(|entry| entry == needle)
 }
 
+/// Env var listing caller-supplied proxies (`host:port`, comma-separated,
+/// case-insensitive host) that may point at a private address.
+pub const PROXY_ALLOWLIST_ENV: &str = "OX_PROXY_ALLOWLIST";
+
+/// Validate a caller-supplied per-request proxy URL before it is attached.
+///
+/// The connect-time [`crate::ssrf_connect::SsrfGuardedResolver`] only sees
+/// HOSTNAMES: wreq skips DNS for an IP-literal proxy, so
+/// `http://127.0.0.1:<port>` or any private literal would otherwise be dialled
+/// unchecked and turn the caller's "proxy" into a request to an internal
+/// service. This is the synchronous check for that gap — the same split
+/// [`ssrf_redirect_policy`] uses for redirect hops. Refused: IP literals that
+/// [`is_private_ip`] blocks, `localhost` / `*.localhost`, and non-standard IP
+/// encodings; a `host:port` listed in [`PROXY_ALLOWLIST_ENV`] is admitted.
+/// Hostnames are left to the resolver.
+pub fn validate_proxy_url(proxy_url: &str) -> Result<()> {
+    // A bare `host:port` is an http proxy (wreq/reqwest convention).
+    let owned;
+    let proxy_url = if proxy_url.contains("://") {
+        proxy_url
+    } else {
+        owned = format!("http://{proxy_url}");
+        &owned
+    };
+    let url = url::Url::parse(proxy_url)
+        .map_err(|e| HttpError::InvalidUrl(format!("SSRF blocked: unparsable proxy URL: {e}")))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| HttpError::InvalidUrl("SSRF blocked: proxy URL has no host".into()))?;
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let port = url.port_or_known_default().unwrap_or(80);
+    if proxy_allowlisted(host, port) {
+        return Ok(());
+    }
+    let lower = host.to_ascii_lowercase();
+    if lower == "localhost" || lower.ends_with(".localhost") {
+        return Err(HttpError::InvalidUrl(format!(
+            "SSRF blocked: proxy host {host} is loopback"
+        )));
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_ip(&ip) {
+            return Err(HttpError::InvalidUrl(format!(
+                "SSRF blocked: proxy host {host} is a private/reserved address"
+            )));
+        }
+        return Ok(());
+    }
+    if looks_like_alt_encoded_ip(host) {
+        return Err(HttpError::InvalidUrl(format!(
+            "SSRF blocked: proxy host {host:?} looks like a non-standard IP encoding"
+        )));
+    }
+    Ok(())
+}
+
+fn proxy_allowlisted(host: &str, port: u16) -> bool {
+    let Ok(list) = std::env::var(PROXY_ALLOWLIST_ENV) else {
+        return false;
+    };
+    let needle = format!("{}:{port}", host.to_ascii_lowercase());
+    list.split(',')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .any(|entry| entry == needle)
+}
+
 /// Validate the `OX_HTTP_PRIVATE_ALLOWLIST` env var at startup.
 ///
 /// Parses each comma-separated entry as `host:port`, resolves hostnames via
@@ -698,5 +764,23 @@ mod tests {
 
             std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn validate_proxy_url_allowlist_admits_only_listed_host_port() {
+        unsafe {
+            std::env::set_var(PROXY_ALLOWLIST_ENV, "tor:9050, 172.18.0.1:1082");
+        }
+        assert!(validate_proxy_url("http://172.18.0.1:1082").is_ok());
+        assert!(validate_proxy_url("socks5://tor:9050").is_ok());
+        assert!(validate_proxy_url("http://172.18.0.1:8765").is_err());
+        unsafe {
+            std::env::remove_var(PROXY_ALLOWLIST_ENV);
+        }
+        assert!(validate_proxy_url("http://172.18.0.1:1082").is_err());
+        assert!(validate_proxy_url("http://p.webshare.io:80").is_ok());
+        assert!(validate_proxy_url("http://user:pw@8.8.8.8:80").is_ok());
+        assert!(validate_proxy_url("http://0x7f000001:80").is_err());
     }
 }

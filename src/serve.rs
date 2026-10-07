@@ -159,7 +159,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         media_config,
         gobrowser_proxy,
     );
-    let app = rest_router.merge(mcp_router);
+    // Inbound auth wraps the merged REST + MCP router, so every route and
+    // every unmatched path goes through it (ox_js::inbound_auth).
+    let gate = ox_js::inbound_auth::Gate::new(ox_js::inbound_auth::AuthConfig::from_env());
+    let app = ox_js::inbound_auth::protect(rest_router.merge(mcp_router), gate);
 
     // Background task: clean up media files older than 7 days (runs every 24h)
     ox_media::cleanup::spawn_cleanup_task();
@@ -167,7 +170,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     let addr = format!("{}:{}", config.server.bind, config.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("ox-browser server listening on {addr} (REST + MCP)");
-    axum::serve(listener, app).await?;
+    // ConnectInfo gives the auth gate the caller IP for its first-sighting log.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

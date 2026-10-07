@@ -383,6 +383,42 @@ pub static SOLVER_OUTCOME_BLOCK_PASSTHROUGH: AtomicU64 = AtomicU64::new(0);
 /// See [`SOLVER_OUTCOME_CACHE_HIT`] for the label map.
 pub static SOLVER_OUTCOME_INFERRED_PASSTHROUGH: AtomicU64 = AtomicU64::new(0);
 
+/// Inbound auth gate decisions (ox-js `inbound_auth`), one counter per result.
+pub static AUTH_OK_SECRET: AtomicU64 = AtomicU64::new(0);
+/// See [`AUTH_OK_SECRET`].
+pub static AUTH_OK_BEARER: AtomicU64 = AtomicU64::new(0);
+/// See [`AUTH_OK_SECRET`].
+pub static AUTH_INVALID: AtomicU64 = AtomicU64::new(0);
+/// See [`AUTH_OK_SECRET`].
+pub static AUTH_MISSING: AtomicU64 = AtomicU64::new(0);
+/// See [`AUTH_OK_SECRET`].
+pub static AUTH_UNVERIFIABLE: AtomicU64 = AtomicU64::new(0);
+/// See [`AUTH_OK_SECRET`].
+pub static AUTH_UNCONFIGURED: AtomicU64 = AtomicU64::new(0);
+/// See [`AUTH_OK_SECRET`].
+pub static AUTH_INSECURE: AtomicU64 = AtomicU64::new(0);
+
+/// 1 when the inbound auth gate rejects requests without a valid credential.
+pub static AUTH_ENFORCED: AtomicU64 = AtomicU64::new(0);
+
+static AUTH_ROWS: &[(&str, &AtomicU64)] = &[
+    ("ok_secret", &AUTH_OK_SECRET),
+    ("ok_bearer", &AUTH_OK_BEARER),
+    ("invalid", &AUTH_INVALID),
+    ("missing", &AUTH_MISSING),
+    ("unverifiable", &AUTH_UNVERIFIABLE),
+    ("unconfigured", &AUTH_UNCONFIGURED),
+    ("insecure", &AUTH_INSECURE),
+];
+
+/// Count one inbound auth decision. Unknown results are ignored (the gate
+/// only passes the fixed set in [`AUTH_ROWS`]).
+pub fn record_auth_result(result: &str) {
+    if let Some((_, c)) = AUTH_ROWS.iter().find(|(r, _)| *r == result) {
+        c.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 static SOLVER_OUTCOME_ROWS: &[(&str, &AtomicU64)] = &[
     ("cache_hit", &SOLVER_OUTCOME_CACHE_HIT),
     ("stale_evicted", &SOLVER_OUTCOME_STALE_EVICTED),
@@ -594,6 +630,12 @@ pub fn render() -> String {
             label: "outcome",
             rows: SOLVER_OUTCOME_ROWS,
         },
+        LabelledCounter {
+            name: "oxbrowser_auth_requests_total",
+            help: "Inbound requests seen by the auth gate (health excluded), by decision. ok_secret/ok_bearer = authenticated; missing/unverifiable = no usable credential (allowed only in soft mode); invalid = wrong or empty credential (always 401); unconfigured = no credential configured (fail closed); insecure = OX_AUTH_ALLOW_INSECURE.",
+            label: "result",
+            rows: AUTH_ROWS,
+        },
     ];
 
     let gauges = [
@@ -626,6 +668,11 @@ pub fn render() -> String {
             name: "oxbrowser_proxy_disabled",
             help: "1 if outbound proxy is disabled (PROXY_DISABLED env set), 0 otherwise.",
             value: PROXY_DISABLED.load(Ordering::Relaxed),
+        },
+        Gauge {
+            name: "oxbrowser_auth_enforced",
+            help: "1 if the inbound auth gate rejects requests without a valid credential, 0 if it allows them (soft or insecure).",
+            value: AUTH_ENFORCED.load(Ordering::Relaxed),
         },
         Gauge {
             name: "oxbrowser_solver_configured",

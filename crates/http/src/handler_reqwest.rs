@@ -149,6 +149,13 @@ impl WreqHandler {
 
         if !skip_proxy {
             if let Some(ref proxy_url) = req.proxy {
+                // A: a caller-supplied proxy must not name an internal
+                // address. wreq skips DNS for IP-literal proxies, so the
+                // connect-time SSRF resolver never sees them.
+                if let Err(e) = crate::middleware_ssrf::validate_proxy_url(proxy_url) {
+                    tracing::warn!(url = %req.url, error = %e, reason = "proxy_ssrf_blocked", "per-request proxy refused");
+                    return Err(e);
+                }
                 // B: fail closed — an unparsable `req.proxy` is a
                 // misconfiguration, not a silent downgrade to direct. Going
                 // direct here would egress from the real IP with no proxy and
@@ -356,5 +363,41 @@ mod tests {
     fn wreq_handler_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<WreqHandler>();
+    }
+
+    /// A caller-supplied proxy that is a private IP literal must be refused
+    /// before wreq dials it (wreq skips DNS for literal proxies, so the
+    /// connect-time SSRF resolver never sees it).
+    ///
+    /// Falsification: delete the `validate_proxy_url` block in
+    /// `execute_with` and the request is dialled through 127.0.0.1:9 —
+    /// a connection error, not "SSRF blocked" → RED.
+    #[tokio::test]
+    async fn private_literal_proxy_is_ssrf_blocked() {
+        let client = crate::HttpClient::new(crate::HttpConfig::default()).expect("client");
+        for proxy in [
+            "http://127.0.0.1:9",
+            "http://10.1.2.3:3128",
+            "socks5://172.18.0.1:1080",
+            "http://[::1]:9",
+            "http://169.254.169.254:80",
+            "http://localhost:9",
+            "127.0.0.1:9",
+        ] {
+            let err = client
+                .execute(crate::Request {
+                    method: "GET".into(),
+                    url: "http://1.1.1.1/".into(),
+                    headers: vec![],
+                    body: None,
+                    proxy: Some(proxy.into()),
+                })
+                .await
+                .expect_err("private proxy must be refused");
+            assert!(
+                err.to_string().contains("SSRF blocked"),
+                "proxy {proxy}: got {err}"
+            );
+        }
     }
 }

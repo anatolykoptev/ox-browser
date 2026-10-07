@@ -9,6 +9,7 @@ mod fetch;
 mod fetch_smart;
 pub mod gobrowser_proxy;
 mod image_search;
+pub mod inbound_auth;
 mod media_download;
 mod read;
 mod readability;
@@ -181,7 +182,7 @@ mod tests {
         }
     }
 
-    fn test_state() -> AppState {
+    pub(crate) fn test_state() -> AppState {
         let proxy = Arc::new(gobrowser_proxy::GoBrowserProxy::new(
             "http://127.0.0.1:8906".to_string(),
         ));
