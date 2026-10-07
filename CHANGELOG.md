@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.8.15](https://github.com/anatolykoptev/ox-browser/compare/v0.8.14...v0.8.15) (2026-10-07)
+
+
+### Added
+
+* **security:** inbound auth on every route, fail closed; refuse private literal proxies ([86311f8](https://github.com/anatolykoptev/ox-browser/commit/86311f844b4a458334f892e84cbc928eac443fa6))
+* **security:** inbound auth on every route, fail closed; refuse private literal proxies ([83d17ad](https://github.com/anatolykoptev/ox-browser/commit/83d17ad0761198cc9e68dc900fda8981ed0daeab))
+
+
+### Fixed
+
+* **gobrowser:** send X-Internal-Secret on every go-wowa call ([#172](https://github.com/anatolykoptev/ox-browser/issues/172)) ([849bf9b](https://github.com/anatolykoptev/ox-browser/commit/849bf9bae5796268172ae34edcfe02d992d2902e))
+* **http:** refuse proxy path/query/fragment on raw text, strip trailing dot on localhost, de-race allowlist test ([edaddc5](https://github.com/anatolykoptev/ox-browser/commit/edaddc55d0a0001643648ab2ced37fb9a3c5dc2d))
+* **llm:** tolerate nested parens in link destinations ([#170](https://github.com/anatolykoptev/ox-browser/issues/170)) ([817da42](https://github.com/anatolykoptev/ox-browser/commit/817da42c29211835d59ca59e0df47004ff85e0fb))
+* **security:** allowlist proxy schemes; explicit SOCKS ports vetted at 1080 ([92ce54a](https://github.com/anatolykoptev/ox-browser/commit/92ce54aeef5d908edbf71cdae6c6d7e9d11aa3c7))
+* **security:** canonicalise every proxy before wreq dials it ([cc617c1](https://github.com/anatolykoptev/ox-browser/commit/cc617c1276a24cc68616cc83e041de781df734b2))
+* **security:** cap User-Agents per IP in sightings; test the served app ([8e5a7c5](https://github.com/anatolykoptev/ox-browser/commit/8e5a7c50808a30bb107eeaea6a20f0b8addec810))
+* **security:** close the proxy parser differential; per-IP cap warns once ([ea6357e](https://github.com/anatolykoptev/ox-browser/commit/ea6357ebe515ac5a3e743804df0b676892b0769a))
+* **security:** mark authenticated requests; subtle compare; redact proxy creds in logs ([8dc6356](https://github.com/anatolykoptev/ox-browser/commit/8dc63566b356249f3a45ccd8de17e72a47c41949))
+* **security:** no proxy creds in errors; trim configured creds; per-IP cap; canonical socks5 hosts ([f4751b0](https://github.com/anatolykoptev/ox-browser/commit/f4751b07a420e1b70fd6be489e1ac7a7d4882aab))
+* **security:** refuse userinfo parsed outside the authority (SEC-CR-021) ([6fb7b58](https://github.com/anatolykoptev/ox-browser/commit/6fb7b58cbd54d93d8f0e374dbf97c3e6bed05ee4))
+* **security:** strict proxy grammar decided from one parse (SEC-CR-022..025) ([1658cee](https://github.com/anatolykoptev/ox-browser/commit/1658ceec8dfba3d5797bab8909cd9c10a3815f9a))
+
+
+### Documentation
+
+* **security:** SEC-CR-013 test falsification matches the one-parse canonicaliser ([8340fa3](https://github.com/anatolykoptev/ox-browser/commit/8340fa3e97f2c4a182f291249849a08c7132ef05))
+
 ## [0.8.14](https://github.com/anatolykoptev/ox-browser/compare/v0.8.13...v0.8.14) (2026-09-27)
 
 
