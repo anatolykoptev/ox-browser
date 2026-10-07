@@ -160,18 +160,17 @@ impl WreqHandler {
                 // misconfiguration, not a silent downgrade to direct. Going
                 // direct here would egress from the real IP with no proxy and
                 // no counter, contradicting the invariant this file protects.
-                let proxy = match wreq::Proxy::all(proxy_url) {
+                let proxy = match build_proxy(proxy_url) {
                     Ok(p) => p,
                     Err(e) => {
                         crate::metrics::record_proxy_attach_invalid_url();
                         tracing::warn!(
                             url = %req.url,
                             proxy_url = %crate::middleware_ssrf::redact_proxy_userinfo(proxy_url),
-                            error = %e,
                             reason = "proxy_attach_invalid_url",
                             "per-request proxy URL is unparsable — failing closed, refusing to degrade to direct"
                         );
-                        return Err(HttpError::InvalidUrl(e.to_string()));
+                        return Err(e);
                     }
                 };
                 builder = builder.proxy(proxy);
@@ -195,18 +194,17 @@ impl WreqHandler {
                 let proxy_url = pool.next().expect(
                     "proxy pool returned None — unreachable under production wiring (see comment)",
                 );
-                let proxy = match wreq::Proxy::all(&proxy_url) {
+                let proxy = match build_proxy(&proxy_url) {
                     Ok(p) => p,
                     Err(e) => {
                         crate::metrics::record_proxy_attach_invalid_url();
                         tracing::warn!(
                             url = %req.url,
                             proxy_url = %crate::middleware_ssrf::redact_proxy_userinfo(&proxy_url),
-                            error = %e,
                             reason = "proxy_attach_invalid_url",
                             "pool-returned proxy URL is unparsable — failing closed, refusing to degrade to direct"
                         );
-                        return Err(HttpError::InvalidUrl(e.to_string()));
+                        return Err(e);
                     }
                 };
                 builder = builder.proxy(proxy);
@@ -355,6 +353,37 @@ impl Handler for WreqHandler {
     }
 }
 
+/// Build a wreq proxy from a proxy URL.
+///
+/// A scheme-less value is accepted only in the bare `host:port` form (numeric
+/// port, no userinfo) and treated as `http://host:port`; anything else
+/// without a scheme fails closed. The wreq error is never surfaced: its
+/// Display can echo the URI including `user:password@`, so the error carries
+/// only a fixed message plus the redacted URL.
+fn build_proxy(proxy_url: &str) -> Result<wreq::Proxy> {
+    let invalid = || {
+        HttpError::InvalidUrl(format!(
+            "invalid proxy URL: {}",
+            crate::middleware_ssrf::redact_proxy_userinfo(proxy_url)
+        ))
+    };
+    let normalised;
+    let url = if proxy_url.contains("://") {
+        proxy_url
+    } else {
+        let bare_host_port = !proxy_url.contains('@')
+            && proxy_url.rsplit_once(':').is_some_and(|(h, p)| {
+                !h.is_empty() && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())
+            });
+        if !bare_host_port {
+            return Err(invalid());
+        }
+        normalised = format!("http://{proxy_url}");
+        &normalised
+    };
+    wreq::Proxy::all(url).map_err(|_| invalid())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,5 +428,30 @@ mod tests {
                 "proxy {proxy}: got {err}"
             );
         }
+    }
+
+    /// A proxy-setup failure must not echo the proxy credentials in the
+    /// returned error (wreq's own error Display includes the userinfo).
+    ///
+    /// Falsification: revert `build_proxy` to the pre-fix
+    /// `wreq::Proxy::all(proxy_url).map_err(|e| InvalidUrl(e.to_string()))`
+    /// and the password appears in the message → RED.
+    #[test]
+    fn build_proxy_error_does_not_leak_credentials() {
+        // wreq's own error for this input is "builder error for uri
+        // (<userinfo>@host)", i.e. it echoes the credentials.
+        let err = build_proxy("alice:s3cret@example.com")
+            .expect_err("scheme-less proxy with userinfo must be refused");
+        let msg = err.to_string();
+        assert!(!msg.contains("s3cret"), "{msg}");
+    }
+
+    /// A bare `host:port` is an http proxy; scheme-less input without a
+    /// numeric port still fails closed (see proxy_402_fallback_test B).
+    #[test]
+    fn build_proxy_bare_host_port_only() {
+        assert!(build_proxy("192.0.2.1:3128").is_ok());
+        assert!(build_proxy("not-a-valid-url").is_err());
+        assert!(build_proxy("host:notaport").is_err());
     }
 }

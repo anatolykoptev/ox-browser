@@ -56,6 +56,9 @@ const MAX_UA_LEN: usize = 80;
 /// [`OTHER_UA`], so one peer cycling UAs cannot fill the table.
 const MAX_UAS_PER_IP: usize = 8;
 const OTHER_UA: &str = "<other-ua>";
+/// First-sighting entries one remote IP may hold across ALL keys (results ×
+/// route classes × UA buckets), so a few IPs cannot fill the table.
+const MAX_ENTRIES_PER_IP: usize = 16;
 
 /// Whether a request without a usable credential is rejected or allowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,8 +106,10 @@ impl AuthConfig {
     pub fn from_env() -> Self {
         let var = |k: &str| std::env::var(k).unwrap_or_default();
         Self {
-            internal_secret: var("INTERNAL_SERVICE_SECRET"),
-            mcp_token: var("OX_MCP_TOKEN"),
+            // Trimmed like the presented values, so a trailing newline from
+            // an env file cannot make every correct credential mismatch.
+            internal_secret: var("INTERNAL_SERVICE_SECRET").trim().to_owned(),
+            mcp_token: var("OX_MCP_TOKEN").trim().to_owned(),
             mode: Mode::parse(&var("OX_AUTH_MODE")),
             allow_insecure: matches!(
                 var("OX_AUTH_ALLOW_INSECURE")
@@ -140,6 +145,7 @@ struct Inner {
 struct Sightings {
     seen: HashSet<String>,
     uas_per_ip: HashMap<String, HashSet<String>>,
+    entries_per_ip: HashMap<String, usize>,
 }
 
 impl Sightings {
@@ -156,6 +162,11 @@ impl Sightings {
         if self.seen.len() >= MAX_SIGHTINGS || self.seen.contains(&key) {
             return (ua.to_owned(), false);
         }
+        let per_ip = self.entries_per_ip.entry(ip.to_owned()).or_default();
+        if *per_ip >= MAX_ENTRIES_PER_IP {
+            return (ua.to_owned(), false);
+        }
+        *per_ip += 1;
         self.seen.insert(key);
         if ua != OTHER_UA {
             self.uas_per_ip

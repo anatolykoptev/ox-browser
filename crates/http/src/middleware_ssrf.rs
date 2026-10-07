@@ -193,8 +193,21 @@ pub fn validate_proxy_url(proxy_url: &str) -> Result<()> {
         owned = format!("http://{proxy_url}");
         &owned
     };
-    let url = url::Url::parse(proxy_url)
-        .map_err(|e| HttpError::InvalidUrl(format!("SSRF blocked: unparsable proxy URL: {e}")))?;
+    let parsed = url::Url::parse(proxy_url)
+        .map_err(|_| HttpError::InvalidUrl("SSRF blocked: unparsable proxy URL".into()))?;
+    // `socks5` is not a WHATWG "special" scheme, so its host is kept as an
+    // opaque string and shorthand IPv4 forms are not normalised. Re-parse
+    // the authority under `http` so every scheme gets the same canonical
+    // host (an IPv4 literal in any notation becomes dotted-quad).
+    let url = if parsed.scheme() == "http" || parsed.scheme() == "https" {
+        parsed
+    } else {
+        let authority = proxy_url
+            .split_once("://")
+            .map_or(proxy_url, |(_, rest)| rest);
+        url::Url::parse(&format!("http://{authority}"))
+            .map_err(|_| HttpError::InvalidUrl("SSRF blocked: unparsable proxy URL".into()))?
+    };
     let host = url
         .host_str()
         .ok_or_else(|| HttpError::InvalidUrl("SSRF blocked: proxy URL has no host".into()))?;
@@ -817,5 +830,17 @@ mod tests {
         assert!(!r.contains("s3cret") && !r.contains("alice"), "{r}");
         assert!(r.contains("p.webshare.io"), "{r}");
         assert!(!redact_proxy_userinfo("u:pw@[bad").contains("pw"));
+    }
+
+    /// A non-special scheme (socks5) keeps its host opaque in WHATWG
+    /// parsing; validate_proxy_url must canonicalise it like http does.
+    ///
+    /// Falsification: drop the http re-parse for non-http schemes in
+    /// `validate_proxy_url` and the socks5 shorthand-loopback row passes → RED.
+    #[test]
+    fn validate_proxy_url_canonicalises_non_special_scheme_hosts() {
+        assert!(validate_proxy_url("socks5://127.1:1080").is_err());
+        assert!(validate_proxy_url("http://127.1:1080").is_err());
+        assert!(validate_proxy_url("socks5://8.8.8.8:1080").is_ok());
     }
 }

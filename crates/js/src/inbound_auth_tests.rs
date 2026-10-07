@@ -182,8 +182,8 @@ fn matches_rejects_empty() {
 fn from_env_reads_the_documented_variables() {
     // SAFETY: edition-2024 env mutation; no other test reads these vars.
     unsafe {
-        std::env::set_var("INTERNAL_SERVICE_SECRET", "e-secret");
-        std::env::set_var("OX_MCP_TOKEN", "e-token");
+        std::env::set_var("INTERNAL_SERVICE_SECRET", " e-secret\n");
+        std::env::set_var("OX_MCP_TOKEN", "e-token\n");
         std::env::set_var("OX_AUTH_MODE", "soft");
         std::env::set_var("OX_AUTH_ALLOW_INSECURE", "true");
     }
@@ -261,5 +261,31 @@ async fn authenticated_marker_only_for_valid_credential() {
             .unwrap();
         let bytes = axum::body::to_bytes(r.into_body(), 64).await.unwrap();
         assert_eq!(std::str::from_utf8(&bytes).unwrap(), want, "{hdrs:?}");
+    }
+}
+
+/// One IP varying result, route class and User-Agent together holds at most
+/// MAX_ENTRIES_PER_IP entries; IPs arriving afterwards are still recorded.
+///
+/// Falsification: drop the MAX_ENTRIES_PER_IP check in `Sightings::first`
+/// and one IP holds far more than 16 entries → RED.
+#[test]
+fn per_ip_total_cap_across_all_keys() {
+    let mut s = Sightings::default();
+    for res in ["missing", "unverifiable", "invalid"] {
+        for cls in ["mcp", "chrome", "metrics", "rest"] {
+            for i in 0..20 {
+                s.first(&format!("{res}|{cls}"), "10.0.0.66", &format!("ua/{i}"));
+            }
+        }
+    }
+    assert!(
+        s.seen.len() <= MAX_ENTRIES_PER_IP,
+        "one IP holds {} entries",
+        s.seen.len()
+    );
+    for i in 0..30 {
+        let (_, new) = s.first("missing|rest", &format!("10.1.0.{i}"), "x");
+        assert!(new, "IP {i} not recorded after the flood");
     }
 }
