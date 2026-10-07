@@ -853,3 +853,249 @@ async fn e_max_redirects_zero_blocks_first_redirect() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// SEC-CR-012: a proxy with a scheme wreq has no intercept for (ftp, socks)
+// would be silently ignored and the request sent DIRECT from the real IP,
+// while still being counted as proxied. It must be refused instead.
+// ---------------------------------------------------------------------------
+
+/// The scheme check lives in `canonicalise_proxy_url` (middleware_ssrf.rs),
+/// which both validate_proxy_url (per-request) and build_proxy (pool, static,
+/// and per-request again) call.
+/// Falsification: drop the ALLOWED_PROXY_SCHEMES check there and wreq ignores
+/// the ftp proxy, the request goes direct and returns the origin's
+/// "direct-success" 200 → RED.
+#[tokio::test]
+#[serial]
+async fn unknown_proxy_scheme_is_refused_not_served_direct() {
+    use ox_http::Request;
+
+    let (origin_port, hits) = spawn_ok_origin_with_counter().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // SAFETY: see note in a_http_402_with_forged_marker_not_degraded.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin_port}"),
+        );
+    }
+    let client = HttpClient::new(HttpConfig {
+        timeout: Duration::from_secs(5),
+        ..Default::default()
+    })
+    .expect("build client");
+
+    for proxy in ["ftp://8.8.8.8:21", "socks://8.8.8.8:1080"] {
+        let result = client
+            .execute(Request {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{origin_port}/test"),
+                headers: vec![],
+                body: None,
+                proxy: Some(proxy.into()),
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "{proxy}: request with an unknown proxy scheme must be refused, got {result:?}"
+        );
+    }
+    unsafe {
+        std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+    }
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "the origin was reached directly through an ignored proxy"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SEC-CR-018: the pool path must dial the proxy it was given, never fall
+// through to direct. wreq's socks matcher is case-sensitive and treats an
+// empty port as "no proxy", so a raw `SOCKS5://…` or `socks5://host:` pool
+// entry used to send the request DIRECT from the real IP while it was counted
+// as proxied. build_proxy now canonicalises (lowercase scheme, explicit port).
+// ---------------------------------------------------------------------------
+
+/// Covers the pool entry and the static `proxy_url` (client.rs, which now
+/// uses the same `build_proxy`).
+///
+/// Falsification: in `build_proxy` (handler_reqwest.rs) pass the raw
+/// `proxy_url` to `wreq::Proxy::all` instead of the canonical URL, or revert
+/// the static path in `wreq_transport_core` (client.rs) to
+/// `wreq::Proxy::all(url)`, and the rows reach the origin directly (origin
+/// hits > 0, proxy hits 0) → RED.
+#[tokio::test]
+#[serial]
+async fn pool_and_static_proxy_scheme_case_and_empty_port_never_go_direct() {
+    use ox_http::Request;
+    use ox_http::proxy_pool::StaticPool;
+
+    let (origin_port, origin_hits) = spawn_ok_origin_with_counter().await;
+    // Not a SOCKS server: it only counts connections, so a request that
+    // really went through it fails, and one that bypassed it does not.
+    let (proxy_port, proxy_hits) = spawn_ok_origin_with_counter().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // SAFETY: see note in a_http_402_with_forged_marker_not_degraded.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin_port}"),
+        );
+    }
+    let rows = [
+        (format!("SOCKS5://127.0.0.1:{proxy_port}"), true),
+        ("socks5://127.0.0.1:".to_string(), false),
+    ];
+    for (pool_entry, expect_proxy_hit, via_pool) in rows
+        .iter()
+        .flat_map(|(e, hit)| [(e.clone(), *hit, true), (e.clone(), *hit, false)])
+    {
+        let before = proxy_hits.load(Ordering::SeqCst);
+        let config = if via_pool {
+            HttpConfig {
+                timeout: Duration::from_secs(5),
+                proxy_pool: Some(Arc::new(StaticPool::new(vec![pool_entry.clone()]))),
+                ..Default::default()
+            }
+        } else {
+            HttpConfig {
+                timeout: Duration::from_secs(5),
+                proxy_url: Some(pool_entry.clone()),
+                ..Default::default()
+            }
+        };
+        let client = HttpClient::new(config).expect("build client");
+        let result = client
+            .execute(Request {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{origin_port}/test"),
+                headers: vec![],
+                body: None,
+                proxy: None,
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "{pool_entry} (pool={via_pool}): must fail through the fake proxy, got {result:?}"
+        );
+        if expect_proxy_hit {
+            assert!(
+                proxy_hits.load(Ordering::SeqCst) > before,
+                "{pool_entry} (pool={via_pool}): the proxy was never dialled"
+            );
+        }
+    }
+    unsafe {
+        std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+    }
+    assert_eq!(
+        origin_hits.load(Ordering::SeqCst),
+        0,
+        "a pool proxy was bypassed and the origin reached directly"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SEC-CR-021..025: proxy URLs the url crate would read with part of the
+// credential as host/port/path/query/fragment (or with the host taken from a
+// trailing `://`). Each used to canonicalise to host `usertok` (or `http`, or
+// port 80); the dial failed and, with max_redirects 0, the dial-failure
+// fallback sent the request DIRECT. On the pool, static and per-request
+// paths they must now fail closed (zero origin hits) with no credential in
+// the error.
+// ---------------------------------------------------------------------------
+
+const SMUGGLED: &[&str] = &[
+    "http://USERTOK:12#S3CRETPW@127.0.0.1:3128",
+    "http://USERTOK:/S3CRETPW@127.0.0.1:3128",
+    "socks5://USERTOK:?S3CRETPW@127.0.0.1:1080",
+    "ftp://USERTOK:12#S3CRETPW@127.0.0.1:21",
+    "http:/USERTOK:12#S3CRETPW@127.0.0.1:3128://x",
+    "socks5:/USERTOK:12#S3CRETPW@127.0.0.1:1080://x",
+    "http:USERTOK:S3CRETPW@127.0.0.1:3128",
+    "HTTP:/USERTOK:S3CRETPW@127.0.0.1:3128",
+    "https:/USERTOK:S3CRETPW@127.0.0.1:3128",
+    "socks5:/USERTOK:S3CRETPW@127.0.0.1:1080",
+    "http://USERTOK:S3CRETPW@127.0.0.1:3128://x",
+    "http://USERTOK:12345\\S3CRETPW@127.0.0.1:3128",
+    "http:/127.0.0.1:3128",
+    "socks5:/127.0.0.1:1080",
+    "127.0.0.1#x:3128",
+    "127.0.0.1/x:3128",
+    "127.0.0.1?x:3128",
+];
+
+fn leaks(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("usertok") || lower.contains("s3cretpw")
+}
+
+/// Falsification: drop the "no path, query or fragment" check in
+/// `canonicalise_proxy_url` (middleware_ssrf.rs) and the `#`/`/`/`?` rows
+/// dial host `usertok`, fall back to direct and hit the origin → RED; drop
+/// the `<allowed-scheme>://` / bare-host:port grammar (accept any input the
+/// url crate parses) and the `http:/`, `http:` and bare rows do the same →
+/// RED.
+#[tokio::test]
+#[serial]
+async fn smuggled_proxy_urls_fail_closed_without_leaking() {
+    use ox_http::Request;
+    use ox_http::proxy_pool::StaticPool;
+
+    let (origin_port, origin_hits) = spawn_ok_origin_with_counter().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // SAFETY: see note in a_http_402_with_forged_marker_not_degraded.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin_port}"),
+        );
+    }
+    for entry in SMUGGLED {
+        for path in ["pool", "static", "per-request"] {
+            let mut config = HttpConfig {
+                timeout: Duration::from_secs(5),
+                max_redirects: 0,
+                ..Default::default()
+            };
+            match path {
+                "pool" => {
+                    config.proxy_pool = Some(Arc::new(StaticPool::new(vec![entry.to_string()])))
+                }
+                "static" => config.proxy_url = Some(entry.to_string()),
+                _ => {}
+            }
+            let per_request = (path == "per-request").then(|| entry.to_string());
+            let result = match HttpClient::new(config) {
+                Err(e) => Err(e),
+                Ok(client) => {
+                    client
+                        .execute(Request {
+                            method: "GET".into(),
+                            url: format!("http://127.0.0.1:{origin_port}/test"),
+                            headers: vec![],
+                            body: None,
+                            proxy: per_request,
+                        })
+                        .await
+                }
+            };
+            let err = result.expect_err("a refused proxy must fail closed");
+            assert!(
+                !leaks(&err.to_string()),
+                "{entry:?} ({path}) error leaked: {err}"
+            );
+        }
+    }
+    unsafe {
+        std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+    }
+    assert_eq!(
+        origin_hits.load(Ordering::SeqCst),
+        0,
+        "a refused proxy degraded to a direct request"
+    );
+}

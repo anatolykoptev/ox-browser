@@ -149,22 +149,36 @@ impl WreqHandler {
 
         if !skip_proxy {
             if let Some(ref proxy_url) = req.proxy {
-                // B: fail closed — an unparsable `req.proxy` is a
-                // misconfiguration, not a silent downgrade to direct. Going
-                // direct here would egress from the real IP with no proxy and
-                // no counter, contradicting the invariant this file protects.
-                let proxy = match wreq::Proxy::all(proxy_url) {
+                // A: a caller-supplied proxy must not name an internal
+                // address. wreq skips DNS for IP-literal proxies, so the
+                // connect-time SSRF resolver never sees them. validate returns
+                // the CANONICAL url to dial; dialling the raw string instead
+                // would reopen the url/wreq parser differential (SEC-CR-001).
+                let dial = match crate::middleware_ssrf::validate_proxy_url(proxy_url) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        // A refused caller proxy (SSRF-blocked or malformed)
+                        // is a fail-closed attach rejection — count it, don't
+                        // degrade to direct.
+                        crate::metrics::record_proxy_attach_invalid_url();
+                        tracing::warn!(url = %req.url, error = %e, reason = "proxy_refused", "per-request proxy refused");
+                        return Err(e);
+                    }
+                };
+                // B: fail closed — an unparsable proxy is a misconfiguration,
+                // not a silent downgrade to direct (which would egress from
+                // the real IP with no proxy and no counter).
+                let proxy = match build_proxy(&dial) {
                     Ok(p) => p,
                     Err(e) => {
                         crate::metrics::record_proxy_attach_invalid_url();
                         tracing::warn!(
                             url = %req.url,
-                            proxy_url = %proxy_url,
-                            error = %e,
+                            proxy_url = %crate::middleware_ssrf::redact_proxy_userinfo(proxy_url),
                             reason = "proxy_attach_invalid_url",
-                            "per-request proxy URL is unparsable — failing closed, refusing to degrade to direct"
+                            "validated per-request proxy failed to build — failing closed, refusing to degrade to direct"
                         );
-                        return Err(HttpError::InvalidUrl(e.to_string()));
+                        return Err(e);
                     }
                 };
                 builder = builder.proxy(proxy);
@@ -188,18 +202,17 @@ impl WreqHandler {
                 let proxy_url = pool.next().expect(
                     "proxy pool returned None — unreachable under production wiring (see comment)",
                 );
-                let proxy = match wreq::Proxy::all(&proxy_url) {
+                let proxy = match build_proxy(&proxy_url) {
                     Ok(p) => p,
                     Err(e) => {
                         crate::metrics::record_proxy_attach_invalid_url();
                         tracing::warn!(
                             url = %req.url,
-                            proxy_url = %proxy_url,
-                            error = %e,
+                            proxy_url = %crate::middleware_ssrf::redact_proxy_userinfo(&proxy_url),
                             reason = "proxy_attach_invalid_url",
                             "pool-returned proxy URL is unparsable — failing closed, refusing to degrade to direct"
                         );
-                        return Err(HttpError::InvalidUrl(e.to_string()));
+                        return Err(e);
                     }
                 };
                 builder = builder.proxy(proxy);
@@ -214,7 +227,7 @@ impl WreqHandler {
         tracing::debug!(
             url = %req.url,
             method = %req.method,
-            proxy = ?req.proxy,
+            proxy = ?req.proxy.as_deref().map(crate::middleware_ssrf::redact_proxy_userinfo),
             skip_proxy,
             ua = ?req.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("user-agent")).map(|(_, v)| v.as_str()),
             header_count = req.headers.len(),
@@ -348,13 +361,302 @@ impl Handler for WreqHandler {
     }
 }
 
+/// Build a wreq proxy from a proxy URL, dialling its canonical form.
+///
+/// wreq re-parses the string it is given and disagrees with the url crate in
+/// ways that silently send the request DIRECT (case-sensitive socks scheme,
+/// empty port) or to a different host (the non-special-scheme parser
+/// differential), so the raw value is never handed to wreq: it goes through
+/// [`crate::middleware_ssrf::canonicalise_proxy_url`] first. That does NOT vet
+/// the target — pool and static proxies are operator-configured and may be
+/// private (e.g. a local Tor); caller proxies are vetted by
+/// `validate_proxy_url` before they get here.
+///
+/// The wreq error is never surfaced: its Display can echo the URI including
+/// `user:password@`, so the error carries only a fixed message plus the
+/// redacted URL.
+pub(crate) fn build_proxy(proxy_url: &str) -> Result<wreq::Proxy> {
+    let invalid = || {
+        HttpError::InvalidUrl(format!(
+            "invalid proxy URL: {}",
+            crate::middleware_ssrf::redact_proxy_userinfo(proxy_url)
+        ))
+    };
+    let canonical =
+        crate::middleware_ssrf::canonicalise_proxy_url(proxy_url).map_err(|_| invalid())?;
+    wreq::Proxy::all(canonical.url.as_str()).map_err(|_| invalid())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::middleware_ssrf::tests::{SMUGGLED_PROXY_ROWS, leaks_credentials};
 
     #[test]
     fn wreq_handler_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<WreqHandler>();
+    }
+
+    /// A caller-supplied proxy that is a private IP literal must be refused
+    /// before wreq dials it (wreq skips DNS for literal proxies, so the
+    /// connect-time SSRF resolver never sees it).
+    ///
+    /// Falsification: delete the `validate_proxy_url` block in
+    /// `execute_with` and the request is dialled through 127.0.0.1:9 —
+    /// a connection error, not "SSRF blocked" → RED.
+    ///
+    /// `#[serial]`: `per_request_debug_log_redacts_valid_proxy` sets the
+    /// process-wide proxy allowlist; this test must not run concurrently
+    /// with it (SEC-CR-029).
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn private_literal_proxy_is_ssrf_blocked() {
+        let client = crate::HttpClient::new(crate::HttpConfig::default()).expect("client");
+        for proxy in [
+            "http://127.0.0.1:9",
+            "http://10.1.2.3:3128",
+            "socks5://172.18.0.1:1080",
+            "http://[::1]:9",
+            "http://169.254.169.254:80",
+            "http://localhost:9",
+            "127.0.0.1:9",
+        ] {
+            let err = client
+                .execute(crate::Request {
+                    method: "GET".into(),
+                    url: "http://1.1.1.1/".into(),
+                    headers: vec![],
+                    body: None,
+                    proxy: Some(proxy.into()),
+                })
+                .await
+                .expect_err("private proxy must be refused");
+            assert!(
+                err.to_string().contains("SSRF blocked"),
+                "proxy {proxy}: got {err}"
+            );
+        }
+    }
+
+    /// A proxy-setup failure must not echo the proxy credentials in the
+    /// returned error (wreq's own error Display includes the userinfo).
+    ///
+    /// Falsification: revert `build_proxy` to the pre-fix
+    /// `wreq::Proxy::all(proxy_url).map_err(|e| InvalidUrl(e.to_string()))`
+    /// and the password appears in the message → RED.
+    #[test]
+    fn build_proxy_error_does_not_leak_credentials() {
+        // wreq's own error for this input is "builder error for uri
+        // (<userinfo>@host)", i.e. it echoes the credentials.
+        let err = build_proxy("USERTOK:S3CRETPW@example.com")
+            .expect_err("scheme-less proxy with userinfo must be refused");
+        let msg = err.to_string();
+        assert!(!leaks_credentials(&msg), "{msg}");
+    }
+
+    /// A bare `host:port` is an http proxy; scheme-less input without a
+    /// numeric port still fails closed (see proxy_402_fallback_test B).
+    #[test]
+    fn build_proxy_bare_host_port_only() {
+        assert!(build_proxy("192.0.2.1:3128").is_ok());
+        assert!(build_proxy("not-a-valid-url").is_err());
+        assert!(build_proxy("host:notaport").is_err());
+    }
+
+    /// Handler-level: both build_proxy call sites must fail closed without
+    /// echoing proxy credentials. The pool call site is driven here; the
+    /// per-request site by `per_request_proxy_refusal_does_not_leak_credentials`.
+    ///
+    /// Falsification: revert either build_proxy call site to
+    /// `wreq::Proxy::all(..).map_err(|e| HttpError::InvalidUrl(e.to_string()))`
+    /// and the password appears in the returned error → RED. For the
+    /// SEC-CR-021 rows: make `redact_proxy_userinfo` re-serialise the parsed
+    /// URL (the pre-fix `set_username("***")` + `to_string()`) and the
+    /// password, parsed into the fragment/path/query, appears → RED.
+    #[tokio::test]
+    async fn pool_proxy_error_does_not_leak_credentials() {
+        use crate::proxy_pool::StaticPool;
+        use std::sync::Arc;
+        let mut rows = vec![
+            "USERTOK:S3CRETPW@example.com",
+            "ftp://USERTOK:12#S3CRETPW@127.0.0.1:21",
+        ];
+        rows.extend_from_slice(SMUGGLED_PROXY_ROWS);
+        for entry in rows {
+            let pool = Arc::new(StaticPool::new(vec![entry.to_string()]));
+            let client = wreq::Client::new();
+            let handler = WreqHandler::with_proxy_pool(client, pool, false, 5, 1 << 20);
+            let (result, logs) = capture_logs(handler.handle(Request {
+                method: "GET".into(),
+                url: "http://example.com/".into(),
+                headers: vec![],
+                body: None,
+                proxy: None,
+            }))
+            .await;
+            let msg = result
+                .expect_err("invalid pool proxy must fail closed")
+                .to_string();
+            assert!(
+                !leaks_credentials(&msg),
+                "pool error leaked for {entry:?}: {msg}"
+            );
+            assert!(
+                logs.contains("proxy_attach_invalid_url"),
+                "pool refusal not logged: {logs}"
+            );
+            assert!(
+                !leaks_credentials(&logs),
+                "pool logs leaked for {entry:?}: {logs}"
+            );
+        }
+    }
+
+    /// The per-request call site: a credentialed req.proxy that is refused
+    /// must not echo the credentials, on both refusal branches.
+    ///
+    /// - `ex ample.com` is refused by `validate_proxy_url` (illegal byte).
+    /// - `a{b}.example` (SEC-CR-019) PASSES `validate_proxy_url` — the url
+    ///   crate allows `{`/`}` in a domain — but `http::Uri` cannot carry it,
+    ///   so `build_proxy(&dial)` fails. This is the input that reaches the
+    ///   per-request `build_proxy` error branch.
+    ///
+    /// Falsification: make `build_proxy`'s error echo the raw URL
+    /// (`format!("invalid proxy URL: {proxy_url}")`) and the `a{b}` row leaks
+    /// the password → RED; with only the `ex ample` row the same mutation
+    /// stays green, which is why the `a{b}` row is here. (wreq's own error
+    /// for this input, "builder error: invalid uri character", happens not
+    /// to echo the userinfo, so reverting the call site to surface it would
+    /// not be caught by this input.)
+    #[tokio::test]
+    async fn per_request_proxy_refusal_does_not_leak_credentials() {
+        let mut rows = vec![
+            "http://USERTOK:S3CRETPW@ex ample.com:80",
+            "http://USERTOK:S3CRETPW@a{b}.example:3128",
+        ];
+        rows.extend_from_slice(SMUGGLED_PROXY_ROWS);
+        for proxy in rows {
+            assert!(
+                !proxy.contains('{') || crate::middleware_ssrf::validate_proxy_url(proxy).is_ok(),
+                "{proxy}: must pass validation so the build_proxy branch is exercised"
+            );
+            let handler = WreqHandler::new(wreq::Client::new(), false, 5, 1 << 20);
+            let (result, logs) = capture_logs(handler.handle(Request {
+                method: "GET".into(),
+                url: "http://example.com/".into(),
+                headers: vec![],
+                body: None,
+                proxy: Some(proxy.into()),
+            }))
+            .await;
+            let msg = result
+                .expect_err("invalid req.proxy must fail closed")
+                .to_string();
+            assert!(
+                !leaks_credentials(&msg),
+                "per-request error leaked for {proxy:?}: {msg}"
+            );
+            assert!(
+                logs.contains("proxy"),
+                "per-request refusal not logged: {logs}"
+            );
+            assert!(
+                !leaks_credentials(&logs),
+                "per-request logs leaked for {proxy:?}: {logs}"
+            );
+        }
+    }
+
+    /// A successful per-request proxy is DEBUG-logged through the redactor:
+    /// the log must name the proxy host, never its credentials.
+    ///
+    /// Falsification: log `req.proxy` raw in the "wreq: sending request"
+    /// debug line (handler_reqwest.rs) → RED.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn per_request_debug_log_redacts_valid_proxy() {
+        // Allowlist the loopback proxy so it passes validation; nothing
+        // listens on this port (no other test uses it), so the dial fails
+        // fast after the debug line.
+        // SAFETY: serial test; no other thread reads the env meanwhile.
+        unsafe {
+            std::env::set_var(
+                crate::middleware_ssrf::PROXY_ALLOWLIST_ENV,
+                "127.0.0.1:59871",
+            )
+        };
+        let handler = WreqHandler::new(wreq::Client::new(), false, 0, 1 << 20);
+        let (_, logs) = capture_logs(handler.handle(Request {
+            method: "GET".into(),
+            url: "http://192.0.2.10/".into(),
+            headers: vec![],
+            body: None,
+            proxy: Some("http://USERTOK:S3CRETPW@127.0.0.1:59871".into()),
+        }))
+        .await;
+        unsafe { std::env::remove_var(crate::middleware_ssrf::PROXY_ALLOWLIST_ENV) };
+        assert!(
+            logs.contains("sending request"),
+            "debug line not reached: {logs}"
+        );
+        assert!(
+            logs.contains("127.0.0.1:59871"),
+            "debug log missing the proxy host: {logs}"
+        );
+        assert!(!leaks_credentials(&logs), "debug log leaked: {logs}");
+    }
+
+    /// Runs `fut` with a thread-local tracing subscriber that records every
+    /// event and span field (all levels) into a string.
+    async fn capture_logs<F: std::future::Future>(fut: F) -> (F::Output, String) {
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let _guard = tracing::subscriber::set_default(LogCapture(buf.clone()));
+        let out = fut.await;
+        let logs = buf.lock().map(|b| b.clone()).unwrap_or_default();
+        (out, logs)
+    }
+
+    struct LogCapture(std::sync::Arc<std::sync::Mutex<String>>);
+    struct LogVisit(std::sync::Arc<std::sync::Mutex<String>>);
+
+    impl tracing::field::Visit for LogVisit {
+        fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+            if let Ok(mut b) = self.0.lock() {
+                b.push_str(&format!("{}={v:?} ", f.name()));
+            }
+        }
+    }
+
+    impl tracing::Subscriber for LogCapture {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, a: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            a.record(&mut LogVisit(self.0.clone()));
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, r: &tracing::span::Record<'_>) {
+            r.record(&mut LogVisit(self.0.clone()));
+        }
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, e: &tracing::Event<'_>) {
+            e.record(&mut LogVisit(self.0.clone()));
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// SEC-CR-012 on the pool path: build_proxy refuses a scheme wreq would
+    /// ignore (which would mean a direct request counted as proxied).
+    ///
+    /// Falsification: drop the ALLOWED_PROXY_SCHEMES check in
+    /// `canonicalise_proxy_url` (which build_proxy calls) → RED.
+    #[test]
+    fn build_proxy_refuses_unknown_schemes() {
+        for raw in ["ftp://8.8.8.8:21", "socks://8.8.8.8:1080"] {
+            assert!(build_proxy(raw).is_err(), "build_proxy accepted {raw}");
+        }
+        assert!(build_proxy("socks5://8.8.8.8:1080").is_ok());
     }
 }
