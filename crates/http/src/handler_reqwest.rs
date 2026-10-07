@@ -464,31 +464,43 @@ mod tests {
     ///
     /// Falsification: revert either build_proxy call site to
     /// `wreq::Proxy::all(..).map_err(|e| HttpError::InvalidUrl(e.to_string()))`
-    /// and the password appears in the returned error → RED.
+    /// and the password appears in the returned error → RED. For the
+    /// SEC-CR-021 rows: make `redact_proxy_userinfo` re-serialise the parsed
+    /// URL (the pre-fix `set_username("***")` + `to_string()`) and the
+    /// password, parsed into the fragment/path/query, appears → RED.
     #[tokio::test]
     async fn pool_proxy_error_does_not_leak_credentials() {
         use crate::proxy_pool::StaticPool;
         use std::sync::Arc;
-        let pool = Arc::new(StaticPool::new(vec![
-            "alice:s3cret@example.com".to_string(), // scheme-less + userinfo → build_proxy rejects
-        ]));
-        let client = wreq::Client::new();
-        let handler = WreqHandler::with_proxy_pool(client, pool, false, 5, 1 << 20);
-        let err = handler
-            .handle(Request {
-                method: "GET".into(),
-                url: "http://example.com/".into(),
-                headers: vec![],
-                body: None,
-                proxy: None,
-            })
-            .await
-            .expect_err("invalid pool proxy must fail closed");
-        let msg = err.to_string();
-        assert!(
-            !msg.contains("s3cret"),
-            "pool proxy error leaked credentials: {msg}"
-        );
+        for entry in [
+            // scheme-less + userinfo → build_proxy rejects
+            "alice:s3cret@example.com",
+            // SEC-CR-021: the url crate parses the password into a
+            // fragment / path / query, outside the userinfo it would redact.
+            "ftp://u:12#s3cret@127.0.0.1:21",
+            "http://u:12#s3cret@127.0.0.1:3128",
+            "http://u:/s3cret@127.0.0.1:3128",
+            "socks5://u:?s3cret@127.0.0.1:1080",
+        ] {
+            let pool = Arc::new(StaticPool::new(vec![entry.to_string()]));
+            let client = wreq::Client::new();
+            let handler = WreqHandler::with_proxy_pool(client, pool, false, 5, 1 << 20);
+            let err = handler
+                .handle(Request {
+                    method: "GET".into(),
+                    url: "http://example.com/".into(),
+                    headers: vec![],
+                    body: None,
+                    proxy: None,
+                })
+                .await
+                .expect_err("invalid pool proxy must fail closed");
+            let msg = err.to_string();
+            assert!(
+                !msg.contains("s3cret"),
+                "pool proxy error leaked credentials for {entry}: {msg}"
+            );
+        }
     }
 
     /// The per-request call site: a credentialed req.proxy that is refused
@@ -514,9 +526,13 @@ mod tests {
         for proxy in [
             "http://alice:s3cret@ex ample.com:80",
             "http://alice:s3cret@a{b}.example:3128",
+            // SEC-CR-021: refused by validate (userinfo outside the
+            // authority); its error must not carry the password either.
+            "http://u:12#s3cret@8.8.8.8:3128",
+            "socks5://u:?s3cret@8.8.8.8:1080",
         ] {
             assert!(
-                proxy.contains(' ') || crate::middleware_ssrf::validate_proxy_url(proxy).is_ok(),
+                !proxy.contains('{') || crate::middleware_ssrf::validate_proxy_url(proxy).is_ok(),
                 "{proxy}: must pass validation so the build_proxy branch is exercised"
             );
             let err = handler

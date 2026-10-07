@@ -997,3 +997,78 @@ async fn pool_and_static_proxy_scheme_case_and_empty_port_never_go_direct() {
         "a pool proxy was bypassed and the origin reached directly"
     );
 }
+
+// ---------------------------------------------------------------------------
+// SEC-CR-021: `u:12#pw@host` parses (url crate) as host `u`, port 12, with
+// the password in the fragment. Canonicalising that used to give
+// `http://u:12`: ox-browser dialled the username as the proxy host, and with
+// max_redirects 0 the dial-failure fallback then sent the request DIRECT. The
+// refused proxy must fail closed (no origin hit) on the pool and the static
+// path, and no error may carry the password.
+// ---------------------------------------------------------------------------
+
+/// Falsification: make `userinfo_outside_authority` (middleware_ssrf.rs)
+/// return false and these rows dial host `u`, fall back to direct and hit the
+/// origin (and the ftp row's error echoes S3CRETPW through the redactor) → RED.
+#[tokio::test]
+#[serial]
+async fn userinfo_outside_authority_fails_closed_without_leaking() {
+    use ox_http::Request;
+    use ox_http::proxy_pool::StaticPool;
+
+    let (origin_port, origin_hits) = spawn_ok_origin_with_counter().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // SAFETY: see note in a_http_402_with_forged_marker_not_degraded.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin_port}"),
+        );
+    }
+    for entry in [
+        "http://u:12#S3CRETPW@127.0.0.1:3128",
+        "http://u:/S3CRETPW@127.0.0.1:3128",
+        "socks5://u:?S3CRETPW@127.0.0.1:1080",
+        "ftp://u:12#S3CRETPW@127.0.0.1:21",
+    ] {
+        for via_pool in [true, false] {
+            let mut config = HttpConfig {
+                timeout: Duration::from_secs(5),
+                max_redirects: 0,
+                ..Default::default()
+            };
+            if via_pool {
+                config.proxy_pool = Some(Arc::new(StaticPool::new(vec![entry.to_string()])));
+            } else {
+                config.proxy_url = Some(entry.to_string());
+            }
+            let result = match HttpClient::new(config) {
+                Err(e) => Err(e),
+                Ok(client) => {
+                    client
+                        .execute(Request {
+                            method: "GET".into(),
+                            url: format!("http://127.0.0.1:{origin_port}/test"),
+                            headers: vec![],
+                            body: None,
+                            proxy: None,
+                        })
+                        .await
+                }
+            };
+            let err = result.expect_err("a refused proxy must fail closed");
+            assert!(
+                !err.to_string().contains("S3CRETPW"),
+                "{entry} (pool={via_pool}) error leaked the password: {err}"
+            );
+        }
+    }
+    unsafe {
+        std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+    }
+    assert_eq!(
+        origin_hits.load(Ordering::SeqCst),
+        0,
+        "a refused proxy degraded to a direct request"
+    );
+}
