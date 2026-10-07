@@ -261,7 +261,7 @@ mod tests {
             ..HttpConfig::default()
         };
         let client = HttpClient::with_chain(Arc::new(ServerErrorMock), config);
-        let proxy = Arc::new(GoBrowserProxy::new("http://127.0.0.1:8906".to_string()));
+        let proxy = Arc::new(GoBrowserProxy::new("http://127.0.0.1:8906".to_string(), ""));
         AppState::new(
             Arc::new(crate::tests::MockProvider),
             Arc::new(CookieCache::new(Duration::from_secs(300))),

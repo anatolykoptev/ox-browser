@@ -729,3 +729,27 @@ async fn read_page_timeout_secs_alias_resolves_to_caller_value() {
         out.elapsed_ms
     );
 }
+
+/// go-wowa rejects requests without a credential: the chrome-render fallback
+/// must carry `X-Internal-Secret`.
+///
+/// Falsification: drop the `.default_headers(...)` line in `chrome_fallback`
+/// and the captured request has no secret → RED.
+#[tokio::test]
+async fn chrome_fallback_sends_internal_secret() {
+    let (url, req) = crate::wowa_auth::capture_one(
+        r#"{"actions":[{"action":"evaluate","data":"<html><body><p>hello world</p></body></html>"}]}"#,
+    )
+    .await;
+    let out = chrome_fallback(
+        &url,
+        "s3cret",
+        &params("https://example.com"),
+        ContentFormat::Text,
+        Instant::now(),
+    )
+    .await;
+    assert!(out.is_some(), "chrome fallback returned None");
+    let head = req.await.expect("capture");
+    assert!(head.contains("x-internal-secret: s3cret"), "{head}");
+}

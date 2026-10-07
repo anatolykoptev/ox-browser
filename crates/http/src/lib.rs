@@ -49,6 +49,7 @@ pub mod solver_negcache;
 pub mod ssrf_connect;
 pub mod tls;
 pub mod url_util;
+pub mod wowa_auth;
 
 pub use client::{HttpClient, build_profiled_wreq_client};
 pub use cloudflare::{ChallengeType, CloudflareChallenge, detect_cloudflare};

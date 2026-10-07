@@ -90,6 +90,7 @@ async fn read_page_inner(
 
     let config = http.config();
     let chrome_url = config.chrome_render_url.clone();
+    let chrome_secret = config.chrome_render_secret.clone();
     let render_cache = config.render_cache.clone();
 
     // Check render cache: if domain is known to need Chrome or has given up, act accordingly.
@@ -125,7 +126,9 @@ async fn read_page_inner(
             }
             Some(RenderMode::Chrome) => {
                 tracing::debug!(domain = %domain, "render cache hit: Chrome");
-                if let Some(output) = chrome_fallback(url, params, format, start).await {
+                if let Some(output) =
+                    chrome_fallback(url, &chrome_secret, params, format, start).await
+                {
                     crate::metrics::record_fetch_success();
                     return output;
                 }
@@ -179,7 +182,9 @@ async fn read_page_inner(
                 } else {
                     tracing::info!(domain = %domain, "CF error on HTTP fetch → marking Chrome, retrying via Chrome fallback");
                     cache.set(&domain, RenderMode::Chrome);
-                    if let Some(output) = chrome_fallback(url, params, format, start).await {
+                    if let Some(output) =
+                        chrome_fallback(url, &chrome_secret, params, format, start).await
+                    {
                         crate::metrics::record_fetch_success();
                         return output;
                     }
@@ -204,7 +209,7 @@ async fn read_page_inner(
     {
         tracing::info!(domain = %domain, "JS shell detected → marking Chrome, retrying via Chrome fallback");
         cache.set(&domain, RenderMode::Chrome);
-        if let Some(output) = chrome_fallback(url, params, format, start).await {
+        if let Some(output) = chrome_fallback(url, &chrome_secret, params, format, start).await {
             crate::metrics::record_fetch_success();
             return output;
         }
@@ -218,6 +223,7 @@ async fn read_page_inner(
 /// Call go-wowa chrome/interact to fetch a JS-rendered page.
 async fn chrome_fallback(
     chrome_url: &str,
+    secret: &str,
     params: &ReadParams,
     format: ContentFormat,
     start: Instant,
@@ -233,6 +239,7 @@ async fn chrome_fallback(
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
+        .default_headers(crate::wowa_auth::headers(secret))
         .build()
         .ok()?;
 

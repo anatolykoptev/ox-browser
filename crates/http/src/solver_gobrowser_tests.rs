@@ -40,3 +40,26 @@ fn solve_resp_empty_body_means_still_challenged() {
     let ch = resp.into_challenge();
     assert!(ch.body.is_none(), "empty body must not become Some(\"\")");
 }
+
+/// go-wowa rejects requests without a credential: the `/solve` call must
+/// carry `X-Internal-Secret`.
+///
+/// Falsification: drop the `.default_headers(...)` line in
+/// `GoBrowserSolver::new` and the captured request has no secret → RED.
+#[tokio::test]
+async fn solve_sends_internal_secret() {
+    let (url, req) =
+        crate::wowa_auth::capture_one(r#"{"status":"ok","cookies":{"cf_clearance":"t"}}"#).await;
+    let solver = GoBrowserSolver::new(GoBrowserConfig {
+        base_url: url,
+        timeout: Duration::from_secs(5),
+        internal_secret: "s3cret".into(),
+    });
+    solver
+        .solve("https://example.com", ChallengeType::JsChallenge)
+        .await
+        .expect("solve");
+    let head = req.await.expect("capture");
+    assert!(head.starts_with("post /solve "), "{head}");
+    assert!(head.contains("x-internal-secret: s3cret"), "{head}");
+}

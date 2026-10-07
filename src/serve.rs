@@ -59,6 +59,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     // Chrome fallback for JS-rendered pages
     if let Ok(url) = std::env::var("GO_BROWSER_URL") {
         http_config.chrome_render_url = Some(format!("{url}/api/v1/chrome/interact"));
+        http_config.chrome_render_secret = ox_http::wowa_auth::secret_from_env();
     }
     let render_cache = Arc::new(ox_http::render_cache::RenderModeCache::default());
     // Render cache TTL-based eviction (issue #18): without a periodic sweep,
@@ -139,7 +140,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .unwrap_or_else(|| "http://127.0.0.1:8906".to_string());
 
     tracing::info!(url = %gobrowser_url, "go-browser proxy for /chrome/interact");
-    let gobrowser_proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(gobrowser_url));
+    let gobrowser_proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(
+        gobrowser_url,
+        &ox_http::wowa_auth::secret_from_env(),
+    ));
 
     let http_client = Arc::new(HttpClient::new(http_config)?);
     let state = ox_js::AppState::new(

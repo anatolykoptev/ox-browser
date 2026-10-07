@@ -14,6 +14,8 @@ use crate::cookie_provider::{CookieProvider, SolvedChallenge};
 pub struct GoBrowserConfig {
     pub base_url: String,
     pub timeout: Duration,
+    /// Sent as `X-Internal-Secret` (see [`crate::wowa_auth`]); empty = none.
+    pub internal_secret: String,
 }
 
 impl Default for GoBrowserConfig {
@@ -21,6 +23,7 @@ impl Default for GoBrowserConfig {
         Self {
             base_url: "http://127.0.0.1:8906".to_owned(),
             timeout: Duration::from_secs(35),
+            internal_secret: String::new(),
         }
     }
 }
@@ -67,6 +70,7 @@ impl GoBrowserSolver {
     pub fn new(config: GoBrowserConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
+            .default_headers(crate::wowa_auth::headers(&config.internal_secret))
             .build()
             .expect("reqwest client");
         Self {

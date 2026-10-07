@@ -159,6 +159,7 @@ pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
         let cfg = ox_http::solver_gobrowser::GoBrowserConfig {
             base_url: url.clone(),
             timeout: Duration::from_secs(config.solver.chromium_timeout_secs + 5),
+            internal_secret: ox_http::wowa_auth::secret_from_env(),
         };
         tracing::info!(url, "using GoBrowserSolver");
         ox_http::metrics::set_gauge(&ox_http::metrics::SOLVER_CONFIGURED, 1);
