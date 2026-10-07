@@ -35,9 +35,19 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 /// Header carrying the shared internal secret.
 pub const SECRET_HEADER: &str = "x-internal-secret";
+
+/// Request extension the gate inserts when the caller presented a VALID
+/// credential. Handlers that relay to go-wowa with ox-browser's own secret
+/// attach it only when this marker is present, so a request let through by
+/// soft mode (or the insecure override) is never relayed with the fleet
+/// credential. Reachable from axum handlers via `Option<Extension<_>>` and
+/// from MCP tools via the `http::request::Parts` rmcp injects.
+#[derive(Debug, Clone, Copy)]
+pub struct Authenticated;
 
 const MAX_SIGHTINGS: usize = 512;
 /// Max User-Agent length kept, in characters (never splits UTF-8).
@@ -277,10 +287,7 @@ fn matches(provided: &str, expected: &str) -> bool {
     }
     let p = Sha256::digest(provided.as_bytes());
     let e = Sha256::digest(expected.as_bytes());
-    p.iter()
-        .zip(e.iter())
-        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-        == 0
+    bool::from(p.as_slice().ct_eq(e.as_slice()))
 }
 
 /// `Some(token)` for an `Authorization: Bearer <token>` header (scheme
@@ -314,7 +321,7 @@ fn route_class(path: &str) -> &'static str {
 }
 
 /// axum middleware: `from_fn_with_state(gate, inbound_auth::middleware)`.
-pub async fn middleware(State(gate): State<Gate>, req: Request, next: Next) -> Response {
+pub async fn middleware(State(gate): State<Gate>, mut req: Request, next: Next) -> Response {
     let path = req.uri().path().to_owned();
     if is_exempt(req.method(), &path) {
         return next.run(req).await;
@@ -330,6 +337,9 @@ pub async fn middleware(State(gate): State<Gate>, req: Request, next: Next) -> R
             "unauthorized: send X-Internal-Secret or Authorization: Bearer",
         )
             .into_response();
+    }
+    if result.starts_with("ok_") {
+        req.extensions_mut().insert(Authenticated);
     }
     next.run(req).await
 }

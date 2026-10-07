@@ -224,3 +224,42 @@ fn ua_flood_from_one_ip_cannot_silence_others() {
     let (_, new) = s.first("missing|rest", "10.0.0.77", "real-caller/1");
     assert!(new, "a new IP after the flood was not recorded");
 }
+
+/// The gate marks a request Authenticated only for a valid credential;
+/// soft-mode pass-throughs carry no marker, so relays must not attach the
+/// fleet secret for them.
+///
+/// Falsification: insert the marker for every allowed request (drop the
+/// `ok_` condition in `middleware`) and the soft-mode row sees it → RED.
+#[tokio::test]
+async fn authenticated_marker_only_for_valid_credential() {
+    use axum::Extension;
+    let probe = axum::Router::new().route(
+        "/probe",
+        axum::routing::get(|m: Option<Extension<Authenticated>>| async move {
+            if m.is_some() { "auth" } else { "anon" }
+        }),
+    );
+    let a = protect(
+        probe,
+        Gate::new(AuthConfig {
+            internal_secret: SECRET.into(),
+            mcp_token: String::new(),
+            mode: Mode::Soft,
+            allow_insecure: false,
+        }),
+    );
+    for (hdrs, want) in [(&[(SECRET_HEADER, SECRET)][..], "auth"), (&[][..], "anon")] {
+        let mut b = axum::http::Request::builder().uri("/probe");
+        for (k, v) in hdrs {
+            b = b.header(*k, *v);
+        }
+        let r = a
+            .clone()
+            .oneshot(b.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let bytes = axum::body::to_bytes(r.into_body(), 64).await.unwrap();
+        assert_eq!(std::str::from_utf8(&bytes).unwrap(), want, "{hdrs:?}");
+    }
+}

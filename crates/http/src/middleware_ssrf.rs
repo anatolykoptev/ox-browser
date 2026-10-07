@@ -146,6 +146,29 @@ pub fn is_allowlisted(host: &str, port: u16) -> bool {
         .any(|entry| entry == needle)
 }
 
+/// Proxy URL with any `user:password@` replaced by `***@`, for logging.
+/// Unparsable input is reported as `<unparsable proxy URL>` rather than
+/// echoed, since it may still carry credentials.
+pub fn redact_proxy_userinfo(proxy_url: &str) -> String {
+    let with_scheme;
+    let s = if proxy_url.contains("://") {
+        proxy_url
+    } else {
+        with_scheme = format!("http://{proxy_url}");
+        &with_scheme
+    };
+    match url::Url::parse(s) {
+        Ok(mut u) => {
+            if !u.username().is_empty() || u.password().is_some() {
+                let _ = u.set_username("***");
+                let _ = u.set_password(None);
+            }
+            u.to_string()
+        }
+        Err(_) => "<unparsable proxy URL>".to_owned(),
+    }
+}
+
 /// Env var listing caller-supplied proxies (`host:port`, comma-separated,
 /// case-insensitive host) that may point at a private address.
 pub const PROXY_ALLOWLIST_ENV: &str = "OX_PROXY_ALLOWLIST";
@@ -782,5 +805,17 @@ mod tests {
         assert!(validate_proxy_url("http://p.webshare.io:80").is_ok());
         assert!(validate_proxy_url("http://user:pw@8.8.8.8:80").is_ok());
         assert!(validate_proxy_url("http://0x7f000001:80").is_err());
+    }
+
+    /// Proxy credentials must never reach logs (SEC-CR-008).
+    ///
+    /// Falsification: make `redact_proxy_userinfo` return its input and the
+    /// password appears → RED.
+    #[test]
+    fn redact_proxy_userinfo_strips_credentials() {
+        let r = redact_proxy_userinfo("http://alice:s3cret@p.webshare.io:80");
+        assert!(!r.contains("s3cret") && !r.contains("alice"), "{r}");
+        assert!(r.contains("p.webshare.io"), "{r}");
+        assert!(!redact_proxy_userinfo("u:pw@[bad").contains("pw"));
     }
 }

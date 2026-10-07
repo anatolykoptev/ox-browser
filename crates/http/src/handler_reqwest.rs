@@ -166,7 +166,7 @@ impl WreqHandler {
                         crate::metrics::record_proxy_attach_invalid_url();
                         tracing::warn!(
                             url = %req.url,
-                            proxy_url = %proxy_url,
+                            proxy_url = %crate::middleware_ssrf::redact_proxy_userinfo(proxy_url),
                             error = %e,
                             reason = "proxy_attach_invalid_url",
                             "per-request proxy URL is unparsable — failing closed, refusing to degrade to direct"
@@ -201,7 +201,7 @@ impl WreqHandler {
                         crate::metrics::record_proxy_attach_invalid_url();
                         tracing::warn!(
                             url = %req.url,
-                            proxy_url = %proxy_url,
+                            proxy_url = %crate::middleware_ssrf::redact_proxy_userinfo(&proxy_url),
                             error = %e,
                             reason = "proxy_attach_invalid_url",
                             "pool-returned proxy URL is unparsable — failing closed, refusing to degrade to direct"
@@ -221,7 +221,7 @@ impl WreqHandler {
         tracing::debug!(
             url = %req.url,
             method = %req.method,
-            proxy = ?req.proxy,
+            proxy = ?req.proxy.as_deref().map(crate::middleware_ssrf::redact_proxy_userinfo),
             skip_proxy,
             ua = ?req.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("user-agent")).map(|(_, v)| v.as_str()),
             header_count = req.headers.len(),
