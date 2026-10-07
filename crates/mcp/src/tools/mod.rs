@@ -150,8 +150,10 @@ impl OxMcpServer {
     async fn read(
         &self,
         Parameters(input): Parameters<ReadInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_read(input).await
+        self.do_read(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(

@@ -148,7 +148,7 @@ async fn giveup_with_active_negcache_fast_fails_without_http_get() {
     let cfg = config_with(Some(render_cache), Some(nc));
     let http = HttpClient::with_handler(handler, cfg);
 
-    let out = read_page_inner(&http, &params(&url), &[]).await;
+    let out = read_page_inner(&http, &params(&url), &[], true).await;
 
     // Must fast-fail with the GiveUp error message.
     assert!(
@@ -208,7 +208,7 @@ async fn giveup_with_expired_negcache_falls_through_to_fetch() {
     let cfg = config_with(Some(render_cache.clone()), Some(nc));
     let http = HttpClient::with_handler(handler, cfg);
 
-    let out = read_page_inner(&http, &params(&url), &[]).await;
+    let out = read_page_inner(&http, &params(&url), &[], true).await;
 
     // The GiveUp entry must have been removed.
     assert_eq!(
@@ -275,7 +275,13 @@ async fn site_handler_success_increments_fetch_success_total() {
     let cfg = config_with(None, None);
     let http = HttpClient::with_handler(handler, cfg);
 
-    let out = read_page_inner(&http, &params("https://example.com/page"), &[site_handler]).await;
+    let out = read_page_inner(
+        &http,
+        &params("https://example.com/page"),
+        &[site_handler],
+        true,
+    )
+    .await;
 
     // The site_handler succeeded → success counter must have incremented.
     let after = FETCH_SUCCESS_TOTAL.load(Ordering::Relaxed);
@@ -323,7 +329,13 @@ async fn site_handler_error_does_not_increment_fetch_success_total() {
     let cfg = config_with(None, None);
     let http = HttpClient::with_handler(handler, cfg);
 
-    let out = read_page_inner(&http, &params("https://example.com/page"), &[site_handler]).await;
+    let out = read_page_inner(
+        &http,
+        &params("https://example.com/page"),
+        &[site_handler],
+        true,
+    )
+    .await;
 
     let after = FETCH_SUCCESS_TOTAL.load(Ordering::Relaxed);
     assert_eq!(
@@ -405,8 +417,8 @@ async fn cli_and_api_paths_produce_same_read_output() {
     assert_eq!(cli_params.format, api_params.format);
     assert_eq!(cli_params.max_length, api_params.max_length);
 
-    let cli_out = read_page_inner(&http, &cli_params, &[]).await;
-    let api_out = read_page_inner(&http, &api_params, &[]).await;
+    let cli_out = read_page_inner(&http, &cli_params, &[], true).await;
+    let api_out = read_page_inner(&http, &api_params, &[], true).await;
 
     // Byte-identical output through the shared function.
     assert_eq!(cli_out.content, api_out.content, "content must match");
@@ -428,10 +440,10 @@ async fn read_format_mapping_is_discriminating() {
         timeout: None,
     };
 
-    let md = read_page_inner(&http, &mk("markdown"), &[]).await;
-    let text = read_page_inner(&http, &mk("text"), &[]).await;
-    let html = read_page_inner(&http, &mk("html"), &[]).await;
-    let llm = read_page_inner(&http, &mk("llm"), &[]).await;
+    let md = read_page_inner(&http, &mk("markdown"), &[], true).await;
+    let text = read_page_inner(&http, &mk("text"), &[], true).await;
+    let html = read_page_inner(&http, &mk("html"), &[], true).await;
+    let llm = read_page_inner(&http, &mk("llm"), &[], true).await;
 
     // markdown: contains the heading as markdown, not as a raw HTML tag.
     assert!(
@@ -534,7 +546,7 @@ async fn read_page_deadline_fires_within_bound() {
         timeout: Some(1),
     };
 
-    let out = read_page(&http, &p, &[]).await;
+    let out = read_page(&http, &p, &[], true).await;
 
     // The bound fired → error output.
     assert!(out.error.is_some(), "expected deadline error, got success");
@@ -573,7 +585,7 @@ async fn read_page_default_timeout_does_not_fire_on_fast_response() {
         timeout: None,
     };
 
-    let out = read_page(&http, &p, &[]).await;
+    let out = read_page(&http, &p, &[], true).await;
 
     assert!(
         out.error.is_none(),
@@ -602,7 +614,7 @@ async fn read_page_timeout_zero_clamps_to_one_sec() {
         timeout: Some(0),
     };
 
-    let out = read_page(&http, &p, &[]).await;
+    let out = read_page(&http, &p, &[], true).await;
 
     // A 0 s deadline clamped to 1 s should NOT fire on a fast handler.
     assert!(
@@ -634,7 +646,7 @@ async fn read_page_timeout_above_ceiling_clamps_down() {
         timeout: Some(600),
     };
 
-    let out = read_page(&http, &p, &[]).await;
+    let out = read_page(&http, &p, &[], true).await;
 
     // 600 s clamped to the ceiling should NOT fire on a 100 ms response.
     assert!(
@@ -683,7 +695,7 @@ async fn read_page_timeout_canonical_name_resolves_to_caller_value() {
     let p: ReadParams =
         serde_json::from_str(r#"{"url":"https://slow.test/page","timeout":2}"#).unwrap();
 
-    let out = read_page(&http, &p, &[]).await;
+    let out = read_page(&http, &p, &[], true).await;
 
     // The bound fired → error output naming the RESOLVED secs (2, not 8).
     assert!(out.error.is_some(), "expected deadline error, got success");
@@ -715,7 +727,7 @@ async fn read_page_timeout_secs_alias_resolves_to_caller_value() {
     let p: ReadParams =
         serde_json::from_str(r#"{"url":"https://slow.test/page","timeout_secs":2}"#).unwrap();
 
-    let out = read_page(&http, &p, &[]).await;
+    let out = read_page(&http, &p, &[], true).await;
 
     assert!(out.error.is_some(), "expected deadline error, got success");
     let err = out.error.as_deref().unwrap();
@@ -776,5 +788,52 @@ async fn chrome_fallback_does_not_follow_redirects() {
             .await
             .is_err(),
         "redirect was followed"
+    );
+}
+
+/// SEC-CR-002: go-wowa renders the chrome fallback in mode=private, a shared
+/// incognito jar, so an anonymous caller must not get it with ox-browser's
+/// fleet secret. read_page sends the secret to the fallback only when the
+/// caller is authenticated.
+///
+/// Falsification: in read_page_inner set `chrome_secret` to the config value
+/// regardless of `authenticated` and the anonymous row carries the secret → RED.
+#[tokio::test]
+async fn chrome_fallback_secret_gated_on_authentication() {
+    use crate::render_cache::RenderModeCache;
+    async fn head_for(authenticated: bool) -> String {
+        let (wowa, captured) = crate::wowa_auth::capture_one(
+            r#"{"actions":[{"action":"evaluate","data":"<html><body><p>hello world</p></body></html>"}]}"#,
+        )
+        .await;
+        let rc = Arc::new(RenderModeCache::new(Duration::from_secs(3600)));
+        rc.set("example.com", RenderMode::Chrome);
+        let cfg = HttpConfig {
+            chrome_render_url: Some(format!("{wowa}/api/v1/chrome/interact")),
+            chrome_render_secret: "wowa-secret".into(),
+            render_cache: Some(rc),
+            ..Default::default()
+        };
+        let http = HttpClient::with_handler(
+            Arc::new(OkHandler {
+                calls: Arc::new(AtomicUsize::new(0)),
+            }),
+            cfg,
+        );
+        let _ = read_page_inner(&http, &params("https://example.com/p"), &[], authenticated).await;
+        tokio::time::timeout(Duration::from_secs(5), captured)
+            .await
+            .expect("chrome fallback never called go-wowa")
+            .expect("capture")
+    }
+    assert!(
+        head_for(true)
+            .await
+            .contains("x-internal-secret: wowa-secret"),
+        "authenticated /read fallback must carry the secret"
+    );
+    assert!(
+        !head_for(false).await.contains("x-internal-secret"),
+        "anonymous /read fallback must NOT carry the fleet secret"
     );
 }

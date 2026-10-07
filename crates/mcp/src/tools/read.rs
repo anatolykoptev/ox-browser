@@ -50,10 +50,19 @@ impl From<ReadInput> for ReadParams {
 }
 
 impl OxMcpServer {
-    pub(crate) async fn do_read(&self, input: ReadInput) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_read(
+        &self,
+        input: ReadInput,
+        authenticated: bool,
+    ) -> Result<CallToolResult, McpError> {
         let params: ReadParams = input.into();
-        let output =
-            read_pipeline::read_page(&self.http_client, &params, &self.site_handlers).await;
+        let output = read_pipeline::read_page(
+            &self.http_client,
+            &params,
+            &self.site_handlers,
+            authenticated,
+        )
+        .await;
 
         let is_err = output.error.is_some();
         let json = serde_json::to_string(&output).unwrap_or_default();

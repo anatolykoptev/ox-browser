@@ -47,10 +47,16 @@ pub async fn read_page(
     http: &HttpClient,
     params: &ReadParams,
     site_handlers: &[SiteHandler],
+    authenticated: bool,
 ) -> ReadOutput {
     let deadline = resolve_timeout(params.timeout);
     let secs = deadline.as_secs();
-    match bounded(deadline, read_page_inner(http, params, site_handlers)).await {
+    match bounded(
+        deadline,
+        read_page_inner(http, params, site_handlers, authenticated),
+    )
+    .await
+    {
         CallOutcome::Ok(output) => output,
         CallOutcome::DeadlineExceeded { .. } => build_error_output(
             params,
@@ -65,6 +71,7 @@ async fn read_page_inner(
     http: &HttpClient,
     params: &ReadParams,
     site_handlers: &[SiteHandler],
+    authenticated: bool,
 ) -> ReadOutput {
     let start = Instant::now();
     crate::metrics::record_read();
@@ -90,7 +97,18 @@ async fn read_page_inner(
 
     let config = http.config();
     let chrome_url = config.chrome_render_url.clone();
-    let chrome_secret = config.chrome_render_secret.clone();
+    // SEC-CR-002: the chrome fallback relays to go-wowa, which renders in
+    // mode=private — a single incognito jar shared by every private session.
+    // Attaching ox-browser's go-wowa secret for an UNauthenticated caller
+    // would let an anonymous /read retrieve pages rendered with other
+    // callers' state. Send the secret only when the inbound caller was
+    // authenticated (the same rule GoBrowserProxy uses); an anonymous
+    // fallback goes with no credential, which go-wowa refuses under enforce.
+    let chrome_secret = if authenticated {
+        config.chrome_render_secret.clone()
+    } else {
+        String::new()
+    };
     let render_cache = config.render_cache.clone();
 
     // Check render cache: if domain is known to need Chrome or has given up, act accordingly.
