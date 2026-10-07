@@ -390,6 +390,7 @@ pub(crate) fn build_proxy(proxy_url: &str) -> Result<wreq::Proxy> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::middleware_ssrf::tests::{SMUGGLED_PROXY_ROWS, leaks_credentials};
 
     #[test]
     fn wreq_handler_is_send_sync() {
@@ -443,10 +444,10 @@ mod tests {
     fn build_proxy_error_does_not_leak_credentials() {
         // wreq's own error for this input is "builder error for uri
         // (<userinfo>@host)", i.e. it echoes the credentials.
-        let err = build_proxy("alice:s3cret@example.com")
+        let err = build_proxy("USERTOK:S3CRETPW@example.com")
             .expect_err("scheme-less proxy with userinfo must be refused");
         let msg = err.to_string();
-        assert!(!msg.contains("s3cret"), "{msg}");
+        assert!(!leaks_credentials(&msg), "{msg}");
     }
 
     /// A bare `host:port` is an http proxy; scheme-less input without a
@@ -472,33 +473,37 @@ mod tests {
     async fn pool_proxy_error_does_not_leak_credentials() {
         use crate::proxy_pool::StaticPool;
         use std::sync::Arc;
-        for entry in [
-            // scheme-less + userinfo → build_proxy rejects
-            "alice:s3cret@example.com",
-            // SEC-CR-021: the url crate parses the password into a
-            // fragment / path / query, outside the userinfo it would redact.
-            "ftp://u:12#s3cret@127.0.0.1:21",
-            "http://u:12#s3cret@127.0.0.1:3128",
-            "http://u:/s3cret@127.0.0.1:3128",
-            "socks5://u:?s3cret@127.0.0.1:1080",
-        ] {
+        let mut rows = vec![
+            "USERTOK:S3CRETPW@example.com",
+            "ftp://USERTOK:12#S3CRETPW@127.0.0.1:21",
+        ];
+        rows.extend_from_slice(SMUGGLED_PROXY_ROWS);
+        for entry in rows {
             let pool = Arc::new(StaticPool::new(vec![entry.to_string()]));
             let client = wreq::Client::new();
             let handler = WreqHandler::with_proxy_pool(client, pool, false, 5, 1 << 20);
-            let err = handler
-                .handle(Request {
-                    method: "GET".into(),
-                    url: "http://example.com/".into(),
-                    headers: vec![],
-                    body: None,
-                    proxy: None,
-                })
-                .await
-                .expect_err("invalid pool proxy must fail closed");
-            let msg = err.to_string();
+            let (result, logs) = capture_logs(handler.handle(Request {
+                method: "GET".into(),
+                url: "http://example.com/".into(),
+                headers: vec![],
+                body: None,
+                proxy: None,
+            }))
+            .await;
+            let msg = result
+                .expect_err("invalid pool proxy must fail closed")
+                .to_string();
             assert!(
-                !msg.contains("s3cret"),
-                "pool proxy error leaked credentials for {entry}: {msg}"
+                !leaks_credentials(&msg),
+                "pool error leaked for {entry:?}: {msg}"
+            );
+            assert!(
+                logs.contains("proxy_attach_invalid_url"),
+                "pool refusal not logged: {logs}"
+            );
+            assert!(
+                !leaks_credentials(&logs),
+                "pool logs leaked for {entry:?}: {logs}"
             );
         }
     }
@@ -521,36 +526,114 @@ mod tests {
     /// not be caught by this input.)
     #[tokio::test]
     async fn per_request_proxy_refusal_does_not_leak_credentials() {
-        let client = wreq::Client::new();
-        let handler = WreqHandler::new(client, false, 5, 1 << 20);
-        for proxy in [
-            "http://alice:s3cret@ex ample.com:80",
-            "http://alice:s3cret@a{b}.example:3128",
-            // SEC-CR-021: refused by validate (userinfo outside the
-            // authority); its error must not carry the password either.
-            "http://u:12#s3cret@8.8.8.8:3128",
-            "socks5://u:?s3cret@8.8.8.8:1080",
-        ] {
+        let mut rows = vec![
+            "http://USERTOK:S3CRETPW@ex ample.com:80",
+            "http://USERTOK:S3CRETPW@a{b}.example:3128",
+        ];
+        rows.extend_from_slice(SMUGGLED_PROXY_ROWS);
+        for proxy in rows {
             assert!(
                 !proxy.contains('{') || crate::middleware_ssrf::validate_proxy_url(proxy).is_ok(),
                 "{proxy}: must pass validation so the build_proxy branch is exercised"
             );
-            let err = handler
-                .handle(Request {
-                    method: "GET".into(),
-                    url: "http://example.com/".into(),
-                    headers: vec![],
-                    body: None,
-                    proxy: Some(proxy.into()),
-                })
-                .await
-                .expect_err("invalid req.proxy must fail closed");
-            let msg = err.to_string();
+            let handler = WreqHandler::new(wreq::Client::new(), false, 5, 1 << 20);
+            let (result, logs) = capture_logs(handler.handle(Request {
+                method: "GET".into(),
+                url: "http://example.com/".into(),
+                headers: vec![],
+                body: None,
+                proxy: Some(proxy.into()),
+            }))
+            .await;
+            let msg = result
+                .expect_err("invalid req.proxy must fail closed")
+                .to_string();
             assert!(
-                !msg.contains("s3cret"),
-                "per-request proxy error leaked credentials for {proxy}: {msg}"
+                !leaks_credentials(&msg),
+                "per-request error leaked for {proxy:?}: {msg}"
+            );
+            assert!(
+                logs.contains("proxy"),
+                "per-request refusal not logged: {logs}"
+            );
+            assert!(
+                !leaks_credentials(&logs),
+                "per-request logs leaked for {proxy:?}: {logs}"
             );
         }
+    }
+
+    /// A successful per-request proxy is DEBUG-logged through the redactor:
+    /// the log must name the proxy host, never its credentials.
+    ///
+    /// Falsification: log `req.proxy` raw in the "wreq: sending request"
+    /// debug line (handler_reqwest.rs) → RED.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn per_request_debug_log_redacts_valid_proxy() {
+        // Allowlist the loopback proxy so it passes validation; nothing
+        // listens on :9, so the dial fails fast after the debug line.
+        // SAFETY: serial test; no other thread reads the env meanwhile.
+        unsafe { std::env::set_var(crate::middleware_ssrf::PROXY_ALLOWLIST_ENV, "127.0.0.1:9") };
+        let handler = WreqHandler::new(wreq::Client::new(), false, 0, 1 << 20);
+        let (_, logs) = capture_logs(handler.handle(Request {
+            method: "GET".into(),
+            url: "http://192.0.2.10/".into(),
+            headers: vec![],
+            body: None,
+            proxy: Some("http://USERTOK:S3CRETPW@127.0.0.1:9".into()),
+        }))
+        .await;
+        unsafe { std::env::remove_var(crate::middleware_ssrf::PROXY_ALLOWLIST_ENV) };
+        assert!(
+            logs.contains("sending request"),
+            "debug line not reached: {logs}"
+        );
+        assert!(
+            logs.contains("127.0.0.1:9"),
+            "debug log missing the proxy host: {logs}"
+        );
+        assert!(!leaks_credentials(&logs), "debug log leaked: {logs}");
+    }
+
+    /// Runs `fut` with a thread-local tracing subscriber that records every
+    /// event and span field (all levels) into a string.
+    async fn capture_logs<F: std::future::Future>(fut: F) -> (F::Output, String) {
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let _guard = tracing::subscriber::set_default(LogCapture(buf.clone()));
+        let out = fut.await;
+        let logs = buf.lock().map(|b| b.clone()).unwrap_or_default();
+        (out, logs)
+    }
+
+    struct LogCapture(std::sync::Arc<std::sync::Mutex<String>>);
+    struct LogVisit(std::sync::Arc<std::sync::Mutex<String>>);
+
+    impl tracing::field::Visit for LogVisit {
+        fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+            if let Ok(mut b) = self.0.lock() {
+                b.push_str(&format!("{}={v:?} ", f.name()));
+            }
+        }
+    }
+
+    impl tracing::Subscriber for LogCapture {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, a: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            a.record(&mut LogVisit(self.0.clone()));
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, r: &tracing::span::Record<'_>) {
+            r.record(&mut LogVisit(self.0.clone()));
+        }
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, e: &tracing::Event<'_>) {
+            e.record(&mut LogVisit(self.0.clone()));
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
     }
 
     /// SEC-CR-012 on the pool path: build_proxy refuses a scheme wreq would

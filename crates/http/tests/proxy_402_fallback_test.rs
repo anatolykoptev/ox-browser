@@ -999,20 +999,49 @@ async fn pool_and_static_proxy_scheme_case_and_empty_port_never_go_direct() {
 }
 
 // ---------------------------------------------------------------------------
-// SEC-CR-021: `u:12#pw@host` parses (url crate) as host `u`, port 12, with
-// the password in the fragment. Canonicalising that used to give
-// `http://u:12`: ox-browser dialled the username as the proxy host, and with
-// max_redirects 0 the dial-failure fallback then sent the request DIRECT. The
-// refused proxy must fail closed (no origin hit) on the pool and the static
-// path, and no error may carry the password.
+// SEC-CR-021..025: proxy URLs the url crate would read with part of the
+// credential as host/port/path/query/fragment (or with the host taken from a
+// trailing `://`). Each used to canonicalise to host `usertok` (or `http`, or
+// port 80); the dial failed and, with max_redirects 0, the dial-failure
+// fallback sent the request DIRECT. On the pool, static and per-request
+// paths they must now fail closed (zero origin hits) with no credential in
+// the error.
 // ---------------------------------------------------------------------------
 
-/// Falsification: make `userinfo_outside_authority` (middleware_ssrf.rs)
-/// return false and these rows dial host `u`, fall back to direct and hit the
-/// origin (and the ftp row's error echoes S3CRETPW through the redactor) → RED.
+const SMUGGLED: &[&str] = &[
+    "http://USERTOK:12#S3CRETPW@127.0.0.1:3128",
+    "http://USERTOK:/S3CRETPW@127.0.0.1:3128",
+    "socks5://USERTOK:?S3CRETPW@127.0.0.1:1080",
+    "ftp://USERTOK:12#S3CRETPW@127.0.0.1:21",
+    "http:/USERTOK:12#S3CRETPW@127.0.0.1:3128://x",
+    "socks5:/USERTOK:12#S3CRETPW@127.0.0.1:1080://x",
+    "http:USERTOK:S3CRETPW@127.0.0.1:3128",
+    "HTTP:/USERTOK:S3CRETPW@127.0.0.1:3128",
+    "https:/USERTOK:S3CRETPW@127.0.0.1:3128",
+    "socks5:/USERTOK:S3CRETPW@127.0.0.1:1080",
+    "http://USERTOK:S3CRETPW@127.0.0.1:3128://x",
+    "http://USERTOK:12345\\S3CRETPW@127.0.0.1:3128",
+    "http:/127.0.0.1:3128",
+    "socks5:/127.0.0.1:1080",
+    "127.0.0.1#x:3128",
+    "127.0.0.1/x:3128",
+    "127.0.0.1?x:3128",
+];
+
+fn leaks(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("usertok") || lower.contains("s3cretpw")
+}
+
+/// Falsification: drop the "no path, query or fragment" check in
+/// `canonicalise_proxy_url` (middleware_ssrf.rs) and the `#`/`/`/`?` rows
+/// dial host `usertok`, fall back to direct and hit the origin → RED; drop
+/// the `<allowed-scheme>://` / bare-host:port grammar (accept any input the
+/// url crate parses) and the `http:/`, `http:` and bare rows do the same →
+/// RED.
 #[tokio::test]
 #[serial]
-async fn userinfo_outside_authority_fails_closed_without_leaking() {
+async fn smuggled_proxy_urls_fail_closed_without_leaking() {
     use ox_http::Request;
     use ox_http::proxy_pool::StaticPool;
 
@@ -1025,23 +1054,21 @@ async fn userinfo_outside_authority_fails_closed_without_leaking() {
             format!("127.0.0.1:{origin_port}"),
         );
     }
-    for entry in [
-        "http://u:12#S3CRETPW@127.0.0.1:3128",
-        "http://u:/S3CRETPW@127.0.0.1:3128",
-        "socks5://u:?S3CRETPW@127.0.0.1:1080",
-        "ftp://u:12#S3CRETPW@127.0.0.1:21",
-    ] {
-        for via_pool in [true, false] {
+    for entry in SMUGGLED {
+        for path in ["pool", "static", "per-request"] {
             let mut config = HttpConfig {
                 timeout: Duration::from_secs(5),
                 max_redirects: 0,
                 ..Default::default()
             };
-            if via_pool {
-                config.proxy_pool = Some(Arc::new(StaticPool::new(vec![entry.to_string()])));
-            } else {
-                config.proxy_url = Some(entry.to_string());
+            match path {
+                "pool" => {
+                    config.proxy_pool = Some(Arc::new(StaticPool::new(vec![entry.to_string()])))
+                }
+                "static" => config.proxy_url = Some(entry.to_string()),
+                _ => {}
             }
+            let per_request = (path == "per-request").then(|| entry.to_string());
             let result = match HttpClient::new(config) {
                 Err(e) => Err(e),
                 Ok(client) => {
@@ -1051,15 +1078,15 @@ async fn userinfo_outside_authority_fails_closed_without_leaking() {
                             url: format!("http://127.0.0.1:{origin_port}/test"),
                             headers: vec![],
                             body: None,
-                            proxy: None,
+                            proxy: per_request,
                         })
                         .await
                 }
             };
             let err = result.expect_err("a refused proxy must fail closed");
             assert!(
-                !err.to_string().contains("S3CRETPW"),
-                "{entry} (pool={via_pool}) error leaked the password: {err}"
+                !leaks(&err.to_string()),
+                "{entry:?} ({path}) error leaked: {err}"
             );
         }
     }
