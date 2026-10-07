@@ -216,9 +216,15 @@ mod tests {
     }
 
     fn app() -> axum::Router {
+        app_with("http://127.0.0.1:1".into(), "", Mode::Enforce)
+    }
+
+    /// The served app with go-wowa at `wowa_url`, ox-browser's outbound go-wowa
+    /// secret `wowa_secret`, and the inbound gate in `mode` (inbound secret "s").
+    fn app_with(wowa_url: String, wowa_secret: &str, mode: Mode) -> axum::Router {
         let proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(
-            "http://127.0.0.1:1".into(),
-            "",
+            wowa_url,
+            wowa_secret,
         ));
         let state = ox_js::AppState::new(
             Arc::new(NoSolver),
@@ -231,7 +237,7 @@ mod tests {
         let gate = Gate::new(AuthConfig {
             internal_secret: "s".into(),
             mcp_token: String::new(),
-            mode: Mode::Enforce,
+            mode,
             allow_insecure: false,
         });
         build_app(
@@ -288,6 +294,94 @@ mod tests {
         assert!(
             mcp != 401 && mcp != 404,
             "authenticated POST /mcp = {mcp}, want the MCP router"
+        );
+    }
+
+    async fn mcp_post(
+        a: &axum::Router,
+        inbound_secret: Option<&str>,
+        session: Option<&str>,
+        body: &str,
+    ) -> axum::http::Response<axum::body::Body> {
+        let mut b = axum::http::Request::post("/mcp")
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-06-18");
+        if let Some(s) = inbound_secret {
+            b = b.header("x-internal-secret", s);
+        }
+        if let Some(id) = session {
+            b = b.header("mcp-session-id", id);
+        }
+        a.clone()
+            .oneshot(b.body(axum::body::Body::from(body.to_owned())).unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// Drive the MCP `chrome_interact` tool through the real served app in
+    /// SOFT mode and return the request head go-wowa (a capture server)
+    /// received.
+    async fn mcp_chrome_interact_head(inbound_secret: Option<&str>) -> String {
+        let (url, captured) = ox_http::wowa_auth::capture_one(r#"{"status":"ok"}"#).await;
+        let a = app_with(url, "wowa-secret", Mode::Soft);
+        let init = mcp_post(
+            &a,
+            inbound_secret,
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+        )
+        .await;
+        let session = init
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let _ = axum::body::to_bytes(init.into_body(), 1 << 16).await;
+        let _ = mcp_post(
+            &a,
+            inbound_secret,
+            session.as_deref(),
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        )
+        .await;
+        let call = mcp_post(
+            &a,
+            inbound_secret,
+            session.as_deref(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"chrome_interact","arguments":{"url":"https://example.com","actions":[]}}}"#,
+        )
+        .await;
+        // Read the (SSE) response so the tool call runs to completion.
+        let _ = tokio::time::timeout(
+            Duration::from_secs(10),
+            axum::body::to_bytes(call.into_body(), 1 << 20),
+        )
+        .await;
+        tokio::time::timeout(Duration::from_secs(10), captured)
+            .await
+            .expect("go-wowa capture server was never called")
+            .expect("capture")
+    }
+
+    /// SEC-CR-009 at the MCP call site: in soft mode an anonymous MCP
+    /// `chrome_interact` reaches go-wowa WITHOUT ox-browser's secret; an
+    /// authenticated one carries it.
+    ///
+    /// Falsification: pass `true` instead of `authenticated(&ctx.extensions)`
+    /// in the `chrome_interact` tool (crates/mcp/src/tools/mod.rs) and the
+    /// anonymous call is relayed with the secret → RED.
+    #[tokio::test]
+    async fn mcp_chrome_interact_relays_secret_only_when_authenticated() {
+        let head = mcp_chrome_interact_head(Some("s")).await;
+        assert!(
+            head.contains("x-internal-secret: wowa-secret"),
+            "authenticated: {head}"
+        );
+        let head = mcp_chrome_interact_head(None).await;
+        assert!(
+            !head.contains("x-internal-secret"),
+            "anonymous relayed with the secret: {head}"
         );
     }
 }

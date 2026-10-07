@@ -13,8 +13,12 @@ pub const SECRET_HEADER: &str = "x-internal-secret";
 pub const SECRET_ENV: &str = "INTERNAL_SERVICE_SECRET";
 
 /// Reads the secret from the environment; empty when unset.
+/// Trimmed, so a trailing newline from an env file is never sent (and
+/// matches what go-wowa compares against, which it trims too).
 pub fn secret_from_env() -> String {
-    std::env::var(SECRET_ENV).unwrap_or_default()
+    std::env::var(SECRET_ENV)
+        .map(|v| v.trim().to_owned())
+        .unwrap_or_default()
 }
 
 /// Default headers for a reqwest client that talks to go-wowa. Empty when
@@ -92,6 +96,17 @@ pub async fn redirect_once(location: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Falsification: drop the `trim()` in `secret_from_env` → RED.
+    /// Only this test touches INTERNAL_SERVICE_SECRET in this crate.
+    #[test]
+    fn secret_from_env_is_trimmed() {
+        // SAFETY: edition-2024 env mutation; no other ox-http test reads it.
+        unsafe { std::env::set_var(SECRET_ENV, " s3cret\n") };
+        let got = secret_from_env();
+        unsafe { std::env::remove_var(SECRET_ENV) };
+        assert_eq!(got, "s3cret");
+    }
 
     #[test]
     fn empty_secret_yields_no_header() {

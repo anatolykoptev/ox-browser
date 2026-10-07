@@ -239,6 +239,14 @@ async fn chrome_fallback(
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
+        // Deliberate server-originated exception to the "secret only for an
+        // authenticated inbound caller" rule (GoBrowserProxy, SEC-CR-009):
+        // ox-browser builds this request itself — fixed actions (wait +
+        // outerHTML), no caller-supplied actions, proxy or session — and
+        // the read pipeline has no view of the inbound auth decision. The
+        // residual (a soft-mode anonymous /read making go-wowa render a URL)
+        // grants nothing while go-wowa is itself soft, and ox-browser flips
+        // to enforce no later than go-wowa (ox-browser#173, go-wowa#187).
         .default_headers(crate::wowa_auth::headers(secret))
         // Never follow a redirect with a credentialed request (SEC-CR-010).
         .redirect(reqwest::redirect::Policy::none())

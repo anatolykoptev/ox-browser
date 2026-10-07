@@ -38,8 +38,16 @@ pub async fn destroy_session_handler(
     auth: Option<Extension<Authenticated>>,
     Path(session_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // The id is caller-supplied: percent-encode it so it stays one path
-    // segment and cannot steer the request elsewhere on go-wowa (SEC-CR-011).
+    // The id is caller-supplied: refuse empty and dot-segment ids (a "."
+    // or ".." segment is normalised away by URL parsers, even when
+    // percent-encoded), then percent-encode it so it stays one path segment
+    // on go-wowa (SEC-CR-011).
+    if session_id.is_empty() || session_id == "." || session_id == ".." {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "invalid session id"})),
+        );
+    }
     let id = utf8_percent_encode(&session_id, NON_ALPHANUMERIC);
     match state
         .gobrowser_proxy
@@ -129,5 +137,77 @@ mod auth_relay_tests {
         assert_eq!(resp.status(), 200);
         let head = req.await.expect("capture");
         assert!(head.starts_with("delete /session/a%3fb%2fc "), "{head}");
+    }
+
+    /// Empty and dot-segment session ids are refused before go-wowa is
+    /// called (SEC-CR-011).
+    ///
+    /// Falsification: drop the empty/"."/".." check in
+    /// `destroy_session_handler` and go-wowa gets a request → RED.
+    #[tokio::test]
+    async fn destroy_session_refuses_dot_segments() {
+        for path in [
+            "/chrome/session/%2E%2E",
+            "/chrome/session/.",
+            "/chrome/session/%2e",
+        ] {
+            let (url, captured) = ox_http::wowa_auth::capture_one(r#"{"ok":true}"#).await;
+            let mut state = crate::tests::test_state();
+            state.gobrowser_proxy = Arc::new(crate::gobrowser_proxy::GoBrowserProxy::new(url, ""));
+            let resp = crate::router(state)
+                .oneshot(
+                    axum::http::Request::delete(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 400, "{path}");
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(200), captured)
+                    .await
+                    .is_err(),
+                "{path}: go-wowa was called"
+            );
+        }
+    }
+
+    /// The DELETE call site attaches ox-browser's go-wowa secret only for an
+    /// authenticated inbound caller (soft mode).
+    ///
+    /// Falsification: pass `true` instead of `auth.is_some()` to `delete` in
+    /// `destroy_session_handler` and the anonymous DELETE carries the secret
+    /// → RED.
+    #[tokio::test]
+    async fn destroy_session_relays_secret_only_when_authenticated() {
+        for (inbound, want_secret) in [(Some("inbound"), true), (None, false)] {
+            let (url, captured) = ox_http::wowa_auth::capture_one(r#"{"ok":true}"#).await;
+            let mut state = crate::tests::test_state();
+            state.gobrowser_proxy = Arc::new(crate::gobrowser_proxy::GoBrowserProxy::new(
+                url,
+                "wowa-secret",
+            ));
+            let app = protect(
+                crate::router(state),
+                Gate::new(AuthConfig {
+                    internal_secret: "inbound".into(),
+                    mcp_token: String::new(),
+                    mode: Mode::Soft,
+                    allow_insecure: false,
+                }),
+            );
+            let mut b = axum::http::Request::delete("/chrome/session/abc");
+            if let Some(s) = inbound {
+                b = b.header(SECRET_HEADER, s);
+            }
+            let resp = app.oneshot(b.body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(resp.status(), 200, "inbound={inbound:?}");
+            let head = captured.await.expect("capture");
+            assert_eq!(
+                head.contains("x-internal-secret: wowa-secret"),
+                want_secret,
+                "inbound={inbound:?}: {head}"
+            );
+        }
     }
 }

@@ -70,6 +70,12 @@ impl GoBrowserSolver {
     pub fn new(config: GoBrowserConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
+            // Deliberate server-originated exception to the "secret only for an
+            // authenticated inbound caller" rule (GoBrowserProxy,
+            // SEC-CR-009): the solver middleware sends ox-browser's own fixed
+            // /solve request (URL + challenge type), never caller-shaped
+            // actions, proxy or session. Safe for the same ordering reason as
+            // read_pipeline::chrome_fallback (ox-browser#173 before go-wowa#187).
             .default_headers(crate::wowa_auth::headers(&config.internal_secret))
             // Never follow a redirect with a credentialed request (SEC-CR-010).
             .redirect(reqwest::redirect::Policy::none())
