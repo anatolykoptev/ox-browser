@@ -1126,12 +1126,13 @@ pub(crate) mod tests {
         }
     }
 
-    /// SEC-CR-013: an explicit :80 on a SOCKS proxy must survive (the http
-    /// re-parse would drop it as a default and wreq would dial :1080), and a
-    /// port-less SOCKS proxy must be VETTED at 1080, the port it is dialled at.
+    /// SEC-CR-013: an explicit :80 on a SOCKS proxy must survive (parsing it
+    /// under http would drop :80 as the default and wreq would dial :1080),
+    /// and a port-less SOCKS proxy must be VETTED at 1080, the port it is
+    /// dialled at.
     ///
-    /// Falsification: emit `url.port()` instead of the explicit port for
-    /// non-special schemes → the :80 row loses its port → RED; vet with the
+    /// Falsification: parse the SOCKS URL under `http://` in
+    /// `canonicalise_proxy_url` → the :80 row dials :1080 → RED; vet with the
     /// http default → the allowlist row (listed at :1080) is refused → RED.
     #[test]
     #[serial_test::serial]
