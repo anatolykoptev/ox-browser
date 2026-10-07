@@ -853,3 +853,61 @@ async fn e_max_redirects_zero_blocks_first_redirect() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// SEC-CR-012: a proxy with a scheme wreq has no intercept for (ftp, socks)
+// would be silently ignored and the request sent DIRECT from the real IP,
+// while still being counted as proxied. It must be refused instead.
+// ---------------------------------------------------------------------------
+
+/// The scheme check exists at two layers (validate_proxy_url for the
+/// per-request path, build_proxy for the pool path and as a second line here).
+/// Falsification: drop the ALLOWED_PROXY_SCHEMES check from both
+/// (middleware_ssrf.rs and handler_reqwest.rs) and wreq ignores the ftp proxy,
+/// the request goes direct and returns the origin's "direct-success" 200 →
+/// RED (checked). Dropping either one alone is caught by its own unit test
+/// (validate_proxy_url_refuses_unknown_schemes / build_proxy_refuses_unknown_schemes).
+#[tokio::test]
+#[serial]
+async fn unknown_proxy_scheme_is_refused_not_served_direct() {
+    use ox_http::Request;
+
+    let (origin_port, hits) = spawn_ok_origin_with_counter().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // SAFETY: see note in a_http_402_with_forged_marker_not_degraded.
+    unsafe {
+        std::env::set_var(
+            "OX_HTTP_PRIVATE_ALLOWLIST",
+            format!("127.0.0.1:{origin_port}"),
+        );
+    }
+    let client = HttpClient::new(HttpConfig {
+        timeout: Duration::from_secs(5),
+        ..Default::default()
+    })
+    .expect("build client");
+
+    for proxy in ["ftp://8.8.8.8:21", "socks://8.8.8.8:1080"] {
+        let result = client
+            .execute(Request {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{origin_port}/test"),
+                headers: vec![],
+                body: None,
+                proxy: Some(proxy.into()),
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "{proxy}: request with an unknown proxy scheme must be refused, got {result:?}"
+        );
+    }
+    unsafe {
+        std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
+    }
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "the origin was reached directly through an ignored proxy"
+    );
+}

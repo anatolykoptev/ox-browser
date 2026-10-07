@@ -389,6 +389,15 @@ fn build_proxy(proxy_url: &str) -> Result<wreq::Proxy> {
         normalised = format!("http://{proxy_url}");
         &normalised
     };
+    // Known schemes only: wreq ignores a proxy with any other scheme and
+    // would send the request DIRECT while we count it as proxied.
+    let scheme = url
+        .split_once("://")
+        .map_or("", |(s, _)| s)
+        .to_ascii_lowercase();
+    if !crate::middleware_ssrf::ALLOWED_PROXY_SCHEMES.contains(&scheme.as_str()) {
+        return Err(invalid());
+    }
     wreq::Proxy::all(url).map_err(|_| invalid())
 }
 
@@ -500,9 +509,16 @@ mod tests {
     }
 
     /// The per-request call site: a credentialed, malformed req.proxy is
-    /// refused with no credentials in the error.
+    /// refused with no credentials in the error. Note: this input is refused
+    /// by `validate_proxy_url`, which runs first; after it, `build_proxy` only
+    /// ever sees the canonical `scheme://[userinfo@]host:port` it returned
+    /// (known scheme, valid host, numeric port), so the per-request
+    /// `build_proxy` error branch is believed unreachable with today's
+    /// canonicalisation. This test therefore guards the validate-refusal path
+    /// only and makes no falsification claim about that `build_proxy` site;
+    /// the pool site is covered by `pool_proxy_error_does_not_leak_credentials`.
     #[tokio::test]
-    async fn per_request_proxy_error_does_not_leak_credentials() {
+    async fn per_request_proxy_refusal_does_not_leak_credentials() {
         let client = wreq::Client::new();
         let handler = WreqHandler::new(client, false, 5, 1 << 20);
         let err = handler
@@ -520,5 +536,17 @@ mod tests {
             !msg.contains("s3cret"),
             "per-request proxy error leaked credentials: {msg}"
         );
+    }
+
+    /// SEC-CR-012 on the pool path: build_proxy refuses a scheme wreq would
+    /// ignore (which would mean a direct request counted as proxied).
+    ///
+    /// Falsification: drop the ALLOWED_PROXY_SCHEMES check in build_proxy → RED.
+    #[test]
+    fn build_proxy_refuses_unknown_schemes() {
+        for raw in ["ftp://8.8.8.8:21", "socks://8.8.8.8:1080"] {
+            assert!(build_proxy(raw).is_err(), "build_proxy accepted {raw}");
+        }
+        assert!(build_proxy("socks5://8.8.8.8:1080").is_ok());
     }
 }
