@@ -245,7 +245,7 @@ pub fn canonicalise_proxy_url(proxy_url: &str) -> Result<CanonicalProxy> {
     }
     let owned;
     let with_scheme = match proxy_url.split_once("://") {
-        Some((s, _)) => {
+        Some((s, rest)) => {
             if !ALLOWED_PROXY_SCHEMES
                 .iter()
                 .any(|a| a.eq_ignore_ascii_case(s))
@@ -253,6 +253,14 @@ pub fn canonicalise_proxy_url(proxy_url: &str) -> Result<CanonicalProxy> {
                 // No interpolation: the text before "://" may be a username
                 // or password (SEC-CR-025).
                 return Err(blocked("unsupported proxy scheme"));
+            }
+            // Decide "no path, query or fragment" on the RAW text: the parsed
+            // path is WHATWG-normalised, so `/..` and `/%2e%2e` collapse to
+            // "/" and would hide a `/` before the userinfo `@`
+            // (SEC-CR-026). One optional trailing `/` is the only slash kept.
+            let authority = rest.strip_suffix('/').unwrap_or(rest);
+            if authority.contains(['/', '?', '#', '\\']) {
+                return Err(blocked("proxy URL must have no path, query or fragment"));
             }
             proxy_url
         }
@@ -336,6 +344,9 @@ pub fn validate_proxy_url(proxy_url: &str) -> Result<String> {
         return Ok(url);
     }
     let lower = host.to_ascii_lowercase();
+    // A trailing dot is the same name (`localhost.`); IDNA already mapped
+    // U+3002 / U+FF0E to '.', so strip exactly one after the parse.
+    let lower = lower.strip_suffix('.').unwrap_or(&lower);
     if lower == "localhost" || lower.ends_with(".localhost") {
         return Err(blocked(&format!("proxy host {host} is loopback")));
     }
@@ -991,6 +1002,14 @@ pub(crate) mod tests {
         "USERTOK:12#S3CRETPW@127.0.0.1:3128",
         // SEC-CR-025: a "scheme" that is really the username.
         "USERTOK://S3CRETPW@127.0.0.1:3128",
+        // SEC-CR-026: dot-segments collapse the path to "/" after parsing,
+        // hiding the '/' that ended the authority before the userinfo '@'.
+        "http://USERTOK:12/S3CRETPW@127.0.0.1:9/..",
+        "http://USERTOK:12/S3CRETPW@127.0.0.1:9/%2e%2e",
+        "socks5://USERTOK:12/S3CRETPW@127.0.0.1:9/..",
+        "https://USERTOK:443/S3CRETPW@127.0.0.1:9/a/..",
+        "http://USERTOK:12/./S3CRETPW@127.0.0.1:9/../..",
+        "http://USERTOK:12\\S3CRETPW@127.0.0.1:9/",
     ];
 
     /// True when `text` carries either credential token, in any case (the
@@ -1005,9 +1024,11 @@ pub(crate) mod tests {
     /// exactly the placeholder for it.
     ///
     /// Falsification (each RED):
-    /// - drop the "no path, query or fragment" check in
+    /// - drop the "no path, query or fragment" checks in
     ///   `canonicalise_proxy_url` → the '#'/'/'/'?' rows canonicalise to host
     ///   `usertok`;
+    /// - drop only the raw-text authority check (keep the post-parse one) →
+    ///   the SEC-CR-026 dot-segment rows canonicalise to host `usertok`;
     /// - drop `'@'` from the bare host:port refusal → the bare userinfo row
     ///   canonicalises;
     /// - interpolate the text before "://" into the unsupported-scheme error
@@ -1040,6 +1061,26 @@ pub(crate) mod tests {
         assert!(validate_proxy_url("socks5://8.8.8.8:1080").is_ok());
     }
 
+    /// SEC-CR-028: a trailing dot names the same host, and IDNA maps the
+    /// ideographic / fullwidth full stops to '.', so none may slip past the
+    /// localhost refusal.
+    ///
+    /// Falsification: drop the `strip_suffix('.')` in `validate_proxy_url`
+    /// and all four rows are accepted → RED.
+    #[test]
+    fn validate_proxy_url_refuses_trailing_dot_localhost() {
+        for host in [
+            "localhost.",
+            "foo.localhost.",
+            "localhost\u{3002}",
+            "localhost\u{FF0E}",
+        ] {
+            for scheme in ["http", "socks5"] {
+                let raw = format!("{scheme}://{host}:3128");
+                assert!(validate_proxy_url(&raw).is_err(), "accepted {raw:?}");
+            }
+        }
+    }
     /// SEC-CR-001: the url/wreq parser differential. A backslash in the
     /// authority makes url::Url read host 1.1.1.1 while wreq (non-special
     /// scheme) reads 127.0.0.1. validate_proxy_url refuses the backslash, and

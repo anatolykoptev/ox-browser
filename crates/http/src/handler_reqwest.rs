@@ -405,7 +405,12 @@ mod tests {
     /// Falsification: delete the `validate_proxy_url` block in
     /// `execute_with` and the request is dialled through 127.0.0.1:9 —
     /// a connection error, not "SSRF blocked" → RED.
+    ///
+    /// `#[serial]`: `per_request_debug_log_redacts_valid_proxy` sets the
+    /// process-wide proxy allowlist; this test must not run concurrently
+    /// with it (SEC-CR-029).
     #[tokio::test]
+    #[serial_test::serial]
     async fn private_literal_proxy_is_ssrf_blocked() {
         let client = crate::HttpClient::new(crate::HttpConfig::default()).expect("client");
         for proxy in [
@@ -572,16 +577,22 @@ mod tests {
     #[serial_test::serial]
     async fn per_request_debug_log_redacts_valid_proxy() {
         // Allowlist the loopback proxy so it passes validation; nothing
-        // listens on :9, so the dial fails fast after the debug line.
+        // listens on this port (no other test uses it), so the dial fails
+        // fast after the debug line.
         // SAFETY: serial test; no other thread reads the env meanwhile.
-        unsafe { std::env::set_var(crate::middleware_ssrf::PROXY_ALLOWLIST_ENV, "127.0.0.1:9") };
+        unsafe {
+            std::env::set_var(
+                crate::middleware_ssrf::PROXY_ALLOWLIST_ENV,
+                "127.0.0.1:59871",
+            )
+        };
         let handler = WreqHandler::new(wreq::Client::new(), false, 0, 1 << 20);
         let (_, logs) = capture_logs(handler.handle(Request {
             method: "GET".into(),
             url: "http://192.0.2.10/".into(),
             headers: vec![],
             body: None,
-            proxy: Some("http://USERTOK:S3CRETPW@127.0.0.1:9".into()),
+            proxy: Some("http://USERTOK:S3CRETPW@127.0.0.1:59871".into()),
         }))
         .await;
         unsafe { std::env::remove_var(crate::middleware_ssrf::PROXY_ALLOWLIST_ENV) };
@@ -590,7 +601,7 @@ mod tests {
             "debug line not reached: {logs}"
         );
         assert!(
-            logs.contains("127.0.0.1:9"),
+            logs.contains("127.0.0.1:59871"),
             "debug log missing the proxy host: {logs}"
         );
         assert!(!leaks_credentials(&logs), "debug log leaked: {logs}");
