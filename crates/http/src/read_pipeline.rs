@@ -240,6 +240,8 @@ async fn chrome_fallback(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .default_headers(crate::wowa_auth::headers(secret))
+        // Never follow a redirect with a credentialed request (SEC-CR-010).
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()?;
 

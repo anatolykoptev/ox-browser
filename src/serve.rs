@@ -218,6 +218,7 @@ mod tests {
     fn app() -> axum::Router {
         let proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(
             "http://127.0.0.1:1".into(),
+            "",
         ));
         let state = ox_js::AppState::new(
             Arc::new(NoSolver),

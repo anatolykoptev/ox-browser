@@ -67,6 +67,28 @@ pub async fn capture_one(body: &'static str) -> (String, tokio::task::JoinHandle
     (url, handle)
 }
 
+/// Test helper: a one-shot server on 127.0.0.1 answering every request with
+/// `302 Location: <location>`. Returns its base URL.
+#[cfg(any(test, feature = "test-utils"))]
+pub async fn redirect_once(location: String) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind redirect server");
+    let url = format!("http://{}", listener.local_addr().expect("local addr"));
+    tokio::spawn(async move {
+        if let Ok((mut sock, _)) = listener.accept().await {
+            let mut chunk = [0u8; 4096];
+            let _ = sock.read(&mut chunk).await;
+            let resp = format!(
+                "HTTP/1.1 302 Found\r\nlocation: {location}/landed\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+    url
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

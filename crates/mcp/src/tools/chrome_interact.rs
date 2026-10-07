@@ -129,12 +129,13 @@ impl OxMcpServer {
     pub(crate) async fn do_chrome_interact(
         &self,
         input: ChromeInteractInput,
+        authenticated: bool,
     ) -> Result<CallToolResult, McpError> {
         let body = serde_json::to_value(&input)
             .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
         let (_, resp) = self
             .gobrowser_proxy
-            .forward("/api/v1/chrome/interact", &body)
+            .forward("/api/v1/chrome/interact", &body, authenticated)
             .await
             .map_err(|e| McpError::internal_error(e, None))?;
         let json = serde_json::to_string(&resp).unwrap_or_default();
@@ -143,5 +144,40 @@ impl OxMcpServer {
             return Ok(CallToolResult::error(vec![Content::text(json)]));
         }
         Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+}
+
+/// Whether the HTTP request behind this MCP call passed the inbound auth gate
+/// with a valid credential. rmcp injects the request's `http::request::Parts`
+/// into the call's extensions; the gate's `Authenticated` marker lives in the
+/// parts' own extensions. No HTTP parts (another transport) → not
+/// authenticated, so ox-browser's go-wowa secret is not attached.
+pub(crate) fn authenticated(ext: &rmcp::model::Extensions) -> bool {
+    ext.get::<axum::http::request::Parts>().is_some_and(|p| {
+        p.extensions
+            .get::<ox_js::inbound_auth::Authenticated>()
+            .is_some()
+    })
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    /// Falsification: make `authenticated` return true unconditionally and the
+    /// anonymous rows go RED.
+    #[test]
+    fn authenticated_reads_the_gate_marker_from_http_parts() {
+        let mut ext = rmcp::model::Extensions::new();
+        assert!(!authenticated(&ext), "no HTTP parts");
+
+        let (mut parts, ()) = axum::http::Request::new(()).into_parts();
+        ext.insert(parts.clone());
+        assert!(!authenticated(&ext), "parts without the marker");
+
+        parts.extensions.insert(ox_js::inbound_auth::Authenticated);
+        let mut ext = rmcp::model::Extensions::new();
+        ext.insert(parts);
+        assert!(authenticated(&ext), "parts with the marker");
     }
 }

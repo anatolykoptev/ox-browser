@@ -63,3 +63,27 @@ async fn solve_sends_internal_secret() {
     assert!(head.starts_with("post /solve "), "{head}");
     assert!(head.contains("x-internal-secret: s3cret"), "{head}");
 }
+
+/// A redirect from go-wowa is not followed with the credential (SEC-CR-010).
+///
+/// Falsification: remove `.redirect(Policy::none())` in
+/// `GoBrowserSolver::new` and the 302 is followed → RED.
+#[tokio::test]
+async fn solve_does_not_follow_redirects() {
+    let (target, hit) = crate::wowa_auth::capture_one(r#"{"status":"ok","cookies":{}}"#).await;
+    let redirector = crate::wowa_auth::redirect_once(target).await;
+    let solver = GoBrowserSolver::new(GoBrowserConfig {
+        base_url: redirector,
+        timeout: Duration::from_secs(5),
+        internal_secret: "s3cret".into(),
+    });
+    let _ = solver
+        .solve("https://example.com", ChallengeType::JsChallenge)
+        .await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), hit)
+            .await
+            .is_err(),
+        "redirect was followed"
+    );
+}

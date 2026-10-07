@@ -71,6 +71,8 @@ impl GoBrowserSolver {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
             .default_headers(crate::wowa_auth::headers(&config.internal_secret))
+            // Never follow a redirect with a credentialed request (SEC-CR-010).
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("reqwest client");
         Self {

@@ -753,3 +753,28 @@ async fn chrome_fallback_sends_internal_secret() {
     let head = req.await.expect("capture");
     assert!(head.contains("x-internal-secret: s3cret"), "{head}");
 }
+
+/// The chrome fallback does not follow a redirect with the credential
+/// (SEC-CR-010).
+///
+/// Falsification: remove `.redirect(Policy::none())` in `chrome_fallback`
+/// and the 302 is followed → RED.
+#[tokio::test]
+async fn chrome_fallback_does_not_follow_redirects() {
+    let (target, hit) = crate::wowa_auth::capture_one(r#"{"actions":[]}"#).await;
+    let redirector = crate::wowa_auth::redirect_once(target).await;
+    let _ = chrome_fallback(
+        &redirector,
+        "s3cret",
+        &params("https://example.com"),
+        ContentFormat::Text,
+        Instant::now(),
+    )
+    .await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), hit)
+            .await
+            .is_err(),
+        "redirect was followed"
+    );
+}
