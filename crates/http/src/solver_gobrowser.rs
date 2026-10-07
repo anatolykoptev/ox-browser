@@ -70,12 +70,15 @@ impl GoBrowserSolver {
     pub fn new(config: GoBrowserConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
-            // Deliberate server-originated exception to the "secret only for an
-            // authenticated inbound caller" rule (GoBrowserProxy,
-            // SEC-CR-009): the solver middleware sends ox-browser's own fixed
-            // /solve request (URL + challenge type), never caller-shaped
-            // actions, proxy or session. Safe for the same ordering reason as
-            // read_pipeline::chrome_fallback (ox-browser#173 before go-wowa#187).
+            // ACCEPTED EXCEPTION (SEC-CR-016, followup ox-browser#177): unlike
+            // GoBrowserProxy and read_pipeline::chrome_fallback, this attaches
+            // the go-wowa secret for any inbound caller, because the solver is
+            // a shared CookieProvider deep in the HttpClient middleware chain
+            // with no per-request auth context. It is tolerated because the
+            // /solve body is fixed (URL + challenge type, never caller actions,
+            // proxy or session) and go-wowa's SolveCF uses a fresh browser
+            // context per call (no shared jar). Gate it once #177 threads the
+            // inbound decision through CookieProvider::solve.
             .default_headers(crate::wowa_auth::headers(&config.internal_secret))
             // Never follow a redirect with a credentialed request (SEC-CR-010).
             .redirect(reqwest::redirect::Policy::none())
