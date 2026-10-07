@@ -151,16 +151,24 @@ impl WreqHandler {
             if let Some(ref proxy_url) = req.proxy {
                 // A: a caller-supplied proxy must not name an internal
                 // address. wreq skips DNS for IP-literal proxies, so the
-                // connect-time SSRF resolver never sees them.
-                if let Err(e) = crate::middleware_ssrf::validate_proxy_url(proxy_url) {
-                    tracing::warn!(url = %req.url, error = %e, reason = "proxy_ssrf_blocked", "per-request proxy refused");
-                    return Err(e);
-                }
-                // B: fail closed — an unparsable `req.proxy` is a
-                // misconfiguration, not a silent downgrade to direct. Going
-                // direct here would egress from the real IP with no proxy and
-                // no counter, contradicting the invariant this file protects.
-                let proxy = match build_proxy(proxy_url) {
+                // connect-time SSRF resolver never sees them. validate returns
+                // the CANONICAL url to dial; dialling the raw string instead
+                // would reopen the url/wreq parser differential (SEC-CR-001).
+                let dial = match crate::middleware_ssrf::validate_proxy_url(proxy_url) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        // A refused caller proxy (SSRF-blocked or malformed)
+                        // is a fail-closed attach rejection — count it, don't
+                        // degrade to direct.
+                        crate::metrics::record_proxy_attach_invalid_url();
+                        tracing::warn!(url = %req.url, error = %e, reason = "proxy_refused", "per-request proxy refused");
+                        return Err(e);
+                    }
+                };
+                // B: fail closed — an unparsable proxy is a misconfiguration,
+                // not a silent downgrade to direct (which would egress from
+                // the real IP with no proxy and no counter).
+                let proxy = match build_proxy(&dial) {
                     Ok(p) => p,
                     Err(e) => {
                         crate::metrics::record_proxy_attach_invalid_url();
@@ -168,7 +176,7 @@ impl WreqHandler {
                             url = %req.url,
                             proxy_url = %crate::middleware_ssrf::redact_proxy_userinfo(proxy_url),
                             reason = "proxy_attach_invalid_url",
-                            "per-request proxy URL is unparsable — failing closed, refusing to degrade to direct"
+                            "validated per-request proxy failed to build — failing closed, refusing to degrade to direct"
                         );
                         return Err(e);
                     }
@@ -453,5 +461,64 @@ mod tests {
         assert!(build_proxy("192.0.2.1:3128").is_ok());
         assert!(build_proxy("not-a-valid-url").is_err());
         assert!(build_proxy("host:notaport").is_err());
+    }
+
+    /// Handler-level: both build_proxy call sites must fail closed without
+    /// echoing proxy credentials. The pool call site (handler_reqwest ~:197)
+    /// is driven here; the per-request site (~:163) is driven by the
+    /// unit tests on build_proxy plus validate_proxy_url (which refuses a
+    /// credentialed malformed proxy before build_proxy, with no creds in its
+    /// message).
+    ///
+    /// Falsification: revert either build_proxy call site to
+    /// `wreq::Proxy::all(..).map_err(|e| HttpError::InvalidUrl(e.to_string()))`
+    /// and the password appears in the returned error → RED.
+    #[tokio::test]
+    async fn pool_proxy_error_does_not_leak_credentials() {
+        use crate::proxy_pool::StaticPool;
+        use std::sync::Arc;
+        let pool = Arc::new(StaticPool::new(vec![
+            "alice:s3cret@example.com".to_string(), // scheme-less + userinfo → build_proxy rejects
+        ]));
+        let client = wreq::Client::new();
+        let handler = WreqHandler::with_proxy_pool(client, pool, false, 5, 1 << 20);
+        let err = handler
+            .handle(Request {
+                method: "GET".into(),
+                url: "http://example.com/".into(),
+                headers: vec![],
+                body: None,
+                proxy: None,
+            })
+            .await
+            .expect_err("invalid pool proxy must fail closed");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("s3cret"),
+            "pool proxy error leaked credentials: {msg}"
+        );
+    }
+
+    /// The per-request call site: a credentialed, malformed req.proxy is
+    /// refused with no credentials in the error.
+    #[tokio::test]
+    async fn per_request_proxy_error_does_not_leak_credentials() {
+        let client = wreq::Client::new();
+        let handler = WreqHandler::new(client, false, 5, 1 << 20);
+        let err = handler
+            .handle(Request {
+                method: "GET".into(),
+                url: "http://example.com/".into(),
+                headers: vec![],
+                body: None,
+                proxy: Some("http://alice:s3cret@ex ample.com:80".into()),
+            })
+            .await
+            .expect_err("invalid req.proxy must fail closed");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("s3cret"),
+            "per-request proxy error leaked credentials: {msg}"
+        );
     }
 }

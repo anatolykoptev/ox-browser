@@ -184,58 +184,119 @@ pub const PROXY_ALLOWLIST_ENV: &str = "OX_PROXY_ALLOWLIST";
 /// [`is_private_ip`] blocks, `localhost` / `*.localhost`, and non-standard IP
 /// encodings; a `host:port` listed in [`PROXY_ALLOWLIST_ENV`] is admitted.
 /// Hostnames are left to the resolver.
-pub fn validate_proxy_url(proxy_url: &str) -> Result<()> {
-    // A bare `host:port` is an http proxy (wreq/reqwest convention).
+/// Validate a caller-supplied per-request proxy URL and return the exact,
+/// canonical URL to dial. The CALLER must dial this returned string, never
+/// the raw input: `url::Url` and wreq's `IntoUri` disagree on non-special
+/// schemes (socks5/socks5h/socks4), so a raw string such as
+/// `socks5://1.1.1.1\@127.0.0.1:6379` validates as host `1.1.1.1` here but
+/// dials `127.0.0.1` in wreq. Returning the rebuilt authority closes that
+/// parser differential; we also reject a backslash and other characters that
+/// are not valid in an RFC-3986 authority.
+///
+/// The connect-time [`crate::ssrf_connect::SsrfGuardedResolver`] only sees
+/// HOSTNAMES; wreq skips DNS for an IP-literal proxy, so without this check a
+/// private literal would be dialled unchecked. Refused: IP literals that
+/// [`is_private_ip`] blocks, `localhost` / `*.localhost`, and non-standard IP
+/// encodings; a `host:port` listed in [`PROXY_ALLOWLIST_ENV`] is admitted.
+/// Hostnames are left to the resolver.
+pub fn validate_proxy_url(proxy_url: &str) -> Result<String> {
+    let blocked = |msg: &str| HttpError::InvalidUrl(format!("SSRF blocked: {msg}"));
+    // A backslash, control char or space is never valid in an RFC-3986
+    // authority; such a byte is exactly what drives the url/wreq parser
+    // differential, so refuse it before parsing.
+    if proxy_url
+        .bytes()
+        .any(|b| b == b'\\' || b.is_ascii_control() || b == b' ')
+    {
+        return Err(blocked("proxy URL contains an illegal authority character"));
+    }
+    // A scheme-less value is accepted only as a bare `host:port` (numeric
+    // port, no userinfo) and treated as http, matching build_proxy. Anything
+    // else without a scheme is malformed and fails closed, so a caller cannot
+    // smuggle e.g. a bare word that later resolves somewhere unexpected.
     let owned;
-    let proxy_url = if proxy_url.contains("://") {
+    let with_scheme = if proxy_url.contains("://") {
         proxy_url
     } else {
+        let bare_host_port = !proxy_url.contains('@')
+            && proxy_url.rsplit_once(':').is_some_and(|(h, p)| {
+                !h.is_empty() && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())
+            });
+        if !bare_host_port {
+            return Err(blocked(
+                "proxy URL must be scheme://host[:port] or host:port",
+            ));
+        }
         owned = format!("http://{proxy_url}");
         &owned
     };
-    let parsed = url::Url::parse(proxy_url)
-        .map_err(|_| HttpError::InvalidUrl("SSRF blocked: unparsable proxy URL".into()))?;
-    // `socks5` is not a WHATWG "special" scheme, so its host is kept as an
-    // opaque string and shorthand IPv4 forms are not normalised. Re-parse
-    // the authority under `http` so every scheme gets the same canonical
-    // host (an IPv4 literal in any notation becomes dotted-quad).
-    let url = if parsed.scheme() == "http" || parsed.scheme() == "https" {
+    let parsed = url::Url::parse(with_scheme).map_err(|_| blocked("unparsable proxy URL"))?;
+    let scheme = parsed.scheme().to_owned();
+    // `socks5`/`socks4` are not WHATWG "special" schemes, so `url::Url` keeps
+    // their host as an opaque string and does not normalise shorthand IPv4.
+    // Re-parse the authority under `http` so every scheme is canonicalised
+    // the same way (an IPv4 literal in any notation becomes dotted-quad).
+    let url = if scheme == "http" || scheme == "https" {
         parsed
     } else {
-        let authority = proxy_url
+        let authority = with_scheme
             .split_once("://")
-            .map_or(proxy_url, |(_, rest)| rest);
+            .map_or(with_scheme, |(_, rest)| rest);
         url::Url::parse(&format!("http://{authority}"))
-            .map_err(|_| HttpError::InvalidUrl("SSRF blocked: unparsable proxy URL".into()))?
+            .map_err(|_| blocked("unparsable proxy URL"))?
     };
     let host = url
         .host_str()
-        .ok_or_else(|| HttpError::InvalidUrl("SSRF blocked: proxy URL has no host".into()))?;
+        .ok_or_else(|| blocked("proxy URL has no host"))?;
     let host = host.trim_start_matches('[').trim_end_matches(']');
     let port = url.port_or_known_default().unwrap_or(80);
-    if proxy_allowlisted(host, port) {
-        return Ok(());
-    }
-    let lower = host.to_ascii_lowercase();
-    if lower == "localhost" || lower.ends_with(".localhost") {
-        return Err(HttpError::InvalidUrl(format!(
-            "SSRF blocked: proxy host {host} is loopback"
-        )));
-    }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_private_ip(&ip) {
-            return Err(HttpError::InvalidUrl(format!(
-                "SSRF blocked: proxy host {host} is a private/reserved address"
+
+    let vet = || -> Result<()> {
+        if proxy_allowlisted(host, port) {
+            return Ok(());
+        }
+        let lower = host.to_ascii_lowercase();
+        if lower == "localhost" || lower.ends_with(".localhost") {
+            return Err(blocked(&format!("proxy host {host} is loopback")));
+        }
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            if is_private_ip(&ip) {
+                return Err(blocked(&format!(
+                    "proxy host {host} is a private/reserved address"
+                )));
+            }
+            return Ok(());
+        }
+        if looks_like_alt_encoded_ip(host) {
+            return Err(blocked(&format!(
+                "proxy host {host:?} looks like a non-standard IP encoding"
             )));
         }
-        return Ok(());
+        Ok(())
+    };
+    vet()?;
+
+    // Rebuild the exact authority to dial from the validated parse, keeping
+    // the original scheme. The host is `url`'s canonical host (dotted-quad
+    // for any IPv4 notation, bracketed for IPv6); userinfo is preserved.
+    let host_out = match url.host() {
+        Some(url::Host::Ipv6(v6)) => format!("[{v6}]"),
+        _ => host.to_owned(),
+    };
+    let mut out = format!("{scheme}://");
+    if !url.username().is_empty() || url.password().is_some() {
+        out.push_str(url.username());
+        if let Some(pw) = url.password() {
+            out.push(':');
+            out.push_str(pw);
+        }
+        out.push('@');
     }
-    if looks_like_alt_encoded_ip(host) {
-        return Err(HttpError::InvalidUrl(format!(
-            "SSRF blocked: proxy host {host:?} looks like a non-standard IP encoding"
-        )));
+    out.push_str(&host_out);
+    if let Some(p) = url.port() {
+        out.push_str(&format!(":{p}"));
     }
-    Ok(())
+    Ok(out)
 }
 
 fn proxy_allowlisted(host: &str, port: u16) -> bool {
@@ -842,5 +903,48 @@ mod tests {
         assert!(validate_proxy_url("socks5://127.1:1080").is_err());
         assert!(validate_proxy_url("http://127.1:1080").is_err());
         assert!(validate_proxy_url("socks5://8.8.8.8:1080").is_ok());
+    }
+
+    /// SEC-CR-001: the url/wreq parser differential. A backslash in the
+    /// authority makes url::Url read host 1.1.1.1 while wreq (non-special
+    /// scheme) reads 127.0.0.1. validate_proxy_url refuses the backslash, and
+    /// the string it returns for a legitimate proxy canonicalises the host so
+    /// the caller never dials the raw input.
+    ///
+    /// Falsification: drop the backslash/illegal-char guard and the socks5
+    /// backslash row is accepted → RED.
+    #[test]
+    fn validate_proxy_url_refuses_parser_differential_forms() {
+        for raw in [
+            "socks5://1.1.1.1\\@127.0.0.1:6379",
+            "socks5h://1.1.1.1\\@127.0.0.1:6379",
+            "socks4://1.1.1.1\\@127.0.0.1:6379",
+            "http://1.1.1.1\\@127.0.0.1:6379",
+            "socks5://1.1.1.1\t@127.0.0.1:6379",
+        ] {
+            assert!(
+                validate_proxy_url(raw).is_err(),
+                "parser-differential proxy accepted: {raw:?}"
+            );
+        }
+    }
+
+    /// The returned dial string is canonical: original scheme, canonical
+    /// host, preserved credentials — never the raw input.
+    #[test]
+    fn validate_proxy_url_returns_canonical_dial_string() {
+        assert_eq!(
+            validate_proxy_url("socks5://8.8.8.8:1080").unwrap(),
+            "socks5://8.8.8.8:1080"
+        );
+        assert_eq!(
+            validate_proxy_url("http://alice:pw@8.8.8.8:80").unwrap(),
+            "http://alice:pw@8.8.8.8" // :80 is http default, url drops it
+        );
+        // shorthand IPv4 under a non-special scheme is canonicalised
+        assert_eq!(
+            validate_proxy_url("socks5://8.8.8.8").unwrap(),
+            "socks5://8.8.8.8"
+        );
     }
 }

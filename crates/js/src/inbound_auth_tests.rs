@@ -221,7 +221,7 @@ fn ua_flood_from_one_ip_cannot_silence_others() {
         "one IP produced {} sightings",
         s.seen.len()
     );
-    let (_, new) = s.first("missing|rest", "10.0.0.77", "real-caller/1");
+    let (_, new, _) = s.first("missing|rest", "10.0.0.77", "real-caller/1");
     assert!(new, "a new IP after the flood was not recorded");
 }
 
@@ -285,7 +285,30 @@ fn per_ip_total_cap_across_all_keys() {
         s.seen.len()
     );
     for i in 0..30 {
-        let (_, new) = s.first("missing|rest", &format!("10.1.0.{i}"), "x");
+        let (_, new, _) = s.first("missing|rest", &format!("10.1.0.{i}"), "x");
         assert!(new, "IP {i} not recorded after the flood");
     }
+}
+
+/// When one IP first hits the per-IP entry cap the gate reports it once, via
+/// the third return flag (so the middleware can warn once instead of
+/// dropping silently).
+///
+/// Falsification: make `Sightings::first` always return `false` for the
+/// just-capped flag and the count is 0 → RED.
+#[test]
+fn per_ip_cap_reports_once() {
+    let mut s = Sightings::default();
+    let mut capped = 0;
+    for res in ["missing", "unverifiable", "invalid"] {
+        for cls in ["mcp", "chrome", "metrics", "rest"] {
+            for i in 0..20 {
+                let (_, _, jc) = s.first(&format!("{res}|{cls}"), "10.0.0.66", &format!("ua/{i}"));
+                if jc {
+                    capped += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(capped, 1, "per-IP cap must report exactly once for one IP");
 }

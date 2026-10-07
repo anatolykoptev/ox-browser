@@ -146,12 +146,15 @@ struct Sightings {
     seen: HashSet<String>,
     uas_per_ip: HashMap<String, HashSet<String>>,
     entries_per_ip: HashMap<String, usize>,
+    capped: HashSet<String>,
 }
 
 impl Sightings {
-    /// Record a sighting; returns the UA as recorded (possibly [`OTHER_UA`])
-    /// and whether it was new.
-    fn first(&mut self, prefix: &str, ip: &str, ua: &str) -> (String, bool) {
+    /// Record a sighting. Returns (ua-as-recorded, is-new,
+    /// just-hit-the-per-IP-cap). The third flag is true exactly once per IP,
+    /// when its cap first binds, so the caller can warn once instead of
+    /// dropping further sightings silently.
+    fn first(&mut self, prefix: &str, ip: &str, ua: &str) -> (String, bool, bool) {
         let known = self.uas_per_ip.get(ip).is_some_and(|s| s.contains(ua));
         let over = self
             .uas_per_ip
@@ -160,11 +163,12 @@ impl Sightings {
         let ua = if !known && over { OTHER_UA } else { ua };
         let key = format!("{prefix}|{ip}|{ua}");
         if self.seen.len() >= MAX_SIGHTINGS || self.seen.contains(&key) {
-            return (ua.to_owned(), false);
+            return (ua.to_owned(), false, false);
         }
         let per_ip = self.entries_per_ip.entry(ip.to_owned()).or_default();
         if *per_ip >= MAX_ENTRIES_PER_IP {
-            return (ua.to_owned(), false);
+            let just_capped = self.capped.insert(ip.to_owned());
+            return (ua.to_owned(), false, just_capped);
         }
         *per_ip += 1;
         self.seen.insert(key);
@@ -174,7 +178,7 @@ impl Sightings {
                 .or_default()
                 .insert(ua.to_owned());
         }
-        (ua.to_owned(), true)
+        (ua.to_owned(), true, false)
     }
 }
 
@@ -270,7 +274,7 @@ impl Gate {
             .chars()
             .take(MAX_UA_LEN)
             .collect();
-        let (ua, first) = self
+        let (ua, first, just_capped) = self
             .inner
             .sightings
             .lock()
@@ -286,6 +290,12 @@ impl Gate {
                 remote_ip = %ip,
                 user_agent = %ua,
                 "inbound_auth: request without a valid credential (first sighting for this caller)"
+            );
+        } else if just_capped {
+            tracing::warn!(
+                remote_ip = %ip,
+                max_per_ip = MAX_ENTRIES_PER_IP,
+                "inbound_auth: per-IP first-sighting cap reached — further new sightings from this IP are counted in oxbrowser_auth_requests_total but not logged"
             );
         }
     }
