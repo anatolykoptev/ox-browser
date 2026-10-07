@@ -150,19 +150,8 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         media_config.clone(),
         Arc::clone(&gobrowser_proxy),
     );
-    let rest_router = ox_js::router(state.clone());
-    let mcp_router = ox_mcp::build_mcp_router(
-        state.provider.clone(),
-        state.cache.clone(),
-        state.http_client.clone(),
-        defaults,
-        media_config,
-        gobrowser_proxy,
-    );
-    // Inbound auth wraps the merged REST + MCP router, so every route and
-    // every unmatched path goes through it (ox_js::inbound_auth).
     let gate = ox_js::inbound_auth::Gate::new(ox_js::inbound_auth::AuthConfig::from_env());
-    let app = ox_js::inbound_auth::protect(rest_router.merge(mcp_router), gate);
+    let app = build_app(state, defaults, media_config, gobrowser_proxy, gate);
 
     // Background task: clean up media files older than 7 days (runs every 24h)
     ox_media::cleanup::spawn_cleanup_task();
@@ -178,4 +167,122 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     .await?;
 
     Ok(())
+}
+
+/// Assemble the served app: the REST router merged with the MCP router, the
+/// whole thing wrapped by the inbound auth gate so every route and every
+/// unmatched path goes through it (ox_js::inbound_auth). `run` and the tests
+/// below both call this, so removing the gate here turns a test RED.
+pub(crate) fn build_app(
+    state: ox_js::AppState,
+    defaults: EndpointDefaults,
+    media_config: ox_media::MediaConfig,
+    gobrowser_proxy: Arc<ox_js::gobrowser_proxy::GoBrowserProxy>,
+    gate: ox_js::inbound_auth::Gate,
+) -> axum::Router {
+    let rest_router = ox_js::router(state.clone());
+    let mcp_router = ox_mcp::build_mcp_router(
+        state.provider.clone(),
+        state.cache.clone(),
+        state.http_client.clone(),
+        defaults,
+        media_config,
+        gobrowser_proxy,
+    );
+    ox_js::inbound_auth::protect(rest_router.merge(mcp_router), gate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ox_js::inbound_auth::{AuthConfig, Gate, Mode};
+    use tower::ServiceExt;
+
+    struct NoSolver;
+
+    #[async_trait::async_trait]
+    impl ox_http::CookieProvider for NoSolver {
+        async fn solve(
+            &self,
+            _url: &str,
+            _ct: ox_http::ChallengeType,
+        ) -> Result<ox_http::SolvedChallenge, String> {
+            Err("none".into())
+        }
+    }
+
+    fn app() -> axum::Router {
+        let proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(
+            "http://127.0.0.1:1".into(),
+        ));
+        let state = ox_js::AppState::new(
+            Arc::new(NoSolver),
+            Arc::new(cookie_cache::CookieCache::new(Duration::from_secs(60))),
+            Arc::new(HttpClient::new(ox_http::HttpConfig::default()).unwrap()),
+            EndpointDefaults::default(),
+            ox_media::MediaConfig::default(),
+            Arc::clone(&proxy),
+        );
+        let gate = Gate::new(AuthConfig {
+            internal_secret: "s".into(),
+            mcp_token: String::new(),
+            mode: Mode::Enforce,
+            allow_insecure: false,
+        });
+        build_app(
+            state,
+            EndpointDefaults::default(),
+            ox_media::MediaConfig::default(),
+            proxy,
+            gate,
+        )
+    }
+
+    async fn status(a: &axum::Router, method: &str, path: &str, secret: Option<&str>) -> u16 {
+        let mut b = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream");
+        if let Some(s) = secret {
+            b = b.header("x-internal-secret", s);
+        }
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#;
+        a.clone()
+            .oneshot(b.body(axum::body::Body::from(body)).unwrap())
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    }
+
+    /// The real served app (REST + MCP, as `run` builds it) is gated.
+    ///
+    /// Falsification: drop `ox_js::inbound_auth::protect(..)` in `build_app`
+    /// (return the bare merge) and the unauthenticated rows return the
+    /// handlers' statuses → RED. The `/mcp` row is the MCP router itself:
+    /// with the right secret it answers the initialize call (not 404),
+    /// proving the merged MCP route is what the gate is in front of.
+    #[tokio::test]
+    async fn served_app_is_gated_including_mcp() {
+        let a = app();
+        for (m, p) in [
+            ("POST", "/mcp"),
+            ("POST", "/fetch"),
+            ("GET", "/metrics"),
+            ("POST", "/nope"),
+        ] {
+            assert_eq!(
+                status(&a, m, p, None).await,
+                401,
+                "{m} {p} without credential"
+            );
+        }
+        assert_eq!(status(&a, "GET", "/health", None).await, 200);
+        let mcp = status(&a, "POST", "/mcp", Some("s")).await;
+        assert!(
+            mcp != 401 && mcp != 404,
+            "authenticated POST /mcp = {mcp}, want the MCP router"
+        );
+    }
 }

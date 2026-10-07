@@ -26,7 +26,7 @@
 //! process that can reach :8901 would use ox-browser as a credentialed relay
 //! into go-wowa's Chrome.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
@@ -40,7 +40,12 @@ use sha2::{Digest, Sha256};
 pub const SECRET_HEADER: &str = "x-internal-secret";
 
 const MAX_SIGHTINGS: usize = 512;
+/// Max User-Agent length kept, in characters (never splits UTF-8).
 const MAX_UA_LEN: usize = 80;
+/// Distinct User-Agents tracked per remote IP; further ones share
+/// [`OTHER_UA`], so one peer cycling UAs cannot fill the table.
+const MAX_UAS_PER_IP: usize = 8;
+const OTHER_UA: &str = "<other-ua>";
 
 /// Whether a request without a usable credential is rejected or allowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +119,42 @@ pub struct Gate {
 
 struct Inner {
     cfg: AuthConfig,
-    sightings: Mutex<HashSet<String>>,
+    sightings: Mutex<Sightings>,
+}
+
+/// Bounded first-sighting set keyed by (result, class, IP, UA): at most
+/// [`MAX_SIGHTINGS`] entries overall and [`MAX_UAS_PER_IP`] distinct UAs per
+/// IP, so neither many addresses nor one address cycling User-Agents can
+/// crowd out later callers.
+#[derive(Default)]
+struct Sightings {
+    seen: HashSet<String>,
+    uas_per_ip: HashMap<String, HashSet<String>>,
+}
+
+impl Sightings {
+    /// Record a sighting; returns the UA as recorded (possibly [`OTHER_UA`])
+    /// and whether it was new.
+    fn first(&mut self, prefix: &str, ip: &str, ua: &str) -> (String, bool) {
+        let known = self.uas_per_ip.get(ip).is_some_and(|s| s.contains(ua));
+        let over = self
+            .uas_per_ip
+            .get(ip)
+            .is_some_and(|s| s.len() >= MAX_UAS_PER_IP);
+        let ua = if !known && over { OTHER_UA } else { ua };
+        let key = format!("{prefix}|{ip}|{ua}");
+        if self.seen.len() >= MAX_SIGHTINGS || self.seen.contains(&key) {
+            return (ua.to_owned(), false);
+        }
+        self.seen.insert(key);
+        if ua != OTHER_UA {
+            self.uas_per_ip
+                .entry(ip.to_owned())
+                .or_default()
+                .insert(ua.to_owned());
+        }
+        (ua.to_owned(), true)
+    }
 }
 
 impl Gate {
@@ -148,7 +188,7 @@ impl Gate {
         Self {
             inner: Arc::new(Inner {
                 cfg,
-                sightings: Mutex::new(HashSet::new()),
+                sightings: Mutex::new(Sightings::default()),
             }),
         }
     }
@@ -209,19 +249,12 @@ impl Gate {
             .chars()
             .take(MAX_UA_LEN)
             .collect();
-        let key = format!("{result}|{class}|{ip}|{ua}");
-        let first = {
-            let mut seen = self
-                .inner
-                .sightings
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            if seen.len() >= MAX_SIGHTINGS || seen.contains(&key) {
-                false
-            } else {
-                seen.insert(key)
-            }
-        };
+        let (ua, first) = self
+            .inner
+            .sightings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .first(&format!("{result}|{class}"), &ip, &ua);
         if first {
             tracing::warn!(
                 result,

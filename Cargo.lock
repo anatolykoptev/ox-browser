@@ -2059,6 +2059,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "wreq",

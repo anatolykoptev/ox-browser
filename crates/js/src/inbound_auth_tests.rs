@@ -203,3 +203,24 @@ fn from_env_reads_the_documented_variables() {
     assert_eq!(c.mode, Mode::Soft);
     assert!(c.allow_insecure);
 }
+
+/// One peer cycling User-Agents must not fill the table and silence later
+/// callers.
+///
+/// Falsification: drop the MAX_UAS_PER_IP bucket in `Sightings::first`
+/// (inbound_auth.rs) and 1000 UAs from one IP fill all 512 slots, so the new
+/// IP is not recorded → RED.
+#[test]
+fn ua_flood_from_one_ip_cannot_silence_others() {
+    let mut s = Sightings::default();
+    for i in 0..1000 {
+        s.first("missing|rest", "10.0.0.66", &format!("flood/{i}"));
+    }
+    assert!(
+        s.seen.len() <= MAX_UAS_PER_IP + 1,
+        "one IP produced {} sightings",
+        s.seen.len()
+    );
+    let (_, new) = s.first("missing|rest", "10.0.0.77", "real-caller/1");
+    assert!(new, "a new IP after the flood was not recorded");
+}
