@@ -244,12 +244,19 @@ async fn authenticated_marker_only_for_valid_credential() {
         probe,
         Gate::new(AuthConfig {
             internal_secret: SECRET.into(),
-            mcp_token: String::new(),
+            mcp_token: "mcp-token".into(),
             mode: Mode::Soft,
             allow_insecure: false,
         }),
     );
-    for (hdrs, want) in [(&[(SECRET_HEADER, SECRET)][..], "auth"), (&[][..], "anon")] {
+    // Only the shared internal secret earns the marker. A valid bearer passes
+    // the gate but must NOT be relayed with the fleet secret, so it is "anon"
+    // here (the open-question resolution).
+    for (hdrs, want) in [
+        (&[(SECRET_HEADER, SECRET)][..], "auth"),
+        (&[("authorization", "Bearer mcp-token")][..], "anon"),
+        (&[][..], "anon"),
+    ] {
         let mut b = axum::http::Request::builder().uri("/probe");
         for (k, v) in hdrs {
             b = b.header(*k, *v);

@@ -151,7 +151,7 @@ mod tests {
             Arc::new(HttpClient::new(HttpConfig::default()).unwrap()),
             EndpointDefaults::default(),
             ox_media::MediaConfig::default(),
-            Arc::new(GoBrowserProxy::new("http://127.0.0.1:8906".to_string())),
+            Arc::new(GoBrowserProxy::new("http://127.0.0.1:8906".to_string(), "")),
         )
     }
 

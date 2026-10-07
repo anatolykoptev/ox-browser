@@ -185,6 +185,7 @@ mod tests {
     pub(crate) fn test_state() -> AppState {
         let proxy = Arc::new(gobrowser_proxy::GoBrowserProxy::new(
             "http://127.0.0.1:8906".to_string(),
+            "",
         ));
         AppState::new(
             Arc::new(MockProvider),
@@ -316,9 +317,10 @@ mod tests {
         });
 
         let mut state = test_state();
-        state.gobrowser_proxy = Arc::new(gobrowser_proxy::GoBrowserProxy::new(format!(
-            "http://127.0.0.1:{port}"
-        )));
+        state.gobrowser_proxy = Arc::new(gobrowser_proxy::GoBrowserProxy::new(
+            format!("http://127.0.0.1:{port}"),
+            "",
+        ));
         let app = router(state);
 
         let resp = tokio::time::timeout(

@@ -59,6 +59,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     // Chrome fallback for JS-rendered pages
     if let Ok(url) = std::env::var("GO_BROWSER_URL") {
         http_config.chrome_render_url = Some(format!("{url}/api/v1/chrome/interact"));
+        http_config.chrome_render_secret = ox_http::wowa_auth::secret_from_env();
     }
     let render_cache = Arc::new(ox_http::render_cache::RenderModeCache::default());
     // Render cache TTL-based eviction (issue #18): without a periodic sweep,
@@ -139,7 +140,10 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         .unwrap_or_else(|| "http://127.0.0.1:8906".to_string());
 
     tracing::info!(url = %gobrowser_url, "go-browser proxy for /chrome/interact");
-    let gobrowser_proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(gobrowser_url));
+    let gobrowser_proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(
+        gobrowser_url,
+        &ox_http::wowa_auth::secret_from_env(),
+    ));
 
     let http_client = Arc::new(HttpClient::new(http_config)?);
     let state = ox_js::AppState::new(
@@ -212,13 +216,31 @@ mod tests {
     }
 
     fn app() -> axum::Router {
+        app_with("http://127.0.0.1:1".into(), "", Mode::Enforce)
+    }
+
+    /// The served app with go-wowa at `wowa_url`, ox-browser's outbound go-wowa
+    /// secret `wowa_secret`, and the inbound gate in `mode` (inbound secret "s").
+    fn app_with(wowa_url: String, wowa_secret: &str, mode: Mode) -> axum::Router {
+        app_with_http(wowa_url, wowa_secret, mode, ox_http::HttpConfig::default())
+    }
+
+    /// `app_with` plus a custom HttpConfig for the shared HttpClient (used to
+    /// point the /read chrome fallback at a capture server).
+    fn app_with_http(
+        wowa_url: String,
+        wowa_secret: &str,
+        mode: Mode,
+        http_cfg: ox_http::HttpConfig,
+    ) -> axum::Router {
         let proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(
-            "http://127.0.0.1:1".into(),
+            wowa_url,
+            wowa_secret,
         ));
         let state = ox_js::AppState::new(
             Arc::new(NoSolver),
             Arc::new(cookie_cache::CookieCache::new(Duration::from_secs(60))),
-            Arc::new(HttpClient::new(ox_http::HttpConfig::default()).unwrap()),
+            Arc::new(HttpClient::new(http_cfg).unwrap()),
             EndpointDefaults::default(),
             ox_media::MediaConfig::default(),
             Arc::clone(&proxy),
@@ -226,7 +248,7 @@ mod tests {
         let gate = Gate::new(AuthConfig {
             internal_secret: "s".into(),
             mcp_token: String::new(),
-            mode: Mode::Enforce,
+            mode,
             allow_insecure: false,
         });
         build_app(
@@ -283,6 +305,223 @@ mod tests {
         assert!(
             mcp != 401 && mcp != 404,
             "authenticated POST /mcp = {mcp}, want the MCP router"
+        );
+    }
+
+    async fn mcp_post(
+        a: &axum::Router,
+        inbound_secret: Option<&str>,
+        session: Option<&str>,
+        body: &str,
+    ) -> axum::http::Response<axum::body::Body> {
+        let mut b = axum::http::Request::post("/mcp")
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-06-18");
+        if let Some(s) = inbound_secret {
+            b = b.header("x-internal-secret", s);
+        }
+        if let Some(id) = session {
+            b = b.header("mcp-session-id", id);
+        }
+        a.clone()
+            .oneshot(b.body(axum::body::Body::from(body.to_owned())).unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// Drive the MCP `chrome_interact` tool through the real served app in
+    /// SOFT mode and return the request head go-wowa (a capture server)
+    /// received.
+    async fn mcp_chrome_interact_head(inbound_secret: Option<&str>) -> String {
+        let (url, captured) = ox_http::wowa_auth::capture_one(r#"{"status":"ok"}"#).await;
+        let a = app_with(url, "wowa-secret", Mode::Soft);
+        let init = mcp_post(
+            &a,
+            inbound_secret,
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+        )
+        .await;
+        let session = init
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let _ = axum::body::to_bytes(init.into_body(), 1 << 16).await;
+        let _ = mcp_post(
+            &a,
+            inbound_secret,
+            session.as_deref(),
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        )
+        .await;
+        let call = mcp_post(
+            &a,
+            inbound_secret,
+            session.as_deref(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"chrome_interact","arguments":{"url":"https://example.com","actions":[]}}}"#,
+        )
+        .await;
+        // Read the (SSE) response so the tool call runs to completion.
+        let _ = tokio::time::timeout(
+            Duration::from_secs(10),
+            axum::body::to_bytes(call.into_body(), 1 << 20),
+        )
+        .await;
+        tokio::time::timeout(Duration::from_secs(10), captured)
+            .await
+            .expect("go-wowa capture server was never called")
+            .expect("capture")
+    }
+
+    /// SEC-CR-009 at the MCP call site: in soft mode an anonymous MCP
+    /// `chrome_interact` reaches go-wowa WITHOUT ox-browser's secret; an
+    /// authenticated one carries it.
+    ///
+    /// Falsification: pass `true` instead of `authenticated(&ctx.extensions)`
+    /// in the `chrome_interact` tool (crates/mcp/src/tools/mod.rs) and the
+    /// anonymous call is relayed with the secret → RED.
+    #[tokio::test]
+    async fn mcp_chrome_interact_relays_secret_only_when_authenticated() {
+        let head = mcp_chrome_interact_head(Some("s")).await;
+        assert!(
+            head.contains("x-internal-secret: wowa-secret"),
+            "authenticated: {head}"
+        );
+        let head = mcp_chrome_interact_head(None).await;
+        assert!(
+            !head.contains("x-internal-secret"),
+            "anonymous relayed with the secret: {head}"
+        );
+    }
+
+    /// HttpConfig whose /read chrome fallback goes to `wowa` (a capture
+    /// server) with ox-browser's go-wowa secret "wowa-secret", and whose render
+    /// cache already says example.com needs Chrome, so /read goes straight to
+    /// the fallback.
+    fn read_fallback_cfg(wowa: &str) -> ox_http::HttpConfig {
+        let rc = Arc::new(ox_http::render_cache::RenderModeCache::default());
+        rc.set("example.com", ox_http::render_cache::RenderMode::Chrome);
+        ox_http::HttpConfig {
+            chrome_render_url: Some(format!("{wowa}/api/v1/chrome/interact")),
+            chrome_render_secret: "wowa-secret".into(),
+            render_cache: Some(rc),
+            ..Default::default()
+        }
+    }
+
+    const FALLBACK_BODY: &str = r#"{"actions":[{"action":"evaluate","data":"<html><body><p>hello world</p></body></html>"}]}"#;
+
+    async fn rest_read_fallback_head(inbound_secret: Option<&str>) -> String {
+        let (wowa, captured) = ox_http::wowa_auth::capture_one(FALLBACK_BODY).await;
+        let a = app_with_http(
+            "http://127.0.0.1:1".into(),
+            "",
+            Mode::Soft,
+            read_fallback_cfg(&wowa),
+        );
+        let mut b = axum::http::Request::post("/read").header("content-type", "application/json");
+        if let Some(s) = inbound_secret {
+            b = b.header("x-internal-secret", s);
+        }
+        let _ = a
+            .oneshot(
+                b.body(axum::body::Body::from(r#"{"url":"https://example.com/p"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), captured)
+            .await
+            .expect("the /read chrome fallback never called go-wowa")
+            .expect("capture")
+    }
+
+    /// SEC-CR-014, REST call site: in soft mode, POST /read reaches the chrome
+    /// fallback; go-wowa gets ox-browser's secret only when the inbound
+    /// request carried the internal secret.
+    ///
+    /// Falsification: replace `auth.is_some()` with `true` in
+    /// crates/js/src/read.rs and the anonymous /read is relayed with the
+    /// secret → RED.
+    #[tokio::test]
+    async fn rest_read_fallback_relays_secret_only_when_authenticated() {
+        let head = rest_read_fallback_head(Some("s")).await;
+        assert!(
+            head.contains("x-internal-secret: wowa-secret"),
+            "authenticated: {head}"
+        );
+        let head = rest_read_fallback_head(None).await;
+        assert!(
+            !head.contains("x-internal-secret"),
+            "anonymous /read relayed with the secret: {head}"
+        );
+    }
+
+    async fn mcp_read_fallback_head(inbound_secret: Option<&str>) -> String {
+        let (wowa, captured) = ox_http::wowa_auth::capture_one(FALLBACK_BODY).await;
+        let a = app_with_http(
+            "http://127.0.0.1:1".into(),
+            "",
+            Mode::Soft,
+            read_fallback_cfg(&wowa),
+        );
+        let init = mcp_post(
+            &a,
+            inbound_secret,
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+        )
+        .await;
+        let session = init
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let _ = axum::body::to_bytes(init.into_body(), 1 << 16).await;
+        let _ = mcp_post(
+            &a,
+            inbound_secret,
+            session.as_deref(),
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        )
+        .await;
+        let call = mcp_post(
+            &a,
+            inbound_secret,
+            session.as_deref(),
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read","arguments":{"url":"https://example.com/p"}}}"#,
+        )
+        .await;
+        let _ = tokio::time::timeout(
+            Duration::from_secs(10),
+            axum::body::to_bytes(call.into_body(), 1 << 20),
+        )
+        .await;
+        tokio::time::timeout(Duration::from_secs(10), captured)
+            .await
+            .expect("the MCP read chrome fallback never called go-wowa")
+            .expect("capture")
+    }
+
+    /// SEC-CR-014, MCP call site: the MCP `read` tool relays the secret to
+    /// the chrome fallback only when the inbound request carried it.
+    ///
+    /// Falsification: replace `chrome_interact::authenticated(&ctx.extensions)`
+    /// with `true` in the `read` tool (crates/mcp/src/tools/mod.rs) and the
+    /// anonymous MCP read is relayed with the secret → RED.
+    #[tokio::test]
+    async fn mcp_read_fallback_relays_secret_only_when_authenticated() {
+        let head = mcp_read_fallback_head(Some("s")).await;
+        assert!(
+            head.contains("x-internal-secret: wowa-secret"),
+            "authenticated: {head}"
+        );
+        let head = mcp_read_fallback_head(None).await;
+        assert!(
+            !head.contains("x-internal-secret"),
+            "anonymous MCP read relayed with the secret: {head}"
         );
     }
 }

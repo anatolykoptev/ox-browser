@@ -14,6 +14,8 @@ use crate::cookie_provider::{CookieProvider, SolvedChallenge};
 pub struct GoBrowserConfig {
     pub base_url: String,
     pub timeout: Duration,
+    /// Sent as `X-Internal-Secret` (see [`crate::wowa_auth`]); empty = none.
+    pub internal_secret: String,
 }
 
 impl Default for GoBrowserConfig {
@@ -21,6 +23,7 @@ impl Default for GoBrowserConfig {
         Self {
             base_url: "http://127.0.0.1:8906".to_owned(),
             timeout: Duration::from_secs(35),
+            internal_secret: String::new(),
         }
     }
 }
@@ -67,6 +70,18 @@ impl GoBrowserSolver {
     pub fn new(config: GoBrowserConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
+            // ACCEPTED EXCEPTION (SEC-CR-016, followup ox-browser#177): unlike
+            // GoBrowserProxy and read_pipeline::chrome_fallback, this attaches
+            // the go-wowa secret for any inbound caller, because the solver is
+            // a shared CookieProvider deep in the HttpClient middleware chain
+            // with no per-request auth context. It is tolerated because the
+            // /solve body is fixed (URL + challenge type, never caller actions,
+            // proxy or session) and go-wowa's SolveCF uses a fresh browser
+            // context per call (no shared jar). Gate it once #177 threads the
+            // inbound decision through CookieProvider::solve.
+            .default_headers(crate::wowa_auth::headers(&config.internal_secret))
+            // Never follow a redirect with a credentialed request (SEC-CR-010).
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("reqwest client");
         Self {

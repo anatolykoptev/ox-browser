@@ -54,6 +54,9 @@ pub struct HttpConfig {
     pub quality_check: bool,
     /// Chrome render endpoint for JS-heavy fallback (e.g. "http://go-wowa:8906/api/v1/chrome/interact").
     pub chrome_render_url: Option<String>,
+    /// Sent as `X-Internal-Secret` on chrome-render calls (see
+    /// [`crate::wowa_auth`]); empty = none.
+    pub chrome_render_secret: String,
     /// Per-domain render mode cache (shared, thread-safe).
     pub render_cache: Option<Arc<crate::render_cache::RenderModeCache>>,
     /// Solver negative cache — shared with the solver middleware so read_pipeline
@@ -91,6 +94,7 @@ impl Default for HttpConfig {
             residential_proxy: None,
             quality_check: true,
             chrome_render_url: None,
+            chrome_render_secret: String::new(),
             render_cache: None,
             solver_negcache: None,
             max_body_bytes: 50 * 1024 * 1024, // 50 MB — see field doc

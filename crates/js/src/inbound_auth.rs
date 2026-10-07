@@ -40,12 +40,15 @@ use subtle::ConstantTimeEq;
 /// Header carrying the shared internal secret.
 pub const SECRET_HEADER: &str = "x-internal-secret";
 
-/// Request extension the gate inserts when the caller presented a VALID
-/// credential. Handlers that relay to go-wowa with ox-browser's own secret
-/// attach it only when this marker is present, so a request let through by
-/// soft mode (or the insecure override) is never relayed with the fleet
-/// credential. Reachable from axum handlers via `Option<Extension<_>>` and
-/// from MCP tools via the `http::request::Parts` rmcp injects.
+/// Request extension the gate inserts only when the caller presented the
+/// shared internal secret (`ok_secret`), i.e. proved possession of
+/// `INTERNAL_SERVICE_SECRET` — the very credential ox-browser relays to
+/// go-wowa. A valid `OX_MCP_TOKEN` bearer does NOT earn it: an MCP-token
+/// holder is not necessarily a fleet service with go-wowa access, so its
+/// caller-shaped `chrome_interact` / `/read` must not be relayed with the
+/// fleet secret. A request let through by soft mode or the insecure override
+/// also lacks it. Reachable from axum handlers via `Option<Extension<_>>`
+/// and from MCP tools via the `http::request::Parts` rmcp injects.
 #[derive(Debug, Clone, Copy)]
 pub struct Authenticated;
 
@@ -359,7 +362,9 @@ pub async fn middleware(State(gate): State<Gate>, mut req: Request, next: Next) 
         )
             .into_response();
     }
-    if result.starts_with("ok_") {
+    // Only the shared internal secret earns the relay marker (see its docs);
+    // a valid bearer passes the gate but is not relayed with the fleet secret.
+    if result == "ok_secret" {
         req.extensions_mut().insert(Authenticated);
     }
     next.run(req).await

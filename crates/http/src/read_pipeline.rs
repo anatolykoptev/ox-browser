@@ -47,10 +47,16 @@ pub async fn read_page(
     http: &HttpClient,
     params: &ReadParams,
     site_handlers: &[SiteHandler],
+    authenticated: bool,
 ) -> ReadOutput {
     let deadline = resolve_timeout(params.timeout);
     let secs = deadline.as_secs();
-    match bounded(deadline, read_page_inner(http, params, site_handlers)).await {
+    match bounded(
+        deadline,
+        read_page_inner(http, params, site_handlers, authenticated),
+    )
+    .await
+    {
         CallOutcome::Ok(output) => output,
         CallOutcome::DeadlineExceeded { .. } => build_error_output(
             params,
@@ -65,6 +71,7 @@ async fn read_page_inner(
     http: &HttpClient,
     params: &ReadParams,
     site_handlers: &[SiteHandler],
+    authenticated: bool,
 ) -> ReadOutput {
     let start = Instant::now();
     crate::metrics::record_read();
@@ -90,6 +97,18 @@ async fn read_page_inner(
 
     let config = http.config();
     let chrome_url = config.chrome_render_url.clone();
+    // SEC-CR-002: the chrome fallback relays to go-wowa, which renders in
+    // mode=private — a single incognito jar shared by every private session.
+    // Attaching ox-browser's go-wowa secret for an UNauthenticated caller
+    // would let an anonymous /read retrieve pages rendered with other
+    // callers' state. Send the secret only when the inbound caller was
+    // authenticated (the same rule GoBrowserProxy uses); an anonymous
+    // fallback goes with no credential, which go-wowa refuses under enforce.
+    let chrome_secret = if authenticated {
+        config.chrome_render_secret.clone()
+    } else {
+        String::new()
+    };
     let render_cache = config.render_cache.clone();
 
     // Check render cache: if domain is known to need Chrome or has given up, act accordingly.
@@ -125,7 +144,9 @@ async fn read_page_inner(
             }
             Some(RenderMode::Chrome) => {
                 tracing::debug!(domain = %domain, "render cache hit: Chrome");
-                if let Some(output) = chrome_fallback(url, params, format, start).await {
+                if let Some(output) =
+                    chrome_fallback(url, &chrome_secret, params, format, start).await
+                {
                     crate::metrics::record_fetch_success();
                     return output;
                 }
@@ -179,7 +200,9 @@ async fn read_page_inner(
                 } else {
                     tracing::info!(domain = %domain, "CF error on HTTP fetch → marking Chrome, retrying via Chrome fallback");
                     cache.set(&domain, RenderMode::Chrome);
-                    if let Some(output) = chrome_fallback(url, params, format, start).await {
+                    if let Some(output) =
+                        chrome_fallback(url, &chrome_secret, params, format, start).await
+                    {
                         crate::metrics::record_fetch_success();
                         return output;
                     }
@@ -204,7 +227,7 @@ async fn read_page_inner(
     {
         tracing::info!(domain = %domain, "JS shell detected → marking Chrome, retrying via Chrome fallback");
         cache.set(&domain, RenderMode::Chrome);
-        if let Some(output) = chrome_fallback(url, params, format, start).await {
+        if let Some(output) = chrome_fallback(url, &chrome_secret, params, format, start).await {
             crate::metrics::record_fetch_success();
             return output;
         }
@@ -218,6 +241,7 @@ async fn read_page_inner(
 /// Call go-wowa chrome/interact to fetch a JS-rendered page.
 async fn chrome_fallback(
     chrome_url: &str,
+    secret: &str,
     params: &ReadParams,
     format: ContentFormat,
     start: Instant,
@@ -233,6 +257,16 @@ async fn chrome_fallback(
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
+        // `secret` is already GATED by the caller: read_page_inner passes
+        // ox-browser's go-wowa secret only when the inbound request carried
+        // the shared internal secret (inbound_auth `Authenticated`, set on
+        // ok_secret only), and an empty string otherwise, so an anonymous or
+        // bearer-only /read reaches go-wowa with no credential (SEC-CR-002).
+        // Do not remove that gate: go-wowa renders this in mode=private, a
+        // single incognito jar shared by every private session.
+        .default_headers(crate::wowa_auth::headers(secret))
+        // Never follow a redirect with a credentialed request (SEC-CR-010).
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()?;
 

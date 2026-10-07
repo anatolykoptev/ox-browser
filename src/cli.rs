@@ -97,6 +97,7 @@ pub(crate) fn build_http_client_for_profile(
         && !url.is_empty()
     {
         cfg.chrome_render_url = Some(format!("{url}/api/v1/chrome/interact"));
+        cfg.chrome_render_secret = ox_http::wowa_auth::secret_from_env();
     }
 
     Ok(HttpClient::new(cfg)?)
