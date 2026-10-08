@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.17](https://github.com/anatolykoptev/ox-browser/compare/v0.8.16...v0.8.17) (2026-10-08)
+
+
+### Fixed
+
+* **doctor:** probe proxies through the canonical builder and redact credentials ([#178](https://github.com/anatolykoptev/ox-browser/issues/178)) ([#184](https://github.com/anatolykoptev/ox-browser/issues/184)) ([15ed677](https://github.com/anatolykoptev/ox-browser/commit/15ed677b9586a6ad81f3cf68500e1edfd20635b7))
+
 ## [0.8.16](https://github.com/anatolykoptev/ox-browser/compare/v0.8.15...v0.8.16) (2026-10-08)
 
 
