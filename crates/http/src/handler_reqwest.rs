@@ -375,7 +375,7 @@ impl Handler for WreqHandler {
 /// The wreq error is never surfaced: its Display can echo the URI including
 /// `user:password@`, so the error carries only a fixed message plus the
 /// redacted URL.
-pub(crate) fn build_proxy(proxy_url: &str) -> Result<wreq::Proxy> {
+pub fn build_proxy(proxy_url: &str) -> Result<wreq::Proxy> {
     let invalid = || {
         HttpError::InvalidUrl(format!(
             "invalid proxy URL: {}",

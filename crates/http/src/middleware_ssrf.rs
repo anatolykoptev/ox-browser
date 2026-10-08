@@ -209,8 +209,8 @@ pub struct CanonicalProxy {
 
 /// Canonicalise a proxy URL without vetting where it points. Every proxy the
 /// HTTP client hands to wreq goes through this (per-request via
-/// [`validate_proxy_url`], pool, static and media proxies via `build_proxy`);
-/// the one exception is the `doctor` reachability probe (issue #178). wreq
+/// [`validate_proxy_url`]; pool, static, media and the `doctor` probe via
+/// `build_proxy`). wreq
 /// dials its own re-parse of the raw string, and the url crate is lenient in
 /// ways that let a credential end up as the host, port, path, query or
 /// fragment, so the grammar is strict and everything is decided from ONE
