@@ -12,6 +12,8 @@ use rmcp::schemars;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use ox_js::inbound_auth::InboundAuth;
+
 use super::OxMcpServer;
 
 /// Input parameters for the `fetch` tool.
@@ -98,14 +100,13 @@ impl OxMcpServer {
     pub(crate) async fn do_fetch(
         &self,
         input: FetchInput,
-        authenticated: bool,
+        auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
         let elapsed = || start.elapsed().as_millis() as u64;
-        // ox-browser#177: stamp the gate's `ok_secret` decision on outbound
-        // requests — a CF solve relays the go-wowa secret only for an
-        // authenticated inbound caller.
-        let http = self.http_client.with_authenticated(authenticated);
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — `auth` is marker-derived, not a bool.
+        let http = self.client_for(auth);
 
         // Resolve method: default to POST when a body is supplied (curl
         // --data convention), GET otherwise.
@@ -230,13 +231,14 @@ impl OxMcpServer {
     pub(crate) async fn do_fetch_smart(
         &self,
         input: FetchSmartInput,
-        authenticated: bool,
+        auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
         let save = input.save_to_file;
         let url = input.url.clone();
-        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
-        let http = self.http_client.with_authenticated(authenticated);
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — see do_fetch.
+        let http = self.client_for(auth);
 
         // Middleware chain handles CF detect + solve + retry automatically.
         match http.get(&input.url).await {

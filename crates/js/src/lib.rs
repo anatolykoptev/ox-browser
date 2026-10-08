@@ -95,6 +95,20 @@ impl AppState {
             gobrowser_proxy,
         }
     }
+
+    /// The one way REST handlers obtain the shared HTTP client: a
+    /// per-request view that stamps `auth`'s gate decision on every outgoing
+    /// [`ox_http::Request`], so the solver middleware relays ox-browser's
+    /// go-wowa secret only for an `ok_secret` caller (ox-browser#177).
+    ///
+    /// `auth` is an [`inbound_auth::InboundAuth`] — extractable only from the
+    /// inbound gate's `Authenticated` marker — so a handler cannot stamp a
+    /// literal `true` the way `with_authenticated(true)` allowed
+    /// (SEC-CR-018). The single `with_authenticated` call on this surface
+    /// lives here.
+    pub fn client_for(&self, auth: inbound_auth::InboundAuth) -> HttpClient {
+        self.http_client.with_authenticated(auth.is_authenticated())
+    }
 }
 
 /// Builds the Axum router with all REST endpoints.
@@ -154,6 +168,9 @@ async fn metrics() -> ([(axum::http::header::HeaderName, &'static str); 1], Stri
         ox_http::render_metrics(),
     )
 }
+
+#[cfg(test)]
+mod auth_relay_tests;
 
 #[cfg(test)]
 mod tests {

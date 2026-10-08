@@ -7,6 +7,8 @@ use serde::Deserialize;
 use rmcp::schemars;
 use schemars::JsonSchema;
 
+use ox_js::inbound_auth::InboundAuth;
+
 use super::OxMcpServer;
 
 /// Input parameters for the `media_download` tool.
@@ -30,7 +32,7 @@ impl OxMcpServer {
     pub(crate) async fn do_media_download(
         &self,
         input: MediaDownloadInput,
-        authenticated: bool,
+        auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let media_type = match input.media_type.as_deref() {
             Some("video") => ox_media::MediaType::Video,
@@ -48,8 +50,9 @@ impl OxMcpServer {
             min_width: input.min_width,
         };
 
-        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
-        let http = self.http_client.with_authenticated(authenticated);
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — see do_fetch.
+        let http = self.client_for(auth);
         let result = ox_media::download(&http, &req, &self.media_config)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;

@@ -73,7 +73,21 @@ impl OxMcpServer {
             tool_router: Self::tool_router(),
         }
     }
+
+    /// The one way tools obtain the shared HTTP client: a per-request view
+    /// stamping `auth`'s gate decision on every outgoing Request, so a CF
+    /// solve relays ox-browser's go-wowa secret only for an `ok_secret`
+    /// caller (ox-browser#177). `auth` arrives as `InboundAuth` — built only
+    /// from the gate marker in `chrome_interact::inbound_auth` — so no tool
+    /// body can stamp a literal `true` (SEC-CR-018).
+    pub(crate) fn client_for(&self, auth: ox_js::inbound_auth::InboundAuth) -> HttpClient {
+        self.http_client.with_authenticated(auth.is_authenticated())
+    }
 }
+
+#[cfg(test)]
+#[path = "auth_relay_tests.rs"]
+mod auth_relay_tests;
 
 #[tool_router]
 impl OxMcpServer {
@@ -86,7 +100,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<FetchInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_fetch(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_fetch(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -99,7 +113,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<FetchSmartInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_fetch_smart(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_fetch_smart(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -112,7 +126,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<AnalyzeInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_analyze(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_analyze(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -125,7 +139,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<SolveCfInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_solve_cf(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_solve_cf(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -138,7 +152,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<SecurityScanInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_security_scan(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_security_scan(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -151,7 +165,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<ReadabilityInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_readability(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_readability(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -164,7 +178,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<ReadInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_read(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_read(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -177,7 +191,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<ImageSearchInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_image_search(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_image_search(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -190,7 +204,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<CrawlInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_crawl(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_crawl(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -203,7 +217,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<MediaDownloadInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_media_download(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_media_download(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -216,7 +230,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<ReverseSearchInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_reverse_search(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_reverse_search(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -229,7 +243,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<SiteAuditInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_site_audit(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_site_audit(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 
@@ -242,7 +256,7 @@ impl OxMcpServer {
         Parameters(input): Parameters<ChromeInteractInput>,
         ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_chrome_interact(input, chrome_interact::authenticated(&ctx.extensions))
+        self.do_chrome_interact(input, chrome_interact::inbound_auth(&ctx.extensions))
             .await
     }
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::http::StatusCode;
-use axum::{Extension, Json, extract::State};
+use axum::{Json, extract::State};
 use ox_imagesearch::bing::BingImages;
 use ox_imagesearch::brave::BraveImages;
 use ox_imagesearch::ddg::DdgImages;
@@ -15,7 +15,7 @@ use ox_imagesearch::{ImageEngine, ImageResult};
 use serde::{Deserialize, Serialize};
 
 use super::AppState;
-use crate::inbound_auth::Authenticated;
+use crate::inbound_auth::InboundAuth;
 
 #[derive(Deserialize)]
 pub struct ImageSearchRequest {
@@ -37,7 +37,7 @@ pub struct ImageSearchResponse {
 
 pub async fn image_search(
     State(state): State<AppState>,
-    auth: Option<Extension<Authenticated>>,
+    auth: InboundAuth,
     Json(req): Json<ImageSearchRequest>,
 ) -> (StatusCode, Json<ImageSearchResponse>) {
     let start = Instant::now();
@@ -66,8 +66,9 @@ pub async fn image_search(
     let max_results = req.max_results.unwrap_or(state.defaults.image_max_results);
     let engine_names: Vec<String> = engines.iter().map(|e| e.name().to_owned()).collect();
     let search = ImageSearchEngine::new(engines);
-    // ox-browser#177: stamp the gate's `ok_secret` decision — see `fetch`.
-    let http = Arc::new(state.http_client.with_authenticated(auth.is_some()));
+    // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+    // `ok_secret` decision — see `fetch`.
+    let http = Arc::new(state.client_for(auth));
     let results = search.search(http, &req.query, max_results).await;
 
     (

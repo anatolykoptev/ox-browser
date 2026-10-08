@@ -11,6 +11,8 @@ use rmcp::schemars;
 use schemars::JsonSchema;
 use url::Url;
 
+use ox_js::inbound_auth::InboundAuth;
+
 use super::OxMcpServer;
 
 /// Input parameters for the `solve_cf` tool.
@@ -44,7 +46,7 @@ impl OxMcpServer {
     pub(crate) async fn do_solve_cf(
         &self,
         input: SolveCfInput,
-        authenticated: bool,
+        auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let ct_str = input.challenge_type.as_deref().unwrap_or("js_challenge");
         let challenge_type = match ct_str {
@@ -69,7 +71,11 @@ impl OxMcpServer {
             .and_then(|u| u.host_str().map(String::from))
             .unwrap_or_else(|| "unknown".into());
 
-        // Check cache first.
+        // Check cache first. SEC-CR-019 (accepted): the cache is keyed by
+        // domain only, so a clearance solved for an authenticated caller is
+        // served to anonymous callers — cookie reuse, not secret exposure
+        // (the go-wowa credential is attached only inside `provider.solve`,
+        // gated by `auth`).
         if let Some(cached) = self.cache.get(&domain) {
             tracing::debug!(domain, "cache hit");
             let r = SolveResult {
@@ -82,11 +88,12 @@ impl OxMcpServer {
             return Ok(CallToolResult::success(vec![Content::text(json)]));
         }
 
-        // ox-browser#177: the provider relays the go-wowa secret only when
-        // the gate authenticated this inbound caller.
+        // ox-browser#177 / SEC-CR-018: the provider relays the go-wowa
+        // secret only when the gate authenticated this inbound caller —
+        // `auth` is the marker-derived token, not a caller-chosen bool.
         match self
             .provider
-            .solve(&input.url, challenge_type, authenticated)
+            .solve(&input.url, challenge_type, auth.is_authenticated())
             .await
         {
             Ok(solved) => {

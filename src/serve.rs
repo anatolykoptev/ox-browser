@@ -380,9 +380,10 @@ mod tests {
     /// `chrome_interact` reaches go-wowa WITHOUT ox-browser's secret; an
     /// authenticated one carries it.
     ///
-    /// Falsification: pass `true` instead of `authenticated(&ctx.extensions)`
-    /// in the `chrome_interact` tool (crates/mcp/src/tools/mod.rs) and the
-    /// anonymous call is relayed with the secret → RED.
+    /// Falsification: make `chrome_interact::inbound_auth` (the single
+    /// derivation point, crates/mcp/src/tools/chrome_interact.rs) return an
+    /// authenticated token unconditionally and the anonymous call is relayed
+    /// with the secret → RED.
     #[tokio::test]
     async fn mcp_chrome_interact_relays_secret_only_when_authenticated() {
         let head = mcp_chrome_interact_head(Some("s")).await;
@@ -484,7 +485,7 @@ mod tests {
     /// `ok_secret` marker). Anonymous and bearer-free requests get a
     /// credential-free solve.
     ///
-    /// Falsification: replace `auth.is_some()` with `true` in
+    /// Falsification: replace `auth.is_authenticated()` with `true` in
     /// crates/js/src/solve.rs and the anonymous /solve is relayed with the
     /// secret → RED; with `false` the authenticated row loses it → RED.
     #[tokio::test]
@@ -523,9 +524,9 @@ mod tests {
     /// fallback; go-wowa gets ox-browser's secret only when the inbound
     /// request carried the internal secret.
     ///
-    /// Falsification: replace `auth.is_some()` with `true` in
-    /// crates/js/src/read.rs and the anonymous /read is relayed with the
-    /// secret → RED.
+    /// Falsification: replace `client_for`'s `auth.is_authenticated()` with
+    /// `true` (crates/js/src/lib.rs) and the anonymous /read is relayed with
+    /// the secret → RED.
     #[tokio::test]
     async fn rest_read_fallback_relays_secret_only_when_authenticated() {
         let head = rest_read_fallback_head(Some("s")).await;
@@ -589,9 +590,9 @@ mod tests {
     /// SEC-CR-014, MCP call site: the MCP `read` tool relays the secret to
     /// the chrome fallback only when the inbound request carried it.
     ///
-    /// Falsification: replace `chrome_interact::authenticated(&ctx.extensions)`
-    /// with `true` in the `read` tool (crates/mcp/src/tools/mod.rs) and the
-    /// anonymous MCP read is relayed with the secret → RED.
+    /// Falsification: make `chrome_interact::inbound_auth` return an
+    /// authenticated token unconditionally and the anonymous MCP read is
+    /// relayed with the secret → RED.
     #[tokio::test]
     async fn mcp_read_fallback_relays_secret_only_when_authenticated() {
         let head = mcp_read_fallback_head(Some("s")).await;

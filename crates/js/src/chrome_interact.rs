@@ -2,23 +2,23 @@
 //!
 //! All Chrome operations are proxied to go-browser via HTTP.
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::{Extension, Json};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
 use super::AppState;
-use crate::inbound_auth::Authenticated;
+use crate::inbound_auth::InboundAuth;
 
 #[axum::debug_handler]
 pub async fn chrome_interact_handler(
     State(state): State<AppState>,
-    auth: Option<Extension<Authenticated>>,
+    auth: InboundAuth,
     Json(body): Json<serde_json::Value>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     match state
         .gobrowser_proxy
-        .forward("/api/v1/chrome/interact", &body, auth.is_some())
+        .forward("/api/v1/chrome/interact", &body, auth)
         .await
     {
         Ok((status, resp)) => (
@@ -35,7 +35,7 @@ pub async fn chrome_interact_handler(
 /// DELETE /chrome/session/:id — manually destroy a persistent Chrome session.
 pub async fn destroy_session_handler(
     State(state): State<AppState>,
-    auth: Option<Extension<Authenticated>>,
+    auth: InboundAuth,
     Path(session_id): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     // The id is caller-supplied: refuse empty and dot-segment ids (a "."
@@ -51,7 +51,7 @@ pub async fn destroy_session_handler(
     let id = utf8_percent_encode(&session_id, NON_ALPHANUMERIC);
     match state
         .gobrowser_proxy
-        .delete(&format!("/session/{id}"), auth.is_some())
+        .delete(&format!("/session/{id}"), auth)
         .await
     {
         Ok((status, resp)) => (
@@ -76,8 +76,10 @@ mod auth_relay_tests {
     /// anonymous `/chrome/interact` is relayed to go-wowa WITHOUT ox-browser's
     /// secret; an authenticated one carries it (SEC-CR-009).
     ///
-    /// Falsification: pass `true` instead of `auth.is_some()` in
-    /// `chrome_interact_handler` and the anonymous relay carries the secret → RED.
+    /// Falsification: pass `InboundAuth::from_marker(Some(&Authenticated))`
+    /// instead of `auth` to `forward` (or make `client_for`/the `InboundAuth`
+    /// extractor yield true unconditionally) and the anonymous relay carries
+    /// the secret → RED.
     #[tokio::test]
     async fn relay_secret_follows_inbound_authentication() {
         for (inbound, want_secret) in [(Some("inbound"), true), (None, false)] {
@@ -175,9 +177,9 @@ mod auth_relay_tests {
     /// The DELETE call site attaches ox-browser's go-wowa secret only for an
     /// authenticated inbound caller (soft mode).
     ///
-    /// Falsification: pass `true` instead of `auth.is_some()` to `delete` in
-    /// `destroy_session_handler` and the anonymous DELETE carries the secret
-    /// → RED.
+    /// Falsification: stamp the token from a literal instead of the
+    /// extracted `auth` (or make the `InboundAuth` extractor yield true
+    /// unconditionally) and the anonymous DELETE carries the secret → RED.
     #[tokio::test]
     async fn destroy_session_relays_secret_only_when_authenticated() {
         for (inbound, want_secret) in [(Some("inbound"), true), (None, false)] {

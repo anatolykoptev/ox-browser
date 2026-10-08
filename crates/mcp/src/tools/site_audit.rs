@@ -11,6 +11,8 @@ use serde::Deserialize;
 use rmcp::schemars;
 use schemars::JsonSchema;
 
+use ox_js::inbound_auth::InboundAuth;
+
 use super::OxMcpServer;
 
 /// Input parameters for the `site_audit` tool.
@@ -27,12 +29,13 @@ impl OxMcpServer {
     pub(crate) async fn do_site_audit(
         &self,
         input: SiteAuditInput,
-        authenticated: bool,
+        auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
         let focus = input.focus.as_deref().unwrap_or("all");
-        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
-        let http = self.http_client.with_authenticated(authenticated);
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — see do_fetch.
+        let http = self.client_for(auth);
 
         let resp = match http.get(&input.url).await {
             Ok(r) => r,

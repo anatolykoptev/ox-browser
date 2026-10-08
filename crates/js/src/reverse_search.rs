@@ -4,12 +4,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::http::StatusCode;
-use axum::{Extension, Json, extract::State};
+use axum::{Json, extract::State};
 use ox_reverse::{GoogleLens, ReverseEngine, ReverseResult, ReverseSearchEngine, YandexImages};
 use serde::Deserialize;
 
 use super::AppState;
-use crate::inbound_auth::Authenticated;
+use crate::inbound_auth::InboundAuth;
 
 #[derive(Deserialize)]
 pub struct ReverseSearchRequest {
@@ -24,7 +24,7 @@ pub struct ReverseSearchRequest {
 
 pub async fn reverse_search(
     State(state): State<AppState>,
-    auth: Option<Extension<Authenticated>>,
+    auth: InboundAuth,
     Json(req): Json<ReverseSearchRequest>,
 ) -> (StatusCode, Json<ReverseResult>) {
     let _start = Instant::now();
@@ -45,8 +45,9 @@ pub async fn reverse_search(
         .max_results
         .unwrap_or(state.defaults.reverse_max_results);
     let search = ReverseSearchEngine::new(engines);
-    // ox-browser#177: stamp the gate's `ok_secret` decision — see `fetch`.
-    let http = Arc::new(state.http_client.with_authenticated(auth.is_some()));
+    // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+    // `ok_secret` decision — see `fetch`.
+    let http = Arc::new(state.client_for(auth));
     let result = search.search(http, &req.url, max_results).await;
 
     (StatusCode::OK, Json(result))

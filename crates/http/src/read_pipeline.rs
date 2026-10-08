@@ -43,20 +43,20 @@ pub type SiteHandler = Arc<
 /// as a unit (issue #139). On elapsed the inner future is dropped,
 /// cancelling the in-flight request; the in-flight gauge (managed by
 /// [`bounded`]) decrements with it.
+/// `http` must already carry the caller's gate decision — obtain it via the
+/// caller's `client_for(...)` ([`HttpClient::with_authenticated`] stamped
+/// from the inbound `ok_secret` marker), never a default client plus a
+/// separate flag (SEC-CR-018, ox-browser#177). The pipeline reads the stamp
+/// back via [`HttpClient::is_authenticated`] for the chrome-secret and
+/// negcache-cohort gates.
 pub async fn read_page(
     http: &HttpClient,
     params: &ReadParams,
     site_handlers: &[SiteHandler],
-    authenticated: bool,
 ) -> ReadOutput {
     let deadline = resolve_timeout(params.timeout);
     let secs = deadline.as_secs();
-    match bounded(
-        deadline,
-        read_page_inner(http, params, site_handlers, authenticated),
-    )
-    .await
-    {
+    match bounded(deadline, read_page_inner(http, params, site_handlers)).await {
         CallOutcome::Ok(output) => output,
         CallOutcome::DeadlineExceeded { .. } => build_error_output(
             params,
@@ -71,12 +71,14 @@ async fn read_page_inner(
     http: &HttpClient,
     params: &ReadParams,
     site_handlers: &[SiteHandler],
-    authenticated: bool,
 ) -> ReadOutput {
-    // #177: stamp the inbound gate decision on every Request this pipeline
-    // sends, so a CF solve on behalf of an authenticated caller relays
-    // ox-browser's go-wowa secret — and an anonymous one never does.
-    let http = http.with_authenticated(authenticated);
+    // #177: the inbound gate decision arrives stamped on `http` — the caller
+    // obtained it from `client_for(...)`, so every Request this pipeline
+    // sends already carries `authenticated`, and a CF solve relays
+    // ox-browser's go-wowa secret only when the stamp is true. Read it back
+    // (rather than taking a separate bool a caller could desynchronise) for
+    // the chrome-secret and solver-negcache cohort gates (SEC-CR-018).
+    let authenticated = http.is_authenticated();
     let start = Instant::now();
     crate::metrics::record_read();
     let format = ContentFormat::from_param(&params.format);
@@ -92,7 +94,7 @@ async fn read_page_inner(
     }
 
     // Site-specific handlers (rewrite URL, still go through middleware chain)
-    if let Some(output) = crate::site_reddit::try_reddit_json(&http, params, format, start).await {
+    if let Some(output) = crate::site_reddit::try_reddit_json(http, params, format, start).await {
         if output.error.is_none() {
             crate::metrics::record_fetch_success();
         }
@@ -126,11 +128,15 @@ async fn read_page_inner(
                 // This makes the 300s negcache cooldown authoritative over the 3600s
                 // RenderModeCache TTL — a domain whose solver recovers at t=300s is no
                 // longer black-holed until t=3600s.
+                // SEC-CR-017: the re-check is scoped to THIS caller's cohort —
+                // a GiveUp an anonymous solve storm wrote never fast-fails an
+                // authenticated read (its negcache entry lives under the other
+                // cohort key), and vice versa.
                 let still_blocked = http
                     .config()
                     .solver_negcache
                     .as_ref()
-                    .is_some_and(|nc| nc.is_blocked(&domain));
+                    .is_some_and(|nc| nc.is_blocked(&domain, authenticated));
                 if still_blocked {
                     tracing::debug!(domain = %domain, "render cache hit: GiveUp (negcache still blocked) — fast-failing");
                     return build_error_output(
@@ -161,11 +167,12 @@ async fn read_page_inner(
     } else if let Some(cache) = &render_cache
         && cache.get(&domain) == Some(RenderMode::GiveUp)
     {
+        // Cohort-scoped for the same SEC-CR-017 reason as the branch above.
         let still_blocked = http
             .config()
             .solver_negcache
             .as_ref()
-            .is_some_and(|nc| nc.is_blocked(&domain));
+            .is_some_and(|nc| nc.is_blocked(&domain, authenticated));
         if still_blocked {
             tracing::debug!(domain = %domain, "render cache hit: GiveUp (no chrome_url) — fast-failing");
             return build_error_output(
@@ -193,11 +200,17 @@ async fn read_page_inner(
                 crate::HttpError::Cloudflare(_, _, _) | crate::HttpError::CloudflareInferred(_, _)
             ) && let (Some(cache), Some(url)) = (&render_cache, &chrome_url)
             {
+                // Cohort-scoped: this caller's own streak decides whether a
+                // GiveUp is worth writing — an anonymous storm's blocked entry
+                // must not stamp GiveUp on an authenticated read's behalf
+                // (SEC-CR-017). The entry itself stays domain-keyed (a GiveUp
+                // written by one cohort is re-validated on read, so it only
+                // ever fast-fails a caller whose OWN cohort is blocked).
                 let negcache_blocked = http
                     .config()
                     .solver_negcache
                     .as_ref()
-                    .is_some_and(|nc| nc.is_blocked(&domain));
+                    .is_some_and(|nc| nc.is_blocked(&domain, authenticated));
                 if negcache_blocked {
                     tracing::info!(domain = %domain, "CF error + negcache blocked → marking GiveUp, fast-failing");
                     cache.set(&domain, RenderMode::GiveUp);

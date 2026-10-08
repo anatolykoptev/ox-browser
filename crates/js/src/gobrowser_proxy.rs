@@ -5,6 +5,8 @@ use reqwest::{Client, RequestBuilder};
 use serde_json::Value;
 use std::time::Duration;
 
+use crate::inbound_auth::InboundAuth;
+
 /// Proxy client for forwarding requests to go-browser.
 ///
 /// The bodies forwarded here are caller-shaped (`actions`, `proxy`,
@@ -44,17 +46,18 @@ impl GoBrowserProxy {
         }
     }
 
-    /// Forward a JSON POST request to go-browser. `authenticated`: the inbound
-    /// caller presented a valid credential (see the type docs).
+    /// Forward a JSON POST request to go-browser. `auth` is the inbound
+    /// gate decision token (see the type docs) — the secret is attached iff
+    /// the caller carried `ok_secret`.
     pub async fn forward(
         &self,
         path: &str,
         body: &Value,
-        authenticated: bool,
+        auth: InboundAuth,
     ) -> Result<(u16, Value), String> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .with_auth(self.client.post(&url), authenticated)
+            .with_auth(self.client.post(&url), auth.is_authenticated())
             .json(body)
             .send()
             .await
@@ -68,10 +71,10 @@ impl GoBrowserProxy {
     }
 
     /// Forward a DELETE request (same credential rule as [`Self::forward`]).
-    pub async fn delete(&self, path: &str, authenticated: bool) -> Result<(u16, Value), String> {
+    pub async fn delete(&self, path: &str, auth: InboundAuth) -> Result<(u16, Value), String> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
-            .with_auth(self.client.delete(&url), authenticated)
+            .with_auth(self.client.delete(&url), auth.is_authenticated())
             .send()
             .await
             .map_err(|e| format!("go-browser proxy delete: {e}"))?;
@@ -97,8 +100,9 @@ mod tests {
     async fn forward_attaches_secret_only_when_authenticated() {
         let (url, req) = ox_http::wowa_auth::capture_one(r#"{"status":"ok"}"#).await;
         let proxy = GoBrowserProxy::new(url, "s3cret");
+        let authed = InboundAuth::from_marker(Some(&crate::inbound_auth::Authenticated));
         let (status, _) = proxy
-            .forward("/api/v1/chrome/interact", &serde_json::json!({}), true)
+            .forward("/api/v1/chrome/interact", &serde_json::json!({}), authed)
             .await
             .expect("forward");
         assert_eq!(status, 200);
@@ -109,7 +113,11 @@ mod tests {
         let (url, req) = ox_http::wowa_auth::capture_one(r#"{"status":"ok"}"#).await;
         let proxy = GoBrowserProxy::new(url, "s3cret");
         proxy
-            .forward("/api/v1/chrome/interact", &serde_json::json!({}), false)
+            .forward(
+                "/api/v1/chrome/interact",
+                &serde_json::json!({}),
+                InboundAuth::from_marker(None),
+            )
             .await
             .expect("forward");
         let head = req.await.expect("capture");
@@ -129,7 +137,11 @@ mod tests {
         let redirector = ox_http::wowa_auth::redirect_once(target).await;
         let proxy = GoBrowserProxy::new(redirector, "s3cret");
         let _ = proxy
-            .forward("/api/v1/chrome/interact", &serde_json::json!({}), true)
+            .forward(
+                "/api/v1/chrome/interact",
+                &serde_json::json!({}),
+                InboundAuth::from_marker(Some(&crate::inbound_auth::Authenticated)),
+            )
             .await;
         assert!(
             tokio::time::timeout(Duration::from_millis(300), hit)

@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use axum::http::StatusCode;
-use axum::{Extension, Json, extract::State};
+use axum::{Json, extract::State};
 use ox_http::deadline::{CallOutcome, bounded, resolve_timeout};
 use ox_http::detect_cloudflare;
 use ox_http::metrics::{classify_fetch_outcome, record_fetch_outcome};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
-use crate::inbound_auth::Authenticated;
+use crate::inbound_auth::InboundAuth;
 
 /// Request body for `POST /fetch`.
 ///
@@ -69,14 +69,15 @@ pub struct FetchResponse {
 
 pub async fn fetch(
     State(state): State<AppState>,
-    auth: Option<Extension<Authenticated>>,
+    auth: InboundAuth,
     Json(req): Json<FetchRequest>,
 ) -> (StatusCode, Json<FetchResponse>) {
     let start = Instant::now();
-    // ox-browser#177: stamp the gate's `ok_secret` decision on every
-    // outbound request — a CF solve on behalf of an authenticated caller
-    // relays the go-wowa secret, an anonymous/bearer caller's never does.
-    let http = state.http_client.with_authenticated(auth.is_some());
+    // ox-browser#177: the outbound client stamps the gate's `ok_secret`
+    // decision carried by `auth` — a CF solve on behalf of an authenticated
+    // caller relays the go-wowa secret, an anonymous/bearer caller's never
+    // does. `client_for` is the only stamp site (SEC-CR-018).
+    let http = state.client_for(auth);
 
     // Resolve method: default to POST when a body is supplied (curl --data
     // convention), GET otherwise. Existing callers with no method and no
@@ -410,7 +411,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), None, Json(req)).await;
+        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
         assert_eq!(
             json.error.as_deref(),
@@ -433,7 +434,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: Some(120),
         };
-        let (status, json) = fetch(State(state), None, Json(req)).await;
+        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::OK, "caller timeout → no 1s bound");
         assert_eq!(json.status, 500);
     }
@@ -453,7 +454,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), None, Json(req)).await;
+        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::OK, "POST on 500 → HTTP 200");
         assert_eq!(json.status, 500, "status field carries the origin 500");
         assert!(json.error.is_none(), "error must be None for POST on 500");
@@ -479,7 +480,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), None, Json(req)).await;
+        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY, "GET on 500 → HTTP 502");
         assert_eq!(json.status, 0, "status field is 0 for an error");
         assert!(json.error.is_some(), "error must be set for GET on 500");

@@ -3,13 +3,13 @@
 use std::collections::HashMap;
 
 use axum::http::StatusCode;
-use axum::{Extension, Json, extract::State};
+use axum::{Json, extract::State};
 use ox_http::ChallengeType;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::AppState;
-use crate::inbound_auth::Authenticated;
+use crate::inbound_auth::InboundAuth;
 
 /// Incoming solve request body.
 #[derive(Deserialize)]
@@ -37,7 +37,7 @@ pub struct SolveResponse {
 
 pub async fn solve(
     State(state): State<AppState>,
-    auth: Option<Extension<Authenticated>>,
+    auth: InboundAuth,
     Json(req): Json<SolveRequest>,
 ) -> (StatusCode, Json<SolveResponse>) {
     let challenge_type = match req.challenge_type.as_str() {
@@ -63,6 +63,11 @@ pub async fn solve(
         Err(_) => "unknown".to_owned(),
     };
 
+    // SEC-CR-019 (accepted): the clearance cache is keyed by domain only —
+    // a solution fetched under an authenticated caller is served to
+    // anonymous callers too. That is cookie reuse, not secret exposure: the
+    // go-wowa credential is attached only inside `provider.solve`, gated by
+    // `auth`, never by this cache-read path.
     if let Some(cached) = state.cache.get(&domain) {
         tracing::debug!(domain, "cache hit");
         return (
@@ -76,11 +81,12 @@ pub async fn solve(
         );
     }
 
-    // ox-browser#177: the provider relays the go-wowa secret only when the
-    // gate authenticated this inbound caller (`ok_secret` marker present).
+    // ox-browser#177 / SEC-CR-018: the provider relays the go-wowa secret
+    // only when the gate authenticated this inbound caller — `auth` is the
+    // marker-derived token, not a caller-chosen bool.
     match state
         .provider
-        .solve(&req.url, challenge_type, auth.is_some())
+        .solve(&req.url, challenge_type, auth.is_authenticated())
         .await
     {
         Ok(solved) => {

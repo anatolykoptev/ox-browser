@@ -605,7 +605,9 @@ async fn negcache_blocked_domain_fails_before_first_send() {
         Duration::from_secs(300),
         Duration::from_secs(300),
     ));
-    negcache.record_failure("blocked.example"); // trip the cooldown
+    // The request below carries `authenticated: false`, so the cooldown it
+    // must hit lives in the anonymous cohort (SEC-CR-017).
+    negcache.record_failure("blocked.example", false); // trip the cooldown
 
     let handler = chain(
         vec![solver_middleware_with_negcache(
@@ -954,4 +956,117 @@ async fn solver_sees_request_authenticated_flag() {
             "provider must observe authenticated={authenticated}"
         );
     }
+}
+
+/// SEC-CR-017 / ox-browser#177: anonymous solve failures must not put a
+/// domain on cooldown for AUTHENTICATED callers. Under the old domain-only
+/// key, three credential-free solve failures (the shape of go-wowa enforce
+/// mode — every anonymous `/solve` fails) blocked `ok_secret` callers on the
+/// same domain — an anonymous caller could switch off CF solving for the
+/// fleet.
+///
+/// Keyed `(domain, authenticated)`, the cohorts stay disjoint in BOTH
+/// directions AND the anonymous storm guard still holds: a 4th anonymous
+/// request on the poisoned domain still short-circuits.
+///
+/// Mutation: collapse the key back to domain-only — e.g. in
+/// `SolverNegCache::record_failure`/`is_blocked` key on
+/// `(domain.to_owned(), false)` — then the authenticated request is rejected
+/// by the anonymous cooldown → `provider_calls` stays 3 → RED.
+#[tokio::test]
+async fn anonymous_solve_failures_do_not_block_authenticated() {
+    use crate::solver_negcache::SolverNegCache;
+
+    /// Provider that always fails — the shape of go-wowa enforce mode for a
+    /// credential-free caller (ox-browser#177 / SEC-CR-017).
+    struct FailingProvider {
+        call_count: Arc<AtomicUsize>,
+    }
+    #[async_trait]
+    impl CookieProvider for FailingProvider {
+        async fn solve(
+            &self,
+            _url: &str,
+            _ct: ChallengeType,
+            _authenticated: bool,
+        ) -> std::result::Result<SolvedChallenge, String> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            Err("solver unavailable".into())
+        }
+    }
+
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let provider_calls = Arc::new(AtomicUsize::new(0));
+    let base: Arc<dyn Handler> = Arc::new(AlwaysCfHandler {
+        call_count: handler_calls.clone(),
+    });
+    let provider: Arc<dyn CookieProvider> = Arc::new(FailingProvider {
+        call_count: provider_calls.clone(),
+    });
+    let negcache = Arc::new(SolverNegCache::new(
+        3, // threshold=3: three anonymous failures block the anon cohort
+        Duration::from_secs(300),
+        Duration::from_secs(300),
+    ));
+    let handler = chain(
+        vec![solver_middleware_with_negcache(
+            provider,
+            Arc::new(CookieCache::new(Duration::from_secs(60))),
+            negcache.clone(),
+        )],
+        base,
+    );
+
+    let make = |authenticated: bool| Request {
+        method: "GET".into(),
+        url: "https://poisoned.example/page".into(),
+        headers: vec![],
+        body: None,
+        proxy: None,
+        authenticated,
+    };
+
+    // Three anonymous failures trip the anonymous cohort's cooldown.
+    for _ in 0..3 {
+        let _ = handler.handle(make(false)).await;
+    }
+    assert_eq!(
+        provider_calls.load(Ordering::SeqCst),
+        3,
+        "each anonymous request reached the provider before its cohort blocked"
+    );
+    assert!(negcache.is_blocked("poisoned.example", false));
+    assert!(
+        !negcache.is_blocked("poisoned.example", true),
+        "anonymous failures must not block the authenticated cohort"
+    );
+
+    // An authenticated caller on the SAME domain still reaches the provider.
+    let _ = handler.handle(make(true)).await;
+    assert_eq!(
+        provider_calls.load(Ordering::SeqCst),
+        4,
+        "authenticated solve must reach the provider despite the anonymous storm"
+    );
+
+    // And the anonymous cohort is still blocked — the guard is not deleted.
+    let _ = handler.handle(make(false)).await;
+    assert_eq!(
+        provider_calls.load(Ordering::SeqCst),
+        4,
+        "anonymous cohort must still be on cooldown (guard preserved)"
+    );
+
+    // Symmetric: authenticated failures must not block anonymous callers.
+    let negcache2 = Arc::new(SolverNegCache::new(
+        1,
+        Duration::from_secs(300),
+        Duration::from_secs(300),
+    ));
+    negcache2.record_failure("other.example", true);
+    assert!(negcache2.is_blocked("other.example", true));
+    assert!(
+        !negcache2.is_blocked("other.example", false),
+        "authenticated failures must not block the anonymous cohort"
+    );
 }

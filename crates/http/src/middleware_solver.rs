@@ -59,12 +59,18 @@ impl SolverHandler {
     /// request, the origin never saw it) and inferred challenges (idempotent
     /// methods only — the caller gates the non-idempotent case before
     /// reaching here).
-    /// Shared cooldown gate: if the domain is on negcache cooldown, count the
-    /// skip and return the solver-decision error. Called from both the top of
-    /// `handle` (pre-send fast-fail) and `solve_and_retry` (covers the
-    /// stale-evict path, which returns before `handle`'s own check).
-    fn negcache_reject(&self, domain: &str) -> Option<HttpError> {
-        if !self.negcache.is_blocked(domain) {
+    /// Shared cooldown gate: if the domain is on negcache cooldown **for this
+    /// caller's authentication cohort**, count the skip and return the
+    /// solver-decision error. Called from both the top of `handle` (pre-send
+    /// fast-fail) and `solve_and_retry` (covers the stale-evict path, which
+    /// returns before `handle`'s own check).
+    ///
+    /// `authenticated` is the gate's `ok_secret` decision carried on the
+    /// request — the negcache is keyed `(domain, authenticated)` so an
+    /// anonymous solve storm can never block authenticated callers
+    /// (SEC-CR-017, ox-browser#177).
+    fn negcache_reject(&self, domain: &str, authenticated: bool) -> Option<HttpError> {
+        if !self.negcache.is_blocked(domain, authenticated) {
             return None;
         }
         record_solver_giveup(domain);
@@ -83,10 +89,11 @@ impl SolverHandler {
         domain: &str,
         challenge_type: ChallengeType,
     ) -> Result<HttpResponse> {
-        // Retry-storm guard: if this domain is on cooldown after repeated
-        // solve failures, skip the 15-25s solver and surface the CF error
-        // immediately. A success below clears the cooldown.
-        if let Some(err) = self.negcache_reject(domain) {
+        // Retry-storm guard: if this domain is on cooldown for this caller's
+        // cohort after repeated solve failures, skip the 15-25s solver and
+        // surface the CF error immediately. A success below clears the
+        // cooldown.
+        if let Some(err) = self.negcache_reject(domain, req.authenticated) {
             return Err(err);
         }
 
@@ -122,7 +129,11 @@ impl SolverHandler {
                 // a 5-min per-domain cooldown which auto-recovers — acceptable
                 // trade-off vs. the 20-143× retry storm that results from NOT
                 // rate-limiting doomed solve attempts.
-                self.negcache.record_failure(domain);
+                // The failure lands in THIS caller's authentication cohort
+                // (`req.authenticated`) — anonymous failures must never put
+                // the domain on cooldown for authenticated callers
+                // (SEC-CR-017, ox-browser#177).
+                self.negcache.record_failure(domain, req.authenticated);
                 return Err(HttpError::ProxyPool(format!("solver failed: {e}")));
             }
         };
@@ -134,8 +145,9 @@ impl SolverHandler {
         let mut cached = solution.clone();
         cached.body = None;
         self.cache.put(domain, cached);
-        // A real solution ends any storm for this domain.
-        self.negcache.record_success(domain);
+        // A real solution ends any storm for this domain — in the caller's
+        // cohort only; the other cohort's streak has its own cause (SEC-CR-017).
+        self.negcache.record_success(domain, req.authenticated);
 
         // If the solver returned the cleared page body, serve it directly for
         // GET — the only method a browser navigation answers correctly
@@ -249,6 +261,11 @@ impl Handler for SolverHandler {
         // This is the first (and only) send of the request with cached
         // cookies — not a re-send of a failed attempt, so the F1
         // idempotency gate does not apply here.
+        // SEC-CR-019 (accepted): the cache is keyed by domain only, so a
+        // clearance solved for an authenticated caller is replayed for an
+        // anonymous one. That is cookie reuse, not secret exposure — the
+        // go-wowa credential is only ever attached by `provider.solve` under
+        // `req.authenticated`, never by this cache path.
         if let Some(solution) = self.cache.get(&domain) {
             info!(domain = %domain, "solver: using cached cookies");
             record_solver_outcome(SolverOutcome::CacheHit);
@@ -284,8 +301,10 @@ impl Handler for SolverHandler {
         // the error reached the negcache check inside solve_and_retry.
         // (The solver sits OUTSIDE the retry middleware — see
         // build_middlewares — so this check is what preserves the storm
-        // guard's fast-fail semantics.)
-        if let Some(err) = self.negcache_reject(&domain) {
+        // guard's fast-fail semantics.) The check is cohort-scoped: the
+        // request's own gate decision — an anonymous storm never fast-fails
+        // an authenticated caller here (SEC-CR-017).
+        if let Some(err) = self.negcache_reject(&domain, req.authenticated) {
             return Err(err);
         }
 

@@ -11,6 +11,8 @@ use serde::Deserialize;
 use rmcp::schemars;
 use schemars::JsonSchema;
 
+use ox_js::inbound_auth::InboundAuth;
+
 use super::OxMcpServer;
 
 /// Input parameters for the `reverse_image_search` tool.
@@ -29,7 +31,7 @@ impl OxMcpServer {
     pub(crate) async fn do_reverse_search(
         &self,
         input: ReverseSearchInput,
-        authenticated: bool,
+        auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let _start = Instant::now();
 
@@ -48,8 +50,9 @@ impl OxMcpServer {
             .max_results
             .unwrap_or(self.defaults.reverse_max_results);
         let search = ReverseSearchEngine::new(engines);
-        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
-        let http = Arc::new(self.http_client.with_authenticated(authenticated));
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — see do_fetch.
+        let http = Arc::new(self.client_for(auth));
         let result = search.search(http, &input.url, max_results).await;
 
         let json =

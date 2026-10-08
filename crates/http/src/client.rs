@@ -126,6 +126,15 @@ impl HttpClient {
         }
     }
 
+    /// The gate decision this client stamps on outgoing [`Request`]s —
+    /// `false` unless stamped via [`with_authenticated`](Self::with_authenticated).
+    /// `read_pipeline` reads it back so the caller hands over one stamped
+    /// client instead of a parallel bool it could desynchronise (SEC-CR-018,
+    /// ox-browser#177).
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticated
+    }
+
     /// Execute a GET request.
     pub async fn get(&self, url: &str) -> Result<HttpResponse> {
         self.request("GET", url, None, None, &[]).await

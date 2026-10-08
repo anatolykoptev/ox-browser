@@ -7,12 +7,12 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::{Extension, Json, extract::State};
+use axum::{Json, extract::State};
 use ox_crawler::{CrawlConfig, CrawlScope, Crawler};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
-use crate::inbound_auth::Authenticated;
+use crate::inbound_auth::InboundAuth;
 
 /// Crawl request body.
 #[derive(Deserialize)]
@@ -74,7 +74,7 @@ pub struct CrawlSummary {
 
 pub async fn crawl(
     State(state): State<AppState>,
-    auth: Option<Extension<Authenticated>>,
+    auth: InboundAuth,
     Json(req): Json<CrawlRequest>,
 ) -> impl IntoResponse {
     let scope = match req.scope.as_deref() {
@@ -114,8 +114,9 @@ pub async fn crawl(
     }
 
     let discovery_mode = config.discovery.clone();
-    // ox-browser#177: stamp the gate's `ok_secret` decision — see `fetch`.
-    let http = Arc::new(state.http_client.with_authenticated(auth.is_some()));
+    // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+    // `ok_secret` decision — see `fetch`.
+    let http = Arc::new(state.client_for(auth));
     let crawler = Crawler::new(http, config);
     // The SSE stream leaves this handler before the crawl finishes, so only
     // the discovery await can be request-bounded here (issue #147).
