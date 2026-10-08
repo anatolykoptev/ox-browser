@@ -66,6 +66,23 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 | `WEBSHARE_API_KEY` | Webshare proxy pool API key |
 | `MEDIA_PROXY_URL` | Proxy for media downloads |
 | `OX_HTTP_PRIVATE_ALLOWLIST` | SSRF allowlist (e.g. `127.0.0.1:80,10.0.0.1:80`) |
+| `OX_TOR_PROXY` | Tor HTTP tunnel for `.onion` targets, `http://host:port` (explicit port; the one place a private address is accepted). Unset → `.onion` is refused with `onion_requires_tor`. See [Onion services](#onion-services-via-tor) |
+
+### Onion services via Tor
+
+`.onion` targets are never resolved locally (RFC 7686 §2) and are sent **only** through `OX_TOR_PROXY`, a Tor
+[`HTTPTunnelPort`](https://2019.www.torproject.org/docs/tor-manual.html.en#HTTPTunnelPort) (CONNECT proxy):
+
+- `OX_TOR_PROXY` unset → refused up front as `onion_requires_tor` (before any DNS or socket activity).
+- A per-request `proxy`, the proxy pool and the direct fallback never apply to a Tor-bound request; a Tor failure is an error, not a reason to go direct.
+- `https://` onion targets only. Tor's tunnel port is CONNECT-only and wreq tunnels only `https` targets, so `http://x.onion/` is refused as `onion_http_unsupported`.
+- A redirect that crosses the onion boundary (onion to clearnet or back) is re-routed through normal routing, never followed in place.
+- Onion URLs are never handed to the CF solver, the residential proxy or the chrome render path.
+- Default call timeout for `.onion` is 60 s (circuit build) unless the caller sets `timeout`.
+- Metrics: `oxbrowser_tor_requests_total`, `oxbrowser_onion_refused_total`.
+
+Deployment: `HTTPTunnelPort 0.0.0.0:9080` on the `tor` container (krolik-server#537), then `OX_TOR_PROXY=http://tor:9080`.
+
 
 ## API
 

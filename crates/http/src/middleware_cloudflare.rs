@@ -33,6 +33,10 @@ struct CloudflareDetectHandler {
 #[async_trait]
 impl Handler for CloudflareDetectHandler {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
+        // Onion responses are never Cloudflare challenges (see quality check).
+        if crate::tor::is_onion_url(&req.url) {
+            return self.next.handle(req).await;
+        }
         let resp = self.next.handle(req).await?;
         if let Some(cf) = detect_cloudflare(&resp) {
             return Err(HttpError::Cloudflare(

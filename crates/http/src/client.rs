@@ -12,10 +12,11 @@ use crate::middleware_ratelimit::rate_limit_middleware;
 use crate::middleware_residential::residential_proxy_middleware;
 use crate::middleware_retry::retry_middleware;
 use crate::middleware_solver::{solver_middleware, solver_middleware_with_negcache};
-use crate::middleware_ssrf::ssrf_middleware;
+use crate::middleware_ssrf::{LookupHost, ssrf_middleware_with, system_lookup};
 use crate::profile::{BrowserProfile, profile_to_emulation};
 use crate::profile_hints::browser_headers;
-use crate::ssrf_connect::{SsrfGuardedResolver, ssrf_redirect_policy};
+use crate::ssrf_connect::{SsrfGuardedResolver, ssrf_redirect_policy, tor_redirect_policy};
+use crate::tor::TorProxy;
 use crate::{HttpConfig, HttpResponse, Result};
 
 /// HTTP client that routes requests through a middleware chain.
@@ -37,6 +38,17 @@ impl HttpClient {
     /// Chain order (outermost first):
     /// `[logging?] -> [rate_limit?] -> [solver?] -> [retry?] -> [residential?] -> [cloudflare?] -> [quality_check] -> [client_hints] -> wreq`
     pub fn new(config: HttpConfig) -> Result<Self> {
+        Self::build(config, system_lookup())
+    }
+
+    /// [`HttpClient::new`] with the pre-resolve DNS lookup injected, so a test
+    /// can drive the REAL chain and handler and count lookups.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_lookup(config: HttpConfig, lookup: LookupHost) -> Result<Self> {
+        Self::build(config, lookup)
+    }
+
+    fn build(config: HttpConfig, lookup: LookupHost) -> Result<Self> {
         // ONE identity source of truth: when `profile` is set, derive the
         // TLS/HTTP2 Emulation from it via `profile_to_emulation`. The
         // `config.emulation` field is IGNORED when a profile is set — a
@@ -69,6 +81,9 @@ impl HttpClient {
             || config.proxy_pool.is_some()
             || config.residential_proxy.is_some();
         let client_has_static_proxy = config.proxy_url.is_some();
+        // Tor client for `.onion` targets (ox-browser#188): own proxy, own
+        // resolver, own redirect policy — shares nothing with the clients above.
+        let tor_client = Self::build_tor_client(&config, emulation.as_ref())?;
         let max_redirects = config.max_redirects;
         let max_body_bytes = config.max_body_bytes;
         let base: Arc<dyn Handler> = if let Some(ref pool) = config.proxy_pool {
@@ -80,7 +95,8 @@ impl HttpClient {
                     max_redirects,
                     max_body_bytes,
                 )
-                .with_direct_fallback(direct_client),
+                .with_direct_fallback(direct_client)
+                .with_tor_opt(tor_client.clone()),
             )
         } else if needs_fallback {
             Arc::new(
@@ -90,18 +106,22 @@ impl HttpClient {
                     max_redirects,
                     max_body_bytes,
                 )
-                .with_direct_fallback(direct_client),
+                .with_direct_fallback(direct_client)
+                .with_tor_opt(tor_client.clone()),
             )
         } else {
-            Arc::new(WreqHandler::new(
-                client,
-                client_has_static_proxy,
-                max_redirects,
-                max_body_bytes,
-            ))
+            Arc::new(
+                WreqHandler::new(
+                    client,
+                    client_has_static_proxy,
+                    max_redirects,
+                    max_body_bytes,
+                )
+                .with_tor_opt(tor_client.clone()),
+            )
         };
 
-        let middlewares = build_middlewares(&config);
+        let middlewares = build_middlewares(&config, lookup);
         let handler = chain(middlewares, base);
         Ok(Self {
             handler,
@@ -261,7 +281,7 @@ impl HttpClient {
             config.timeout,
             config.max_redirects,
             emulation,
-            config.proxy_url.as_deref(),
+            Upstream::from_opt(config.proxy_url.as_deref()),
             true,
         )
     }
@@ -273,7 +293,36 @@ impl HttpClient {
         config: &HttpConfig,
         emulation: Option<&wreq::Emulation>,
     ) -> Result<Client> {
-        wreq_transport_core(config.timeout, config.max_redirects, emulation, None, true)
+        wreq_transport_core(
+            config.timeout,
+            config.max_redirects,
+            emulation,
+            Upstream::Direct,
+            true,
+        )
+    }
+
+    /// Build the Tor client for `.onion` targets from `config.tor_proxy`
+    /// (`None` → no Tor). Its resolver admits only the proxy host and its
+    /// redirect policy stops at the onion boundary; it shares nothing with the
+    /// clients above, so a pool, per-request proxy or direct fallback can
+    /// never carry an onion name.
+    pub(crate) fn build_tor_client(
+        config: &HttpConfig,
+        emulation: Option<&wreq::Emulation>,
+    ) -> Result<Option<Client>> {
+        let Some(raw) = config.tor_proxy.as_deref() else {
+            return Ok(None);
+        };
+        let tor = TorProxy::parse(raw)?;
+        wreq_transport_core(
+            Duration::from_secs(crate::tor::TOR_CLIENT_TIMEOUT_SECS),
+            config.max_redirects,
+            emulation,
+            Upstream::Tor(&tor),
+            true,
+        )
+        .map(Some)
     }
 
     /// Test-only constructor: inject a pre-built handler and config directly,
@@ -296,7 +345,7 @@ impl HttpClient {
     /// challenge as an error, not as content (F-A).
     #[cfg(any(test, feature = "test-utils"))]
     pub fn with_chain(base: Arc<dyn Handler>, config: HttpConfig) -> Self {
-        let middlewares = build_middlewares(&config);
+        let middlewares = build_middlewares(&config, system_lookup());
         let handler = chain(middlewares, base);
         Self {
             handler,
@@ -317,11 +366,11 @@ impl HttpClient {
 ///
 /// Extracted from [`HttpClient::new`] so test constructors can build the
 /// real config→chain wiring with a mock base handler (`with_chain`).
-fn build_middlewares(config: &HttpConfig) -> Vec<MiddlewareFn> {
+fn build_middlewares(config: &HttpConfig, lookup: LookupHost) -> Vec<MiddlewareFn> {
     let mut middlewares: Vec<MiddlewareFn> = Vec::new();
 
     // Outermost: SSRF protection (before any other processing).
-    middlewares.push(ssrf_middleware());
+    middlewares.push(ssrf_middleware_with(config.tor_proxy.is_some(), lookup));
 
     // Logging (only when debug enabled).
     if config.debug {
@@ -452,29 +501,61 @@ fn dedup_content_type(headers: &mut Vec<(String, String)>) {
 /// the emulation owns the transport fingerprint, the profile owns the headers,
 /// and the two cannot diverge because there is no `.headers(...)` on the
 /// Emulation). This function does NOT set `.user_agent()` on the builder.
+/// What a wreq client built by [`wreq_transport_core`] sends its traffic to.
+#[derive(Clone, Copy)]
+enum Upstream<'a> {
+    /// No proxy (`.no_proxy()` clears wreq's ambient `HTTP_PROXY`).
+    Direct,
+    /// A static, canonicalised-on-use proxy URL.
+    Proxy(&'a str),
+    /// The Tor HTTP tunnel (its own resolver and redirect policy).
+    Tor(&'a TorProxy),
+}
+
+impl<'a> Upstream<'a> {
+    fn from_opt(proxy: Option<&'a str>) -> Self {
+        proxy.map_or(Self::Direct, Self::Proxy)
+    }
+}
+
 fn wreq_transport_core(
     timeout: Duration,
     max_redirects: usize,
     emulation: Option<&wreq::Emulation>,
-    proxy: Option<&str>,
+    upstream: Upstream<'_>,
     cookie_store: bool,
 ) -> Result<Client> {
-    let mut builder = Client::builder()
-        .timeout(timeout)
-        // Connect-time, rebind-resistant IP guard (see crate::ssrf_connect
-        // module doc) — filters DNS resolution results, not just the
-        // pre-resolve middleware_ssrf check.
-        .dns_resolver(SsrfGuardedResolver)
-        // Refuses a redirect hop whose target is already a blocked literal IP
-        // (the resolver above never sees those — wreq skips DNS resolution
-        // entirely for IP-literal hosts).
-        .redirect(ssrf_redirect_policy(max_redirects));
+    let builder = Client::builder().timeout(timeout);
+    let mut builder = match upstream {
+        // The Tor client: resolves only the
+        // proxy host and hands redirects that leave `.onion` back to routing.
+        // The shared guarded resolver cannot serve it — it would drop the
+        // private answer for `tor`.
+        Upstream::Tor(tor) => builder
+            .dns_resolver(tor.resolver())
+            .redirect(tor_redirect_policy(max_redirects)),
+        Upstream::Direct | Upstream::Proxy(_) => builder
+            // Connect-time, rebind-resistant IP guard (see crate::ssrf_connect
+            // module doc) — filters DNS resolution results, not just the
+            // pre-resolve middleware_ssrf check.
+            .dns_resolver(SsrfGuardedResolver)
+            // Refuses a redirect hop whose target is already a blocked literal
+            // IP (the resolver above never sees those — wreq skips DNS
+            // resolution entirely for IP-literal hosts) and hands a hop into
+            // `.onion` back to routing.
+            .redirect(ssrf_redirect_policy(max_redirects)),
+    };
 
     if cookie_store {
         builder = builder.cookie_store(true);
     }
 
-    if let Some(url) = proxy {
+    let proxy_url = match upstream {
+        Upstream::Direct => None,
+        Upstream::Proxy(url) => Some(url),
+        Upstream::Tor(tor) => Some(tor.url()),
+    };
+    if let Some(url) = proxy_url {
         // Same canonicalising builder as the pool and per-request paths: a
         // scheme wreq cannot dial (any `socks*` — issue #179) or a
         // non-canonical value would otherwise go direct, and the wreq error
@@ -524,7 +605,13 @@ pub fn build_profiled_wreq_client(
     } else {
         Some(proxy_url)
     };
-    wreq_transport_core(timeout, max_redirects, emulation.as_ref(), proxy, false)
+    wreq_transport_core(
+        timeout,
+        max_redirects,
+        emulation.as_ref(),
+        Upstream::from_opt(proxy),
+        false,
+    )
 }
 
 #[cfg(test)]

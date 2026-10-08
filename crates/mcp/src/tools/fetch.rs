@@ -155,7 +155,12 @@ impl OxMcpServer {
         // same `None` → configured endpoint default
         // (`fetch.default_timeout_secs`) — parity, not divergence (issue
         // #156).
-        let deadline = resolve_timeout(input.timeout.or(Some(self.defaults.fetch_timeout_secs)));
+        // A .onion target gets a longer default (circuit build) unless the
+        // caller set a timeout.
+        let deadline = resolve_timeout(input.timeout.or(ox_http::tor::default_timeout_for_url(
+            &input.url,
+            Some(self.defaults.fetch_timeout_secs),
+        )));
         let outcome = bounded(
             deadline,
             http.request(

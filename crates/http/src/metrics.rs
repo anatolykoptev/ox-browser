@@ -54,6 +54,12 @@ pub static PROXY_402_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// `InvalidUrl` error (issue: unobservable_enforcement).
 pub static PROXY_ATTACH_INVALID_URL_TOTAL: AtomicU64 = AtomicU64::new(0);
 
+/// `.onion` requests routed through the Tor tunnel (`OX_TOR_PROXY`).
+pub static TOR_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `.onion` requests refused before any network activity: no `OX_TOR_PROXY`
+/// configured, or an `http://` onion the tunnel cannot carry. A non-zero value
+/// with Tor expected means the deployment forgot `OX_TOR_PROXY`.
+pub static ONION_REFUSED_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// Times an upstream proxy was unreachable at the dial step (connect
 /// refused / timeout / DNS / TLS handshake to the proxy host) for ANY target
 /// scheme. This is the trigger condition for the dial-failure fallback, but
@@ -81,6 +87,12 @@ pub fn record_fetch_success() {
 /// Record that the first attempt routed through an upstream proxy.
 pub fn record_proxy_used() {
     PROXY_USED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a `.onion` request refused before any network activity (see
+/// [`ONION_REFUSED_TOTAL`]).
+pub fn record_onion_refused() {
+    ONION_REFUSED_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record an upstream-proxy HTTP 402 (observation-only — see [`PROXY_402_TOTAL`]).
@@ -578,6 +590,16 @@ pub fn render() -> String {
             value: PROXY_ATTACH_INVALID_URL_TOTAL.load(Ordering::Relaxed),
         },
         Counter {
+            name: "oxbrowser_tor_requests_total",
+            help: "Requests routed through the Tor HTTP tunnel (OX_TOR_PROXY), i.e. .onion targets.",
+            value: TOR_REQUESTS_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
+            name: "oxbrowser_onion_refused_total",
+            help: ".onion requests refused before any network activity (no OX_TOR_PROXY, or an http:// onion the tunnel cannot carry).",
+            value: ONION_REFUSED_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
             name: "oxbrowser_proxy_dial_total",
             help: "Upstream-proxy dial failures (proxy host unreachable) detected for any target scheme.",
             value: PROXY_DIAL_TOTAL.load(Ordering::Relaxed),
@@ -793,6 +815,8 @@ mod tests {
             "oxbrowser_proxy_used_total",
             "oxbrowser_proxy_402_total",
             "oxbrowser_proxy_attach_invalid_url_total",
+            "oxbrowser_tor_requests_total",
+            "oxbrowser_onion_refused_total",
             "oxbrowser_proxy_dial_total",
             "oxbrowser_proxy_dial_fallback_total",
             "oxbrowser_solver_giveup_total",

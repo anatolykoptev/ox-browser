@@ -52,6 +52,7 @@ use wreq::dns::{Addrs, Name, Resolve, Resolving};
 use wreq::redirect::{Action, Attempt, Policy};
 
 use crate::middleware_ssrf::{is_allowlisted, is_private_ip};
+use crate::tor::crosses_onion_boundary;
 
 /// Error returned when a connect-time or redirect-hop check refuses a
 /// target. Wraps every rejection from this module, mirroring
@@ -69,21 +70,49 @@ pub struct SsrfGuardedResolver;
 impl Resolve for SsrfGuardedResolver {
     fn resolve(&self, name: Name) -> Resolving {
         Box::pin(async move {
-            let host = name.as_str().to_owned();
-            let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
-                .await
-                .map_err(|e| SsrfBlockedError(format!("resolve {host}: {e}")))?
-                .collect();
-            let allowed = filter_allowed(resolved.into_iter());
-            if allowed.is_empty() {
-                return Err(SsrfBlockedError(format!(
-                    "{host} resolved to no allowed addresses (all candidates blocked)"
-                ))
-                .into());
-            }
+            let allowed = resolve_guarded(name.as_str(), |h| async move {
+                tokio::net::lookup_host((h.as_str(), 0))
+                    .await
+                    .map(|it| it.collect::<Vec<_>>())
+            })
+            .await?;
             Ok(Box::new(allowed.into_iter()) as Addrs)
         })
     }
+}
+
+type BoxedErr = Box<dyn std::error::Error + Send + Sync>;
+
+/// The resolver's decision behind an injectable lookup, so a test can count
+/// lookups. A `.onion` name is refused BEFORE `lookup` is called: it must
+/// never reach a local resolver on this tier either (RFC 7686 §2) — the
+/// pre-resolve tier refuses it earlier, this is the backstop for any client
+/// that did not go through that tier (redirect hops, media, doctor).
+pub(crate) async fn resolve_guarded<F, Fut>(
+    host: &str,
+    lookup: F,
+) -> std::result::Result<Vec<SocketAddr>, BoxedErr>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
+{
+    if crate::tor::is_onion_host(host) {
+        return Err(SsrfBlockedError(
+            "onion_requires_tor: a .onion name is never resolved locally".into(),
+        )
+        .into());
+    }
+    let resolved = lookup(host.to_owned())
+        .await
+        .map_err(|e| SsrfBlockedError(format!("resolve {host}: {e}")))?;
+    let allowed = filter_allowed(resolved.into_iter());
+    if allowed.is_empty() {
+        return Err(SsrfBlockedError(format!(
+            "{host} resolved to no allowed addresses (all candidates blocked)"
+        ))
+        .into());
+    }
+    Ok(allowed)
 }
 
 /// Filters `addrs`, dropping every [`is_private_ip`]-blocked address.
@@ -115,6 +144,13 @@ pub fn ssrf_redirect_policy(max_redirects: usize) -> Policy {
             return attempt.follow();
         };
 
+        // A hop INTO `.onion` must not be followed here: this client may be
+        // proxied (a pooled third-party proxy would receive the onion name),
+        // and a direct one would try to resolve it. Hand the 3xx back so the
+        // handler re-routes the new URL through Tor.
+        if crosses_onion_boundary(host, false) {
+            return attempt.stop();
+        }
         // Defensive: strip brackets if present (IPv6 literal authority).
         let bare_host = host.trim_start_matches('[').trim_end_matches(']');
 
@@ -137,6 +173,22 @@ pub fn ssrf_redirect_policy(max_redirects: usize) -> Policy {
         }
 
         attempt.follow()
+    })
+}
+
+/// Redirect policy of the Tor client: follow `.onion` -> `.onion` hops (max-hop
+/// capped) and STOP at the first hop that leaves `.onion`, returning the 3xx
+/// so the handler routes the clearnet URL through the normal path. Following it
+/// here would silently keep a clearnet fetch on Tor.
+pub fn tor_redirect_policy(max_redirects: usize) -> Policy {
+    Policy::custom(move |attempt: Attempt<'_>| -> Action {
+        if attempt.previous.len() > max_redirects {
+            return attempt.error(SsrfBlockedError("too many redirects".into()));
+        }
+        match attempt.uri.host() {
+            Some(host) if crosses_onion_boundary(host, true) => attempt.stop(),
+            _ => attempt.follow(),
+        }
     })
 }
 

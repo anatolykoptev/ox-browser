@@ -144,7 +144,12 @@ pub async fn fetch(
     // → `EndpointDefaults::fetch_timeout_secs`), not the hard-coded seam
     // default — the configured default only wins when the caller gave no
     // timeout (issue #156).
-    let deadline = resolve_timeout(req.timeout.or(Some(state.defaults.fetch_timeout_secs)));
+    // A .onion target gets a longer default (circuit build) unless the caller
+    // set a timeout.
+    let deadline = resolve_timeout(req.timeout.or(ox_http::tor::default_timeout_for_url(
+        &req.url,
+        Some(state.defaults.fetch_timeout_secs),
+    )));
     let outcome = bounded(
         deadline,
         http.request(

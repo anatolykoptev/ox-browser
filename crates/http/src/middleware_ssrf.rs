@@ -48,20 +48,45 @@ use crate::{HttpError, HttpResponse, Result};
 /// Resolves hostnames to IPs before checking, so Docker service names
 /// (e.g. `redis`, `postgres`) that resolve to private IPs are also blocked.
 pub fn ssrf_middleware() -> MiddlewareFn {
+    ssrf_middleware_with(false, system_lookup())
+}
+
+/// [`ssrf_middleware`] with the two inputs the production chain varies:
+/// whether a Tor proxy is configured (a `.onion` target is only admitted then)
+/// and the DNS lookup seam (so a test can count lookups).
+pub fn ssrf_middleware_with(tor_configured: bool, lookup: LookupHost) -> MiddlewareFn {
     Arc::new(move |next: Arc<dyn Handler>| {
-        let handler: Arc<dyn Handler> = Arc::new(SsrfGuard { next });
+        let handler: Arc<dyn Handler> = Arc::new(SsrfGuard {
+            next,
+            tor_configured,
+            lookup: Arc::clone(&lookup),
+        });
         handler
+    })
+}
+
+/// Pre-resolve DNS lookup: host + port → addresses.
+pub type LookupHost = Arc<dyn Fn(&str, u16) -> std::io::Result<Vec<SocketAddr>> + Send + Sync>;
+
+/// The system resolver (`getaddrinfo` via `ToSocketAddrs`).
+pub fn system_lookup() -> LookupHost {
+    Arc::new(|host: &str, port: u16| {
+        format!("{host}:{port}")
+            .to_socket_addrs()
+            .map(Iterator::collect)
     })
 }
 
 struct SsrfGuard {
     next: Arc<dyn Handler>,
+    tor_configured: bool,
+    lookup: LookupHost,
 }
 
 #[async_trait]
 impl Handler for SsrfGuard {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
-        validate_url(&req.url)?;
+        validate_url_with(&req.url, self.tor_configured, self.lookup.as_ref())?;
         self.next.handle(req).await
     }
 }
@@ -71,6 +96,23 @@ impl Handler for SsrfGuard {
 /// Pre-resolve tier — see the module doc for why this alone is not
 /// rebind-proof, and [`crate::ssrf_connect`] for the tier that is.
 pub fn validate_url(url_str: &str) -> Result<()> {
+    // No Tor proxy in scope here (media downloads, ad-hoc callers): a `.onion`
+    // target is refused outright.
+    validate_url_with(url_str, false, system_lookup().as_ref())
+}
+
+/// [`validate_url`] with the Tor admission flag and the lookup seam explicit.
+///
+/// A `.onion` host is decided FIRST — before the private-IP allowlist, the IP
+/// parse and the DNS lookup — because it must never be resolved locally
+/// (RFC 7686 §2): with Tor configured it is admitted (https only, see
+/// [`crate::tor`]) and routed by the terminal handler; without, it is refused
+/// as `onion_requires_tor`.
+pub fn validate_url_with(
+    url_str: &str,
+    tor_configured: bool,
+    lookup: &(dyn Fn(&str, u16) -> std::io::Result<Vec<SocketAddr>> + Send + Sync),
+) -> Result<()> {
     let url = Url::parse(url_str).map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
 
     let scheme = url.scheme();
@@ -85,6 +127,10 @@ pub fn validate_url(url_str: &str) -> Result<()> {
         .ok_or_else(|| HttpError::InvalidUrl("missing host".into()))?;
 
     let port = url.port_or_known_default().unwrap_or(80);
+
+    if crate::tor::is_onion_host(host) {
+        return crate::tor::check_onion_target(scheme, tor_configured);
+    }
 
     // Narrow escape hatch for sidecars / integration tests. Read fresh on
     // every call so tests can flip it per-test.
@@ -116,8 +162,7 @@ pub fn validate_url(url_str: &str) -> Result<()> {
     }
 
     // Resolve hostname to IP addresses.
-    let addr = format!("{host}:{port}");
-    if let Ok(addrs) = addr.to_socket_addrs() {
+    if let Ok(addrs) = lookup(host, port) {
         for socket_addr in addrs {
             if is_private_ip(&socket_addr.ip()) {
                 return Err(HttpError::InvalidUrl(format!(

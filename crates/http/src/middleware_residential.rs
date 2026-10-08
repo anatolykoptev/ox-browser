@@ -38,6 +38,11 @@ struct ResidentialHandler {
 #[async_trait]
 impl Handler for ResidentialHandler {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
+        // An onion target is Tor-only: a residential retry is meaningless and
+        // would race the Tor routing in the terminal handler.
+        if crate::tor::is_onion_url(&req.url) {
+            return self.next.handle(req).await;
+        }
         // One-shot guard: if proxy already set, we already retried — propagate.
         if req.proxy.is_some() {
             return self.next.handle(req).await;
