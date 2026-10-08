@@ -33,6 +33,8 @@ use ox_http::fingerprint::{
     self, BROWSERLEAKS_ENDPOINT, PEET_ENDPOINT, Reference, classify_for_reference, compare,
     embedded_reference_pairs, extract_browserleaks, extract_peet, merge_observed,
 };
+use ox_http::handler_reqwest::build_proxy;
+use ox_http::middleware_ssrf::{canonicalise_proxy_url, redact_proxy_userinfo};
 use ox_http::{BUILTIN_PROFILES, BrowserProfile, HttpClient};
 
 use crate::cli::build_http_client_for_profile;
@@ -158,7 +160,7 @@ pub async fn run(args: DoctorArgs) -> anyhow::Result<()> {
     check_chrome_render(&mut checks).await;
 
     // 6 — proxy configured and reachable.
-    check_proxy(&mut checks, proxy.as_deref()).await;
+    check_proxy(&mut checks, proxy.as_deref(), "https://example.com").await;
 
     let verdict = CheckStatus::aggregate(&checks.iter().map(|c| c.status).collect::<Vec<_>>());
     let report = DoctorReport { verdict, checks };
@@ -296,7 +298,13 @@ async fn measure_profile(
         Ok(o) => o,
         Err(reason) => {
             // skip: an echo service unreachable or returning something
-            // unparseable is NOT drift.
+            // unparseable is NOT drift. The reason is scrubbed of proxy
+            // credentials first — a wreq connect error can echo the
+            // credentialed proxy URI it dialled (issue #178).
+            let reason = match proxy {
+                Some(p) => scrub_proxy_userinfo(&reason, p),
+                None => reason,
+            };
             return ProfileReport {
                 major: major.to_string(),
                 status: CheckStatus::Skip,
@@ -526,7 +534,7 @@ async fn check_chrome_render(checks: &mut Vec<CheckReport>) {
 
 // ── Check 6: proxy configured and reachable ────────────────────────────
 
-async fn check_proxy(checks: &mut Vec<CheckReport>, proxy: Option<&str>) {
+async fn check_proxy(checks: &mut Vec<CheckReport>, proxy: Option<&str>, target: &str) {
     if config::proxy_disabled() {
         checks.push(CheckReport {
             name: "proxy",
@@ -551,11 +559,12 @@ async fn check_proxy(checks: &mut Vec<CheckReport>, proxy: Option<&str>) {
         });
         return;
     };
-    let (status, detail) = match probe_proxy_reachable(proxy_url).await {
-        Ok(()) => (CheckStatus::Pass, format!("proxy {proxy_url} reachable")),
+    let redacted = redact_proxy_userinfo(proxy_url);
+    let (status, detail) = match probe_proxy_reachable(proxy_url, target).await {
+        Ok(()) => (CheckStatus::Pass, format!("proxy {redacted} reachable")),
         Err(reason) => (
             CheckStatus::Skip,
-            format!("proxy {proxy_url} unreachable: {reason}"),
+            format!("proxy {redacted} unreachable: {reason}"),
         ),
     };
     checks.push(CheckReport {
@@ -618,20 +627,52 @@ async fn probe_reachable(url: &str) -> Result<(), String> {
     }
 }
 
-/// Probe the proxy by routing a lightweight fetch through it. Returns
-/// `Ok(())` if any HTTP response came back (the proxy is up and forwarding),
-/// or `Err(reason)` with the observed error.
-async fn probe_proxy_reachable(proxy_url: &str) -> Result<(), String> {
-    let proxy = wreq::Proxy::all(proxy_url).map_err(|e| format!("parse proxy URL: {e}"))?;
+/// Probe the proxy by routing a lightweight fetch of `target` through it.
+/// Returns `Ok(())` if any HTTP response came back (the proxy is up and
+/// forwarding), or `Err(reason)` with the observed error.
+///
+/// The URL goes through `ox_http`'s canonical [`build_proxy`]: a raw
+/// `wreq::Proxy::all` would silently probe DIRECT on `SOCKS5://…` (its socks
+/// matcher is case-sensitive) or `socks5://h:` (empty port), and wreq's own
+/// error text can echo the userinfo — `build_proxy`'s error and every
+/// connection error below are kept credential-free instead (issue #178).
+async fn probe_proxy_reachable(proxy_url: &str, target: &str) -> Result<(), String> {
+    let proxy = build_proxy(proxy_url).map_err(|e| e.to_string())?;
     let client = wreq::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .proxy(proxy)
         .build()
-        .map_err(|e| format!("build probe client: {e}"))?;
-    match client.get("https://example.com").send().await {
+        .map_err(|e| {
+            format!(
+                "build probe client: {}",
+                scrub_proxy_userinfo(&e.to_string(), proxy_url)
+            )
+        })?;
+    match client.get(target).send().await {
         Ok(_) => Ok(()),
-        Err(e) => Err(format!("{e}")),
+        Err(e) => Err(scrub_proxy_userinfo(&e.to_string(), proxy_url)),
     }
+}
+
+/// Remove a proxy's `user[:pass]` token from `text` — e.g. a wreq error
+/// Display, which may echo the URI it dialled (issue #178). wreq is only
+/// ever handed the canonical URL, so the canonical userinfo is the only
+/// credential form it can echo.
+fn scrub_proxy_userinfo(text: &str, proxy_url: &str) -> String {
+    let Ok(c) = canonicalise_proxy_url(proxy_url) else {
+        return text.to_owned();
+    };
+    if !c.has_userinfo {
+        return text.to_owned();
+    }
+    // `c.url` is `scheme://user[:pass]@host:port` with exactly one '@' (the
+    // userinfo is percent-encoded; the host cannot contain one).
+    let Some(at) = c.url.find('@') else {
+        return text.to_owned();
+    };
+    let userinfo = &c.url[c.scheme.len() + "://".len()..at];
+    text.replace(&format!("{userinfo}@"), "***@")
+        .replace(userinfo, "***")
 }
 
 // ── Date helpers (no chrono dep — self-contained civil-days calc) ───────
@@ -892,6 +933,161 @@ mod tests {
         // The error must describe what was observed, not just "unreachable".
         let reason = result.unwrap_err();
         assert!(!reason.is_empty(), "error reason must not be empty");
+    }
+
+    // ── Issue #178: the proxy probe must go through the canonical builder
+    // (never a silent DIRECT probe) and no doctor output may echo proxy
+    // credentials.
+
+    /// Accept one TCP connection on `listener`, read the first request bytes,
+    /// respond `response`, and return what was read. `None` when nothing
+    /// connects — the probe went DIRECT instead of through the proxy (the
+    /// #178 bug being guarded against).
+    async fn accept_once(
+        listener: tokio::net::TcpListener,
+        response: &'static [u8],
+    ) -> Option<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut sock, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                .await
+                .ok()?
+                .ok()?;
+        let mut buf = vec![0u8; 1024];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), sock.read(&mut buf))
+            .await
+            .ok()?
+            .ok()?;
+        let _ = sock.write_all(response).await;
+        Some(String::from_utf8_lossy(&buf[..n]).into_owned())
+    }
+
+    /// `SOCKS5://…` (uppercase scheme): wreq's socks matcher is
+    /// case-sensitive, so a raw `wreq::Proxy::all` intercepts nothing and the
+    /// probe goes DIRECT. Through the canonical builder the scheme is
+    /// lowercased and the proxy is dialled — observable as a TCP connection
+    /// to the proxy itself.
+    ///
+    /// Falsification: revert `probe_proxy_reachable` to
+    /// `wreq::Proxy::all(proxy_url)` → the listener is never dialled → RED.
+    #[tokio::test]
+    async fn probe_socks5_uppercase_scheme_is_dialled_not_direct() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let dial = tokio::spawn(accept_once(
+            listener,
+            b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n",
+        ));
+        let result =
+            probe_proxy_reachable(&format!("SOCKS5://127.0.0.1:{port}"), "https://example.com")
+                .await;
+        let request = dial
+            .await
+            .unwrap()
+            .expect("probe never dialled the proxy — it went DIRECT (#178)");
+        assert!(
+            request.starts_with("CONNECT example.com:443"),
+            "expected a CONNECT to the target through the proxy, got: {request:?}"
+        );
+        assert!(result.is_err(), "a dead proxy must not report reachable");
+    }
+
+    /// `socks5://…:` (empty port): wreq appends the default `:1080` to an
+    /// authority of `h:` producing an invalid `h::1080`, so a raw
+    /// `wreq::Proxy::all` intercepts nothing and the probe goes DIRECT. The
+    /// canonical form dials the SOCKS default port 1080 — the listener must
+    /// be bound there.
+    ///
+    /// Falsification: revert `probe_proxy_reachable` to
+    /// `wreq::Proxy::all(proxy_url)` → the listener is never dialled → RED.
+    #[tokio::test]
+    async fn probe_socks5_empty_port_is_dialled_not_direct() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:1080")
+            .await
+            .unwrap();
+        let dial = tokio::spawn(accept_once(
+            listener,
+            b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n",
+        ));
+        let result = probe_proxy_reachable("socks5://127.0.0.1:", "https://example.com").await;
+        let request = dial
+            .await
+            .unwrap()
+            .expect("probe never dialled the proxy at :1080 — it went DIRECT (#178)");
+        assert!(
+            request.starts_with("CONNECT example.com:443"),
+            "expected a CONNECT to the target through the proxy, got: {request:?}"
+        );
+        assert!(result.is_err(), "a dead proxy must not report reachable");
+    }
+
+    /// A credentialed proxy that refuses the connection: the check detail
+    /// must carry the redacted URL — `scheme://***@host:port` — and never
+    /// the username or password, neither in the prefix nor inside the
+    /// observed error text.
+    ///
+    /// Falsification: print the raw `proxy_url` in the failure detail →
+    /// S3CRETPW appears → RED.
+    #[tokio::test]
+    async fn check_proxy_fail_detail_redacts_credentials() {
+        let mut checks = Vec::new();
+        check_proxy(
+            &mut checks,
+            Some("http://USERTOK:S3CRETPW@127.0.0.1:9"),
+            "https://example.com",
+        )
+        .await;
+        let check = checks.iter().find(|c| c.name == "proxy").unwrap();
+        assert_eq!(check.status, CheckStatus::Skip);
+        let detail = check.detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains("http://***@127.0.0.1:9"),
+            "detail must show the redacted proxy URL, got: {detail}"
+        );
+        assert!(!detail.contains("USERTOK"), "username leaked: {detail}");
+        assert!(!detail.contains("S3CRETPW"), "password leaked: {detail}");
+    }
+
+    /// The "reachable" branch carries the same redaction: a credentialed
+    /// proxy whose probe succeeds must be reported as
+    /// `scheme://***@host:port` — never the raw URL. The fake proxy listener
+    /// also proves the request was dialled THROUGH the proxy (absolute-form
+    /// GET for an http target), not sent direct.
+    ///
+    /// Falsification: print the raw `proxy_url` in the pass detail →
+    /// S3CRETPW appears → RED.
+    #[tokio::test]
+    async fn check_proxy_pass_detail_redacts_credentials() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let dial = tokio::spawn(accept_once(
+            listener,
+            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+        ));
+        let mut checks = Vec::new();
+        check_proxy(
+            &mut checks,
+            Some(&format!("http://USERTOK:S3CRETPW@127.0.0.1:{port}")),
+            "http://192.0.2.1/",
+        )
+        .await;
+        let request = dial
+            .await
+            .unwrap()
+            .expect("a reachable proxy must be dialled by the probe");
+        assert!(
+            request.starts_with("GET http://192.0.2.1/"),
+            "an http target through the proxy is an absolute-URI GET, got: {request:?}"
+        );
+        let check = checks.iter().find(|c| c.name == "proxy").unwrap();
+        assert_eq!(check.status, CheckStatus::Pass);
+        let detail = check.detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains(&format!("http://***@127.0.0.1:{port}")),
+            "detail must show the redacted proxy URL, got: {detail}"
+        );
+        assert!(!detail.contains("USERTOK"), "username leaked: {detail}");
+        assert!(!detail.contains("S3CRETPW"), "password leaked: {detail}");
     }
 
     /// THE load-bearing test: a user-facing fetch of a private address is
