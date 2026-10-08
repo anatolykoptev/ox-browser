@@ -4,6 +4,7 @@
 
 use ox_http::content::ReadParams;
 use ox_http::read_pipeline;
+use ox_js::inbound_auth::InboundAuth;
 use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 use rmcp::schemars::{self, JsonSchema};
@@ -53,16 +54,13 @@ impl OxMcpServer {
     pub(crate) async fn do_read(
         &self,
         input: ReadInput,
-        authenticated: bool,
+        auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let params: ReadParams = input.into();
-        let output = read_pipeline::read_page(
-            &self.http_client,
-            &params,
-            &self.site_handlers,
-            authenticated,
-        )
-        .await;
+        // The gate decision arrives stamped on the `client_for` client —
+        // read_page reads it back for its chrome/negcache gates (SEC-CR-018).
+        let http = self.client_for(auth);
+        let output = read_pipeline::read_page(&http, &params, &self.site_handlers).await;
 
         let is_err = output.error.is_some();
         let json = serde_json::to_string(&output).unwrap_or_default();

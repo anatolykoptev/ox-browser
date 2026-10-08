@@ -4,14 +4,14 @@
 
 use std::time::Instant;
 
-use axum::Json;
-use axum::extract::State;
 use axum::http::StatusCode;
+use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
 use ox_http::deadline::{CallOutcome, bounded, resolve_timeout};
 
 use crate::AppState;
+use crate::inbound_auth::InboundAuth;
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -38,6 +38,7 @@ pub struct FetchSmartResponse {
 
 pub async fn fetch_smart(
     State(state): State<AppState>,
+    auth: InboundAuth,
     Json(req): Json<FetchSmartRequest>,
 ) -> (StatusCode, Json<FetchSmartResponse>) {
     let start = Instant::now();
@@ -55,8 +56,11 @@ pub async fn fetch_smart(
     // exactly the case this bound exists for. `OUTBOUND_INFLIGHT` counts
     // both bounds while the inner future runs — cosmetic.
     let deadline = resolve_timeout(req.timeout.or(Some(state.defaults.smart_timeout_secs)));
-    // Middleware chain handles CF detect + solve + retry automatically
-    match bounded(deadline, state.http_client.get(&req.url)).await {
+    // Middleware chain handles CF detect + solve + retry automatically.
+    // ox-browser#177 / SEC-CR-018: `client_for` is the one stamp site — it
+    // carries the gate's `ok_secret` decision (see `fetch`).
+    let http = state.client_for(auth);
+    match bounded(deadline, http.get(&req.url)).await {
         CallOutcome::Ok(Ok(resp)) => (
             StatusCode::OK,
             Json(make_response(
@@ -186,7 +190,8 @@ mod tests {
             timeout: None,
             save_to_file: None,
         };
-        let (status, json) = fetch_smart(State(state), Json(req)).await;
+        let (status, json) =
+            fetch_smart(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
         assert_eq!(
             json.error.as_deref(),

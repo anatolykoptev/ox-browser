@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use rmcp::schemars;
 use schemars::JsonSchema;
 
+use ox_js::inbound_auth::InboundAuth;
+
 use super::OxMcpServer;
 
 /// Input parameters for the `analyze` tool.
@@ -70,10 +72,17 @@ struct AssetInfo {
 
 impl OxMcpServer {
     /// Fetch a page and run full site intelligence analysis.
-    pub(crate) async fn do_analyze(&self, input: AnalyzeInput) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_analyze(
+        &self,
+        input: AnalyzeInput,
+        auth: InboundAuth,
+    ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — see do_fetch.
+        let http = self.client_for(auth);
 
-        let resp = match self.http_client.get(&input.url).await {
+        let resp = match http.get(&input.url).await {
             Ok(r) => r,
             Err(e) => {
                 let r = AnalyzeResult {

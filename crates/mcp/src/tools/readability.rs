@@ -3,6 +3,7 @@
 //! DEPRECATED: Use the `read` tool instead.
 
 use ox_http::ChallengeType;
+use ox_js::inbound_auth::InboundAuth;
 use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 use rmcp::schemars;
@@ -46,11 +47,14 @@ impl OxMcpServer {
     pub(crate) async fn do_readability(
         &self,
         input: ReadabilityInput,
+        auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
 
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — `auth` is marker-derived, not a bool.
         let resp = self
-            .http_client
+            .client_for(auth)
             .get(&input.url)
             .await
             .map_err(|e| McpError::internal_error(format!("fetch: {e}"), None))?;
@@ -59,7 +63,7 @@ impl OxMcpServer {
             (resp.body, "direct")
         } else if ox_http::content::should_fallback(resp.status) {
             tracing::info!(url = %input.url, status = resp.status, "readability: non-200, attempting headless fallback");
-            let html = self.headless_fetch(&input.url).await.map_err(|e| {
+            let html = self.headless_fetch(&input.url, auth).await.map_err(|e| {
                 McpError::internal_error(
                     format!("HTTP {} + headless fallback failed: {e}", resp.status),
                     None,
@@ -100,16 +104,21 @@ impl OxMcpServer {
     }
 
     /// Solve via headless browser, cache cookies, retry GET.
-    async fn headless_fetch(&self, url: &str) -> Result<String, String> {
+    /// `auth` is the inbound gate token — the provider's secret-relay gate
+    /// and the retry client's stamp derive from it at the sink (SEC-CR-018).
+    async fn headless_fetch(&self, url: &str, auth: InboundAuth) -> Result<String, String> {
         let domain = Url::parse(url)
             .ok()
             .and_then(|u| u.host_str().map(String::from))
             .unwrap_or_default();
-        let solved = self.provider.solve(url, ChallengeType::JsChallenge).await?;
+        let solved = self
+            .provider
+            .solve(url, ChallengeType::JsChallenge, auth.is_authenticated())
+            .await?;
         self.cache.put(&domain, solved);
         tracing::info!(domain = %domain, "headless solved, retrying GET");
         let retry = self
-            .http_client
+            .client_for(auth)
             .get(url)
             .await
             .map_err(|e| format!("retry after solve: {e}"))?;

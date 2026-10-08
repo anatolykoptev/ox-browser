@@ -132,7 +132,12 @@ struct NoOpProvider;
 
 #[async_trait::async_trait]
 impl CookieProvider for NoOpProvider {
-    async fn solve(&self, _url: &str, _ct: ChallengeType) -> Result<SolvedChallenge, String> {
+    async fn solve(
+        &self,
+        _url: &str,
+        _ct: ChallengeType,
+        _authenticated: bool,
+    ) -> Result<SolvedChallenge, String> {
         Err("no solver configured".into())
     }
 }

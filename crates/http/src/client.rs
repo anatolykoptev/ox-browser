@@ -24,7 +24,11 @@ use crate::{HttpConfig, HttpResponse, Result};
 /// direct wreq calls with timeout, user-agent, redirects, and cookies.
 pub struct HttpClient {
     handler: Arc<dyn Handler>,
-    config: HttpConfig,
+    config: Arc<HttpConfig>,
+    /// Stamped onto every [`Request`] this client builds — see
+    /// [`Request::authenticated`]. False unless the caller went through
+    /// [`HttpClient::with_authenticated`] with the gate's decision.
+    authenticated: bool,
 }
 
 impl HttpClient {
@@ -99,7 +103,36 @@ impl HttpClient {
 
         let middlewares = build_middlewares(&config);
         let handler = chain(middlewares, base);
-        Ok(Self { handler, config })
+        Ok(Self {
+            handler,
+            config: Arc::new(config),
+            authenticated: false,
+        })
+    }
+
+    /// Return a per-inbound-request view whose outgoing [`Request`]s carry
+    /// `authenticated` — the gate's `ok_secret` decision (`inbound_auth::
+    /// Authenticated`), the same marker `GoBrowserProxy` and
+    /// `read_pipeline::chrome_fallback` gate on. The CF solver middleware
+    /// reads the flag to decide whether `CookieProvider::solve` may relay
+    /// ox-browser's go-wowa secret (ox-browser#177). Cheap: handler and
+    /// config are shared `Arc`s.
+    #[must_use]
+    pub fn with_authenticated(&self, authenticated: bool) -> Self {
+        Self {
+            handler: Arc::clone(&self.handler),
+            config: Arc::clone(&self.config),
+            authenticated,
+        }
+    }
+
+    /// The gate decision this client stamps on outgoing [`Request`]s —
+    /// `false` unless stamped via [`with_authenticated`](Self::with_authenticated).
+    /// `read_pipeline` reads it back so the caller hands over one stamped
+    /// client instead of a parallel bool it could desynchronise (SEC-CR-018,
+    /// ox-browser#177).
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticated
     }
 
     /// Execute a GET request.
@@ -119,6 +152,8 @@ impl HttpClient {
     /// Execute a pre-built Request through the middleware chain.
     ///
     /// Use this when you need full control over headers (e.g., Twitter header ordering).
+    /// The request's own `authenticated` field is authoritative — it is NOT
+    /// overridden by this client's stamp (fail closed).
     pub async fn execute(&self, req: Request) -> Result<HttpResponse> {
         self.handler.handle(req).await
     }
@@ -194,6 +229,7 @@ impl HttpClient {
             headers,
             body,
             proxy: None,
+            authenticated: self.authenticated,
         }
     }
 
@@ -245,7 +281,11 @@ impl HttpClient {
     /// `read_page_inner` with a mock [`Handler`] without network calls.
     #[cfg(test)]
     pub fn with_handler(handler: Arc<dyn Handler>, config: HttpConfig) -> Self {
-        Self { handler, config }
+        Self {
+            handler,
+            config: Arc::new(config),
+            authenticated: false,
+        }
     }
 
     /// Test-only constructor: build the middleware chain from `config` (same
@@ -258,7 +298,11 @@ impl HttpClient {
     pub fn with_chain(base: Arc<dyn Handler>, config: HttpConfig) -> Self {
         let middlewares = build_middlewares(&config);
         let handler = chain(middlewares, base);
-        Self { handler, config }
+        Self {
+            handler,
+            config: Arc::new(config),
+            authenticated: false,
+        }
     }
 }
 

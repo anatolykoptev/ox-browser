@@ -12,6 +12,8 @@ use rmcp::schemars;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use ox_js::inbound_auth::InboundAuth;
+
 use super::OxMcpServer;
 
 /// Input parameters for the `fetch` tool.
@@ -95,9 +97,16 @@ impl OxMcpServer {
     /// Parity with the REST `/fetch` endpoint: method defaults to GET (or
     /// POST when a body is supplied), body with explicit GET is rejected,
     /// content_type defaults to `application/json` when a body is present.
-    pub(crate) async fn do_fetch(&self, input: FetchInput) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_fetch(
+        &self,
+        input: FetchInput,
+        auth: InboundAuth,
+    ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
         let elapsed = || start.elapsed().as_millis() as u64;
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — `auth` is marker-derived, not a bool.
+        let http = self.client_for(auth);
 
         // Resolve method: default to POST when a body is supplied (curl
         // --data convention), GET otherwise.
@@ -149,7 +158,7 @@ impl OxMcpServer {
         let deadline = resolve_timeout(input.timeout.or(Some(self.defaults.fetch_timeout_secs)));
         let outcome = bounded(
             deadline,
-            self.http_client.request(
+            http.request(
                 &method,
                 &input.url,
                 body_bytes,
@@ -222,13 +231,17 @@ impl OxMcpServer {
     pub(crate) async fn do_fetch_smart(
         &self,
         input: FetchSmartInput,
+        auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
         let save = input.save_to_file;
         let url = input.url.clone();
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — see do_fetch.
+        let http = self.client_for(auth);
 
         // Middleware chain handles CF detect + solve + retry automatically.
-        match self.http_client.get(&input.url).await {
+        match http.get(&input.url).await {
             Ok(resp) => Ok(smart_ok(
                 resp.status,
                 resp.body,

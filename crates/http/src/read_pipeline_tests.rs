@@ -134,8 +134,13 @@ async fn giveup_with_active_negcache_fast_fails_without_http_get() {
         Duration::from_secs(300),
         Duration::from_secs(300),
     ));
-    assert!(nc.record_failure(domain), "should block at threshold=1");
-    assert!(nc.is_blocked(domain));
+    // The read below runs with an authenticated-stamped client, so the
+    // blocked entry must live in the authenticated cohort (SEC-CR-017).
+    assert!(
+        nc.record_failure(domain, true),
+        "should block at threshold=1"
+    );
+    assert!(nc.is_blocked(domain, true));
 
     // Render cache: GiveUp already set (as if a prior request set it).
     let render_cache = Arc::new(RenderModeCache::new(Duration::from_secs(3600)));
@@ -148,7 +153,7 @@ async fn giveup_with_active_negcache_fast_fails_without_http_get() {
     let cfg = config_with(Some(render_cache), Some(nc));
     let http = HttpClient::with_handler(handler, cfg);
 
-    let out = read_page_inner(&http, &params(&url), &[], true).await;
+    let out = read_page_inner(&http.with_authenticated(true), &params(&url), &[]).await;
 
     // Must fast-fail with the GiveUp error message.
     assert!(
@@ -167,6 +172,61 @@ async fn giveup_with_active_negcache_fast_fails_without_http_get() {
         0,
         "http.get() must not be called when GiveUp is active"
     );
+}
+
+// ─── SEC-CR-017: an anonymous-cohort GiveUp must not fast-fail an
+//     authenticated read ────────────────────────────────────────────────
+//
+// The GiveUp write is domain-keyed, but its authority is the negcache
+// re-check, which is cohort-scoped. A `GiveUp` entry left behind by an
+// anonymous solve storm (whose failures live under `(domain, false)`)
+// re-validates as not-blocked for an authenticated caller → the entry is
+// evicted and the real fetch proceeds.
+//
+// Mutation: revert the `is_blocked(&domain, authenticated)` re-check to a
+// domain-only key — the anonymous cooldown then satisfies the check for the
+// authenticated read → fast-fail → `handler_calls == 0` → RED.
+#[tokio::test]
+async fn giveup_written_by_anonymous_storm_does_not_fast_fail_authenticated_read() {
+    let domain = "anon-poisoned.test";
+    let url = format!("https://{domain}/page");
+
+    // The anonymous cohort is blocked — as if three anonymous solve
+    // failures had just tripped the cooldown and stamped GiveUp.
+    let nc = Arc::new(SolverNegCache::new(
+        1,
+        Duration::from_secs(300),
+        Duration::from_secs(300),
+    ));
+    assert!(nc.record_failure(domain, false));
+    assert!(nc.is_blocked(domain, false));
+    assert!(!nc.is_blocked(domain, true), "auth cohort must be clean");
+
+    let render_cache = Arc::new(RenderModeCache::new(Duration::from_secs(3600)));
+    render_cache.set(domain, RenderMode::GiveUp);
+
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let handler: Arc<dyn Handler> = Arc::new(OkHandler {
+        calls: handler_calls.clone(),
+    });
+    let cfg = config_with(Some(render_cache.clone()), Some(nc));
+    let http = HttpClient::with_handler(handler, cfg).with_authenticated(true);
+
+    let out = read_page_inner(&http, &params(&url), &[]).await;
+
+    // The GiveUp written by the anonymous storm is re-validated against the
+    // AUTH cohort — not blocked → evicted and a real fetch runs.
+    assert_eq!(
+        render_cache.get(domain),
+        None,
+        "anonymous-cohort GiveUp must be evicted for an authenticated read"
+    );
+    assert_eq!(
+        handler_calls.load(Ordering::SeqCst),
+        1,
+        "authenticated read must reach the handler (not fast-fail on the anon GiveUp)"
+    );
+    assert!(out.error.is_none(), "got: {:?}", out.error);
 }
 
 // ─── INTEGRATION TEST 2: recovery — GiveUp cached but negcache cooldown lifted ─
@@ -192,10 +252,10 @@ async fn giveup_with_expired_negcache_falls_through_to_fetch() {
         Duration::from_millis(0), // expires immediately
         Duration::from_secs(300),
     ));
-    nc.record_failure(domain);
+    nc.record_failure(domain, true);
     // Yield to allow the 0ms cooldown to expire.
     tokio::time::sleep(Duration::from_millis(5)).await;
-    assert!(!nc.is_blocked(domain), "cooldown should have expired");
+    assert!(!nc.is_blocked(domain, true), "cooldown should have expired");
 
     // Render cache: GiveUp set (simulates a prior request having set it with 3600s TTL).
     let render_cache = Arc::new(RenderModeCache::new(Duration::from_secs(3600)));
@@ -208,7 +268,7 @@ async fn giveup_with_expired_negcache_falls_through_to_fetch() {
     let cfg = config_with(Some(render_cache.clone()), Some(nc));
     let http = HttpClient::with_handler(handler, cfg);
 
-    let out = read_page_inner(&http, &params(&url), &[], true).await;
+    let out = read_page_inner(&http.with_authenticated(true), &params(&url), &[]).await;
 
     // The GiveUp entry must have been removed.
     assert_eq!(
@@ -276,10 +336,9 @@ async fn site_handler_success_increments_fetch_success_total() {
     let http = HttpClient::with_handler(handler, cfg);
 
     let out = read_page_inner(
-        &http,
+        &http.with_authenticated(true),
         &params("https://example.com/page"),
         &[site_handler],
-        true,
     )
     .await;
 
@@ -330,10 +389,9 @@ async fn site_handler_error_does_not_increment_fetch_success_total() {
     let http = HttpClient::with_handler(handler, cfg);
 
     let out = read_page_inner(
-        &http,
+        &http.with_authenticated(true),
         &params("https://example.com/page"),
         &[site_handler],
-        true,
     )
     .await;
 
@@ -417,8 +475,8 @@ async fn cli_and_api_paths_produce_same_read_output() {
     assert_eq!(cli_params.format, api_params.format);
     assert_eq!(cli_params.max_length, api_params.max_length);
 
-    let cli_out = read_page_inner(&http, &cli_params, &[], true).await;
-    let api_out = read_page_inner(&http, &api_params, &[], true).await;
+    let cli_out = read_page_inner(&http.with_authenticated(true), &cli_params, &[]).await;
+    let api_out = read_page_inner(&http.with_authenticated(true), &api_params, &[]).await;
 
     // Byte-identical output through the shared function.
     assert_eq!(cli_out.content, api_out.content, "content must match");
@@ -440,10 +498,10 @@ async fn read_format_mapping_is_discriminating() {
         timeout: None,
     };
 
-    let md = read_page_inner(&http, &mk("markdown"), &[], true).await;
-    let text = read_page_inner(&http, &mk("text"), &[], true).await;
-    let html = read_page_inner(&http, &mk("html"), &[], true).await;
-    let llm = read_page_inner(&http, &mk("llm"), &[], true).await;
+    let md = read_page_inner(&http.with_authenticated(true), &mk("markdown"), &[]).await;
+    let text = read_page_inner(&http.with_authenticated(true), &mk("text"), &[]).await;
+    let html = read_page_inner(&http.with_authenticated(true), &mk("html"), &[]).await;
+    let llm = read_page_inner(&http.with_authenticated(true), &mk("llm"), &[]).await;
 
     // markdown: contains the heading as markdown, not as a raw HTML tag.
     assert!(
@@ -546,7 +604,7 @@ async fn read_page_deadline_fires_within_bound() {
         timeout: Some(1),
     };
 
-    let out = read_page(&http, &p, &[], true).await;
+    let out = read_page(&http.with_authenticated(true), &p, &[]).await;
 
     // The bound fired → error output.
     assert!(out.error.is_some(), "expected deadline error, got success");
@@ -585,7 +643,7 @@ async fn read_page_default_timeout_does_not_fire_on_fast_response() {
         timeout: None,
     };
 
-    let out = read_page(&http, &p, &[], true).await;
+    let out = read_page(&http.with_authenticated(true), &p, &[]).await;
 
     assert!(
         out.error.is_none(),
@@ -614,7 +672,7 @@ async fn read_page_timeout_zero_clamps_to_one_sec() {
         timeout: Some(0),
     };
 
-    let out = read_page(&http, &p, &[], true).await;
+    let out = read_page(&http.with_authenticated(true), &p, &[]).await;
 
     // A 0 s deadline clamped to 1 s should NOT fire on a fast handler.
     assert!(
@@ -646,7 +704,7 @@ async fn read_page_timeout_above_ceiling_clamps_down() {
         timeout: Some(600),
     };
 
-    let out = read_page(&http, &p, &[], true).await;
+    let out = read_page(&http.with_authenticated(true), &p, &[]).await;
 
     // 600 s clamped to the ceiling should NOT fire on a 100 ms response.
     assert!(
@@ -695,7 +753,7 @@ async fn read_page_timeout_canonical_name_resolves_to_caller_value() {
     let p: ReadParams =
         serde_json::from_str(r#"{"url":"https://slow.test/page","timeout":2}"#).unwrap();
 
-    let out = read_page(&http, &p, &[], true).await;
+    let out = read_page(&http.with_authenticated(true), &p, &[]).await;
 
     // The bound fired → error output naming the RESOLVED secs (2, not 8).
     assert!(out.error.is_some(), "expected deadline error, got success");
@@ -727,7 +785,7 @@ async fn read_page_timeout_secs_alias_resolves_to_caller_value() {
     let p: ReadParams =
         serde_json::from_str(r#"{"url":"https://slow.test/page","timeout_secs":2}"#).unwrap();
 
-    let out = read_page(&http, &p, &[], true).await;
+    let out = read_page(&http.with_authenticated(true), &p, &[]).await;
 
     assert!(out.error.is_some(), "expected deadline error, got success");
     let err = out.error.as_deref().unwrap();
@@ -820,7 +878,12 @@ async fn chrome_fallback_secret_gated_on_authentication() {
             }),
             cfg,
         );
-        let _ = read_page_inner(&http, &params("https://example.com/p"), &[], authenticated).await;
+        let _ = read_page_inner(
+            &http.with_authenticated(authenticated),
+            &params("https://example.com/p"),
+            &[],
+        )
+        .await;
         tokio::time::timeout(Duration::from_secs(5), captured)
             .await
             .expect("chrome fallback never called go-wowa")

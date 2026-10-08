@@ -67,7 +67,10 @@ pub async fn run(args: ReadArgs) -> anyhow::Result<()> {
     let http = build_cli_http_client(args.profile.as_deref(), args.proxy, args.debug)?;
     let handlers: Vec<SiteHandler> = ox_js::default_site_handlers();
 
-    let output = read_page(&http, &params, &handlers, true).await;
+    // The CLI is the operator's own process — there is no inbound gate; the
+    // env-provided secrets are the operator's own, so the stamped flag is
+    // `true` by construction (ox-browser#177 / SEC-CR-018).
+    let output = read_page(&http.with_authenticated(true), &params, &handlers).await;
 
     if let Some(err) = &output.error {
         // A failed read must surface the reason and exit non-zero — never an

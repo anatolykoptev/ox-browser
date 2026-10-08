@@ -19,10 +19,16 @@ pub struct SolvedChallenge {
 /// Async trait for solving Cloudflare challenges and returning cookies.
 #[async_trait]
 pub trait CookieProvider: Send + Sync {
+    /// `authenticated` is the inbound caller's gate decision — see
+    /// [`crate::middleware::Request::authenticated`]. Implementations that
+    /// call a fleet-internal service (go-wowa) must relay ox-browser's
+    /// credential only when it is true; `false` = anonymous soft-mode or
+    /// bearer-token caller, who gets a credential-free solve.
     async fn solve(
         &self,
         url: &str,
         challenge_type: ChallengeType,
+        authenticated: bool,
     ) -> Result<SolvedChallenge, String>;
 }
 
@@ -40,6 +46,7 @@ mod tests {
             &self,
             _url: &str,
             _challenge_type: ChallengeType,
+            _authenticated: bool,
         ) -> Result<SolvedChallenge, String> {
             let mut cookies = HashMap::new();
             cookies.insert("cf_clearance".into(), "mock-token-abc123".into());
@@ -57,7 +64,7 @@ mod tests {
             user_agent: "Mozilla/5.0 Test".into(),
         };
         let result = provider
-            .solve("https://example.com", ChallengeType::JsChallenge)
+            .solve("https://example.com", ChallengeType::JsChallenge, false)
             .await
             .unwrap();
         assert_eq!(
@@ -73,7 +80,7 @@ mod tests {
             user_agent: "Test/1.0".into(),
         });
         let result = provider
-            .solve("https://example.com", ChallengeType::Turnstile)
+            .solve("https://example.com", ChallengeType::Turnstile, false)
             .await
             .unwrap();
         assert!(result.cookies.contains_key("cf_clearance"));

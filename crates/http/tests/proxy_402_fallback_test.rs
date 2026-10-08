@@ -682,6 +682,7 @@ async fn b_invalid_proxy_url_fails_closed() {
         headers: vec![],
         body: None,
         proxy: Some("not-a-valid-url".into()),
+        authenticated: false,
     };
     let result = client.execute(req).await;
 
@@ -894,6 +895,7 @@ async fn unknown_proxy_scheme_is_refused_not_served_direct() {
                 headers: vec![],
                 body: None,
                 proxy: Some(proxy.into()),
+                authenticated: false,
             })
             .await;
         assert!(
@@ -975,6 +977,7 @@ async fn pool_and_static_proxy_scheme_case_and_empty_port_never_go_direct() {
                 headers: vec![],
                 body: None,
                 proxy: None,
+                authenticated: false,
             })
             .await;
         assert!(
@@ -1079,6 +1082,7 @@ async fn smuggled_proxy_urls_fail_closed_without_leaking() {
                             headers: vec![],
                             body: None,
                             proxy: per_request,
+                            authenticated: false,
                         })
                         .await
                 }

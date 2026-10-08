@@ -62,6 +62,7 @@ impl CookieProvider for RecordingProvider {
         &self,
         _url: &str,
         _ct: ChallengeType,
+        _authenticated: bool,
     ) -> std::result::Result<SolvedChallenge, String> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let mut cookies = HashMap::new();
@@ -130,6 +131,7 @@ async fn post_behind_inferred_challenge_processed_once() {
         headers: vec![],
         body: Some(br#"{"amount":100}"#.to_vec()),
         proxy: None,
+        authenticated: false,
     };
 
     let resp = handler.handle(req).await.unwrap();
@@ -218,6 +220,7 @@ async fn get_behind_inferred_challenge_is_solved_and_resent() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
 
     let resp = handler.handle(req).await.unwrap();
@@ -291,6 +294,7 @@ async fn post_behind_genuine_cf_is_solved_and_resent() {
         headers: vec![],
         body: Some(b"payload".to_vec()),
         proxy: None,
+        authenticated: false,
     };
 
     let resp = handler.handle(req).await.unwrap();
@@ -363,6 +367,7 @@ async fn residential_proxy_does_not_resend_post_behind_inferred() {
         headers: vec![],
         body: Some(b"{}".to_vec()),
         proxy: None,
+        authenticated: false,
     };
 
     let resp = handler.handle(req).await.unwrap();
@@ -426,6 +431,7 @@ async fn post_on_500_through_full_chain_returns_body() {
         headers: vec![],
         body: Some(b"{}".to_vec()),
         proxy: None,
+        authenticated: false,
     };
 
     let resp = handler.handle(req).await.unwrap();

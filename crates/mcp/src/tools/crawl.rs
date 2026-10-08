@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use rmcp::schemars;
 use schemars::JsonSchema;
 
+use ox_js::inbound_auth::InboundAuth;
+
 use super::OxMcpServer;
 
 /// Input parameters for the `crawl` tool.
@@ -104,7 +106,11 @@ impl From<CrawlResult> for PageSummary {
 }
 
 impl OxMcpServer {
-    pub(crate) async fn do_crawl(&self, input: CrawlInput) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_crawl(
+        &self,
+        input: CrawlInput,
+        auth: InboundAuth,
+    ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
 
         let scope = match input.scope.as_deref() {
@@ -142,7 +148,10 @@ impl OxMcpServer {
         }
 
         let discovery_mode = config.discovery.clone();
-        let crawler = Crawler::new(Arc::clone(&self.http_client), config);
+        // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+        // `ok_secret` decision — see do_fetch.
+        let http = Arc::new(self.client_for(auth));
+        let crawler = Crawler::new(http, config);
         let (mut rx, discovery, output_dir) = crawler.crawl(&input.url).await;
 
         let mut pages = Vec::new();

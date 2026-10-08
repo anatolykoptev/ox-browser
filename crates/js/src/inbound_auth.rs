@@ -52,6 +52,52 @@ pub const SECRET_HEADER: &str = "x-internal-secret";
 #[derive(Debug, Clone, Copy)]
 pub struct Authenticated;
 
+/// A request's gate decision, carried downstream as an opaque token.
+///
+/// `InboundAuth` is built exactly one way — [`Self::from_marker`] reads the
+/// [`Authenticated`] extension the gate inserted — so a call site cannot
+/// stamp `true` from a literal the way `with_authenticated(true)` could
+/// (SEC-CR-018, ox-browser#177). The flag stays private; consumers that must
+/// read it ([`HttpClient`](ox_http::HttpClient) stamps, `provider.solve`,
+/// `GoBrowserProxy`) get it back via [`Self::is_authenticated`] at the sink
+/// only.
+///
+/// REST handlers receive it as an axum extractor (`auth: InboundAuth` —
+/// `FromRequestParts` derives it from the request's extensions). The MCP
+/// tools derive it in `tools::chrome_interact::inbound_auth` from the
+/// `http::request::Parts` rmcp injects — one construction site per surface.
+#[derive(Debug, Clone, Copy)]
+pub struct InboundAuth(bool);
+
+impl InboundAuth {
+    /// Build the token from the gate marker: `Some` means this inbound
+    /// request presented the shared internal secret (`ok_secret`). The ONLY
+    /// constructor — there is deliberately no `InboundAuth(true)`.
+    pub fn from_marker(marker: Option<&Authenticated>) -> Self {
+        Self(marker.is_some())
+    }
+
+    /// `true` iff the inbound request was authenticated by the gate's
+    /// shared-secret check. Read only at the sink that consumes the flag.
+    pub fn is_authenticated(self) -> bool {
+        self.0
+    }
+}
+
+impl<S> axum::extract::FromRequestParts<S> for InboundAuth
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self::from_marker(parts.extensions.get::<Authenticated>()))
+    }
+}
+
 const MAX_SIGHTINGS: usize = 512;
 /// Max User-Agent length kept, in characters (never splits UTF-8).
 const MAX_UA_LEN: usize = 80;

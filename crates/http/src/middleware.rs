@@ -13,7 +13,7 @@ use crate::{HttpResponse, Result};
 ///
 /// Headers use `Vec<(String, String)>` (not `HeaderMap`) to preserve insertion
 /// order — important for header-ordering anti-fingerprinting (Phase 1.5).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Request {
     pub method: String,
     pub url: String,
@@ -22,6 +22,14 @@ pub struct Request {
     /// Optional per-request proxy override. When set, the terminal handler
     /// uses this proxy URL instead of the pool.
     pub proxy: Option<String>,
+    /// Whether the inbound caller this request is made for was authenticated
+    /// by the gate (`inbound_auth::Authenticated`, inserted on `ok_secret`
+    /// only). The CF solver middleware forwards it to
+    /// [`crate::CookieProvider::solve`], which decides whether ox-browser's
+    /// go-wowa secret may be relayed. Anonymous soft-mode requests and
+    /// `OX_MCP_TOKEN` bearer callers leave it false — fail closed
+    /// (ox-browser#177). Set only from the gate marker; never infer it.
+    pub authenticated: bool,
 }
 
 impl Request {
@@ -120,6 +128,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 200);
@@ -165,6 +174,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 200);
@@ -187,6 +197,16 @@ mod tests {
         }
     }
 
+    /// ox-browser#177: a request built without the gate marker must be
+    /// treated as anonymous — the flag defaults to false so a missed call
+    /// site fails closed (no fleet credential), never open.
+    ///
+    /// Falsification: default `authenticated` to true and this asserts RED.
+    #[test]
+    fn default_request_is_unauthenticated() {
+        assert!(!Request::default().authenticated);
+    }
+
     #[test]
     fn request_header_lookup() {
         let req = Request {
@@ -198,6 +218,7 @@ mod tests {
             ],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         assert_eq!(req.header("content-type"), Some("text/html"));
         assert_eq!(req.header("USER-AGENT"), Some("test-ua"));

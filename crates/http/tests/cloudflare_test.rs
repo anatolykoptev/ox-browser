@@ -300,6 +300,7 @@ async fn retry_middleware_does_not_retry_cloudflare_error() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let err = handler.handle(req).await.unwrap_err();
     assert!(
@@ -351,6 +352,7 @@ async fn persistent_cf_block_surfaces_immediately() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let err = handler.handle(req).await.unwrap_err();
     match err {
@@ -387,6 +389,7 @@ async fn middleware_propagates_inner_error() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let err = handler.handle(req).await.unwrap_err();
     match err {

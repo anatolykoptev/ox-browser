@@ -93,6 +93,7 @@ mod tests {
             headers: vec![("user-agent".into(), chrome_ua())],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         handler.handle(req).await.unwrap();
 
@@ -117,6 +118,7 @@ mod tests {
             headers: vec![("user-agent".into(), ua.into())],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         handler.handle(req).await.unwrap();
 
@@ -142,6 +144,7 @@ mod tests {
             ],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         handler.handle(req).await.unwrap();
 
@@ -171,6 +174,7 @@ mod tests {
             headers: vec![("user-agent".into(), chrome_ua())],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         handler.handle(req).await.unwrap();
 
@@ -199,6 +203,7 @@ mod tests {
             ],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         handler.handle(req).await.unwrap();
 
@@ -224,6 +229,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         handler.handle(req).await.unwrap();
 

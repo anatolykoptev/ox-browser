@@ -429,6 +429,7 @@ mod tests {
                     headers: vec![],
                     body: None,
                     proxy: Some(proxy.into()),
+                    authenticated: false,
                 })
                 .await
                 .expect_err("private proxy must be refused");
@@ -493,6 +494,7 @@ mod tests {
                 headers: vec![],
                 body: None,
                 proxy: None,
+                authenticated: false,
             }))
             .await;
             let msg = result
@@ -548,6 +550,7 @@ mod tests {
                 headers: vec![],
                 body: None,
                 proxy: Some(proxy.into()),
+                authenticated: false,
             }))
             .await;
             let msg = result
@@ -593,6 +596,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: Some("http://USERTOK:S3CRETPW@127.0.0.1:59871".into()),
+            authenticated: false,
         }))
         .await;
         unsafe { std::env::remove_var(crate::middleware_ssrf::PROXY_ALLOWLIST_ENV) };

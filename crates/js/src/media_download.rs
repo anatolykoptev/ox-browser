@@ -1,17 +1,21 @@
 //! POST /media/download endpoint.
 
-use axum::Json;
-use axum::extract::State;
 use axum::http::StatusCode;
+use axum::{Json, extract::State};
 use ox_media::{MediaError, MediaRequest, MediaResult};
 
 use super::AppState;
+use crate::inbound_auth::InboundAuth;
 
 pub async fn media_download(
     State(state): State<AppState>,
+    auth: InboundAuth,
     Json(req): Json<MediaRequest>,
 ) -> Result<Json<MediaResult>, (StatusCode, Json<serde_json::Value>)> {
-    match ox_media::download(&state.http_client, &req, &state.media_config).await {
+    // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+    // `ok_secret` decision — see `fetch`.
+    let http = state.client_for(auth);
+    match ox_media::download(&http, &req, &state.media_config).await {
         Ok(result) => Ok(Json(result)),
         Err(e) => {
             let status = match &e {

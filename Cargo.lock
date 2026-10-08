@@ -2196,6 +2196,7 @@ dependencies = [
 name = "ox-mcp"
 version = "0.8.15"
 dependencies = [
+ "async-trait",
  "axum",
  "ox-core",
  "ox-crawler",

@@ -2,12 +2,12 @@
 
 use std::collections::HashMap;
 
-use axum::Json;
-use axum::extract::State;
 use axum::http::StatusCode;
+use axum::{Json, extract::State};
 use serde::Deserialize;
 
 use crate::AppState;
+use crate::inbound_auth::InboundAuth;
 
 #[derive(Deserialize)]
 pub struct SecurityRequest {
@@ -18,9 +18,13 @@ pub struct SecurityRequest {
 
 pub async fn security_scan(
     State(state): State<AppState>,
+    auth: InboundAuth,
     Json(req): Json<SecurityRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let resp = match state.http_client.get(&req.url).await {
+    // ox-browser#177 / SEC-CR-018: `client_for` stamps the gate's
+    // `ok_secret` decision — see `fetch`.
+    let http = state.client_for(auth);
+    let resp = match http.get(&req.url).await {
         Ok(r) => r,
         Err(e) => {
             return (

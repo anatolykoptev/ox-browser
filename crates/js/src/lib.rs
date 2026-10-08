@@ -95,6 +95,20 @@ impl AppState {
             gobrowser_proxy,
         }
     }
+
+    /// The one way REST handlers obtain the shared HTTP client: a
+    /// per-request view that stamps `auth`'s gate decision on every outgoing
+    /// [`ox_http::Request`], so the solver middleware relays ox-browser's
+    /// go-wowa secret only for an `ok_secret` caller (ox-browser#177).
+    ///
+    /// `auth` is an [`inbound_auth::InboundAuth`] — extractable only from the
+    /// inbound gate's `Authenticated` marker — so a handler cannot stamp a
+    /// literal `true` the way `with_authenticated(true)` allowed
+    /// (SEC-CR-018). The single `with_authenticated` call on this surface
+    /// lives here.
+    pub fn client_for(&self, auth: inbound_auth::InboundAuth) -> HttpClient {
+        self.http_client.with_authenticated(auth.is_authenticated())
+    }
 }
 
 /// Builds the Axum router with all REST endpoints.
@@ -156,6 +170,9 @@ async fn metrics() -> ([(axum::http::header::HeaderName, &'static str); 1], Stri
 }
 
 #[cfg(test)]
+mod auth_relay_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
@@ -171,7 +188,12 @@ mod tests {
 
     #[async_trait]
     impl CookieProvider for MockProvider {
-        async fn solve(&self, _url: &str, _ct: ChallengeType) -> Result<SolvedChallenge, String> {
+        async fn solve(
+            &self,
+            _url: &str,
+            _ct: ChallengeType,
+            _authenticated: bool,
+        ) -> Result<SolvedChallenge, String> {
             let mut cookies = HashMap::new();
             cookies.insert("cf_clearance".into(), "test-token".into());
             Ok(SolvedChallenge {
