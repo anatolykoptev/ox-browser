@@ -61,7 +61,7 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 |---------|---------|
 | `BYPARR_URL` | Byparr solver URL (e.g. `http://localhost:8191`) |
 | `GOBROWSER_URL` | GoBrowser solver URL |
-| `PROXY_URL` | HTTP/SOCKS proxy URL |
+| `PROXY_URL` | HTTP/HTTPS proxy URL |
 | `RESIDENTIAL_PROXY_URL` | Residential proxy for CF bypass |
 | `WEBSHARE_API_KEY` | Webshare proxy pool API key |
 | `MEDIA_PROXY_URL` | Proxy for media downloads |
