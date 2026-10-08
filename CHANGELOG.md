@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.16](https://github.com/anatolykoptev/ox-browser/compare/v0.8.15...v0.8.16) (2026-10-08)
+
+
+### Fixed
+
+* **solver:** send the go-wowa secret only for authenticated inbound callers ([#177](https://github.com/anatolykoptev/ox-browser/issues/177)) ([#181](https://github.com/anatolykoptev/ox-browser/issues/181)) ([54a618f](https://github.com/anatolykoptev/ox-browser/commit/54a618f3f851cdb4e77f137928f76f9dd5f828e8))
+
 ## [0.8.15](https://github.com/anatolykoptev/ox-browser/compare/v0.8.14...v0.8.15) (2026-10-07)
 
 
