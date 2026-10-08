@@ -631,11 +631,11 @@ async fn probe_reachable(url: &str) -> Result<(), String> {
 /// Returns `Ok(())` if any HTTP response came back (the proxy is up and
 /// forwarding), or `Err(reason)` with the observed error.
 ///
-/// The URL goes through `ox_http`'s canonical [`build_proxy`]: a raw
-/// `wreq::Proxy::all` would silently probe DIRECT on `SOCKS5://…` (its socks
-/// matcher is case-sensitive) or `socks5://h:` (empty port), and wreq's own
-/// error text can echo the userinfo — `build_proxy`'s error and every
-/// connection error below are kept credential-free instead (issue #178).
+/// The URL goes through `ox_http`'s canonical [`build_proxy`], which refuses
+/// a scheme wreq cannot dial — every `socks*` scheme included, since wreq is
+/// built without its `socks` feature (issue #179) — and never echoes the
+/// userinfo. `build_proxy`'s error and every connection error below are kept
+/// credential-free (issue #178).
 async fn probe_proxy_reachable(proxy_url: &str, target: &str) -> Result<(), String> {
     let proxy = build_proxy(proxy_url).map_err(|e| e.to_string())?;
     let client = wreq::Client::builder()
@@ -962,63 +962,37 @@ mod tests {
         Some(String::from_utf8_lossy(&buf[..n]).into_owned())
     }
 
-    /// `SOCKS5://…` (uppercase scheme): wreq's socks matcher is
-    /// case-sensitive, so a raw `wreq::Proxy::all` intercepts nothing and the
-    /// probe goes DIRECT. Through the canonical builder the scheme is
-    /// lowercased and the proxy is dialled — observable as a TCP connection
-    /// to the proxy itself.
+    /// #179: a `socks*` proxy URL is refused by `build_proxy` before any
+    /// connection is opened — wreq is built without its `socks` feature, so
+    /// the probe could never dial it as SOCKS; it would go DIRECT from the
+    /// real IP while claiming to probe through a proxy. Any letter case and
+    /// any port form (explicit or empty) refuse identically, and the
+    /// listener the URL points at must see ZERO connections.
     ///
-    /// Falsification: revert `probe_proxy_reachable` to
-    /// `wreq::Proxy::all(proxy_url)` → the listener is never dialled → RED.
+    /// Falsification: re-add `"socks5"` to `ALLOWED_PROXY_SCHEMES` → the
+    /// probe dials the listener → the accept resolves → RED.
     #[tokio::test]
-    async fn probe_socks5_uppercase_scheme_is_dialled_not_direct() {
+    async fn probe_socks_proxy_is_refused_and_never_dialled() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let dial = tokio::spawn(accept_once(
-            listener,
-            b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n",
-        ));
-        let result =
-            probe_proxy_reachable(&format!("SOCKS5://127.0.0.1:{port}"), "https://example.com")
-                .await;
-        let request = dial
-            .await
-            .unwrap()
-            .expect("probe never dialled the proxy — it went DIRECT (#178)");
+        for proxy_url in [
+            format!("SOCKS5://127.0.0.1:{port}"),
+            format!("socks5h://127.0.0.1:{port}"),
+            "socks5://127.0.0.1:".to_string(),
+        ] {
+            let result = probe_proxy_reachable(&proxy_url, "https://example.com").await;
+            let reason = result.expect_err("a socks proxy must be refused, not probed");
+            assert!(
+                reason.contains("invalid proxy URL"),
+                "{proxy_url}: expected the build_proxy refusal, got: {reason}"
+            );
+        }
+        let dial =
+            tokio::time::timeout(std::time::Duration::from_millis(300), listener.accept()).await;
         assert!(
-            request.starts_with("CONNECT example.com:443"),
-            "expected a CONNECT to the target through the proxy, got: {request:?}"
+            dial.is_err(),
+            "a refused socks proxy was dialled — the probe must precede any connection"
         );
-        assert!(result.is_err(), "a dead proxy must not report reachable");
-    }
-
-    /// `socks5://…:` (empty port): wreq appends the default `:1080` to an
-    /// authority of `h:` producing an invalid `h::1080`, so a raw
-    /// `wreq::Proxy::all` intercepts nothing and the probe goes DIRECT. The
-    /// canonical form dials the SOCKS default port 1080 — the listener must
-    /// be bound there.
-    ///
-    /// Falsification: revert `probe_proxy_reachable` to
-    /// `wreq::Proxy::all(proxy_url)` → the listener is never dialled → RED.
-    #[tokio::test]
-    async fn probe_socks5_empty_port_is_dialled_not_direct() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:1080")
-            .await
-            .unwrap();
-        let dial = tokio::spawn(accept_once(
-            listener,
-            b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n",
-        ));
-        let result = probe_proxy_reachable("socks5://127.0.0.1:", "https://example.com").await;
-        let request = dial
-            .await
-            .unwrap()
-            .expect("probe never dialled the proxy at :1080 — it went DIRECT (#178)");
-        assert!(
-            request.starts_with("CONNECT example.com:443"),
-            "expected a CONNECT to the target through the proxy, got: {request:?}"
-        );
-        assert!(result.is_err(), "a dead proxy must not report reachable");
     }
 
     /// A credentialed proxy that refuses the connection: the check detail

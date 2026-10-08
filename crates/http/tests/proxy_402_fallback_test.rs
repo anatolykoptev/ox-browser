@@ -887,7 +887,11 @@ async fn unknown_proxy_scheme_is_refused_not_served_direct() {
     })
     .expect("build client");
 
-    for proxy in ["ftp://8.8.8.8:21", "socks://8.8.8.8:1080"] {
+    for proxy in [
+        "ftp://8.8.8.8:21",
+        "socks://8.8.8.8:1080",
+        "socks5://8.8.8.8:1080",
+    ] {
         let result = client
             .execute(Request {
                 method: "GET".into(),
@@ -914,24 +918,26 @@ async fn unknown_proxy_scheme_is_refused_not_served_direct() {
 }
 
 // ---------------------------------------------------------------------------
-// SEC-CR-018: the pool path must dial the proxy it was given, never fall
-// through to direct. wreq's socks matcher is case-sensitive and treats an
-// empty port as "no proxy", so a raw `SOCKS5://…` or `socks5://host:` pool
-// entry used to send the request DIRECT from the real IP while it was counted
-// as proxied. build_proxy now canonicalises (lowercase scheme, explicit port).
+// SEC-CR-018 + #179: the pool path must dial the proxy it was given, never
+// fall through to direct — and a `socks*` entry must be REFUSED outright on
+// both the pool and static paths, since wreq is built without its `socks`
+// feature and would otherwise send the request DIRECT from the real IP while
+// it was counted as proxied.
 // ---------------------------------------------------------------------------
 
-/// Covers the pool entry and the static `proxy_url` (client.rs, which now
-/// uses the same `build_proxy`).
+/// Covers the pool entry and the static `proxy_url` (client.rs, which uses
+/// the same `build_proxy`).
 ///
 /// Falsification: in `build_proxy` (handler_reqwest.rs) pass the raw
 /// `proxy_url` to `wreq::Proxy::all` instead of the canonical URL, or revert
 /// the static path in `wreq_transport_core` (client.rs) to
-/// `wreq::Proxy::all(url)`, and the rows reach the origin directly (origin
-/// hits > 0, proxy hits 0) → RED.
+/// `wreq::Proxy::all(url)`, and the http row reaches the origin directly
+/// (origin hits > 0) → RED. Re-adding `"socks5"` to `ALLOWED_PROXY_SCHEMES`
+/// re-admits the socks rows → the listener is dialled or the refusal error
+/// is absent → RED.
 #[tokio::test]
 #[serial]
-async fn pool_and_static_proxy_scheme_case_and_empty_port_never_go_direct() {
+async fn pool_and_static_proxy_socks_is_refused_never_dialled() {
     use ox_http::Request;
     use ox_http::proxy_pool::StaticPool;
 
@@ -947,25 +953,23 @@ async fn pool_and_static_proxy_scheme_case_and_empty_port_never_go_direct() {
             format!("127.0.0.1:{origin_port}"),
         );
     }
-    let rows = [
-        (format!("SOCKS5://127.0.0.1:{proxy_port}"), true),
-        ("socks5://127.0.0.1:".to_string(), false),
-    ];
-    for (pool_entry, expect_proxy_hit, via_pool) in rows
-        .iter()
-        .flat_map(|(e, hit)| [(e.clone(), *hit, true), (e.clone(), *hit, false)])
-    {
+
+    // Positive control: an http pool/static entry IS dialled — the fake
+    // proxy sees the connection (proxy_hits grows) even though it cannot
+    // complete a real forward. This is the SEC-CR-018 property.
+    for via_pool in [true, false] {
+        let entry = format!("HTTP://127.0.0.1:{proxy_port}");
         let before = proxy_hits.load(Ordering::SeqCst);
         let config = if via_pool {
             HttpConfig {
                 timeout: Duration::from_secs(5),
-                proxy_pool: Some(Arc::new(StaticPool::new(vec![pool_entry.clone()]))),
+                proxy_pool: Some(Arc::new(StaticPool::new(vec![entry.clone()]))),
                 ..Default::default()
             }
         } else {
             HttpConfig {
                 timeout: Duration::from_secs(5),
-                proxy_url: Some(pool_entry.clone()),
+                proxy_url: Some(entry.clone()),
                 ..Default::default()
             }
         };
@@ -980,20 +984,73 @@ async fn pool_and_static_proxy_scheme_case_and_empty_port_never_go_direct() {
                 authenticated: false,
             })
             .await;
+        // An http target through an http forward proxy is an absolute-form
+        // GET, which the fake proxy answers itself — the discriminators are
+        // the counters: the proxy was hit, the origin (asserted below) was
+        // not.
+        let _ = result;
         assert!(
-            result.is_err(),
-            "{pool_entry} (pool={via_pool}): must fail through the fake proxy, got {result:?}"
+            proxy_hits.load(Ordering::SeqCst) > before,
+            "{entry} (pool={via_pool}): the proxy was never dialled"
         );
-        if expect_proxy_hit {
+    }
+
+    // #179: every `socks*` entry is refused — at client build on the static
+    // path (`wreq_transport_core` → `build_proxy`) and at request time on the
+    // pool path — and the fake proxy must see ZERO additional connections.
+    let before = proxy_hits.load(Ordering::SeqCst);
+    for pool_entry in [
+        format!("SOCKS5://127.0.0.1:{proxy_port}"),
+        format!("socks5h://127.0.0.1:{proxy_port}"),
+        "socks5://127.0.0.1:".to_string(),
+    ] {
+        for via_pool in [true, false] {
+            let config = if via_pool {
+                HttpConfig {
+                    timeout: Duration::from_secs(5),
+                    proxy_pool: Some(Arc::new(StaticPool::new(vec![pool_entry.clone()]))),
+                    ..Default::default()
+                }
+            } else {
+                HttpConfig {
+                    timeout: Duration::from_secs(5),
+                    proxy_url: Some(pool_entry.clone()),
+                    ..Default::default()
+                }
+            };
+            // Static path: refusal surfaces at client construction (the same
+            // startup error every invalid proxy_url produces). Pool path:
+            // the client builds, the refusal surfaces on the request.
+            let result = match HttpClient::new(config) {
+                Err(e) => Err(e),
+                Ok(client) => {
+                    client
+                        .execute(Request {
+                            method: "GET".into(),
+                            url: format!("http://127.0.0.1:{origin_port}/test"),
+                            headers: vec![],
+                            body: None,
+                            proxy: None,
+                            authenticated: false,
+                        })
+                        .await
+                }
+            };
+            let err = result.expect_err("a socks proxy must be refused");
             assert!(
-                proxy_hits.load(Ordering::SeqCst) > before,
-                "{pool_entry} (pool={via_pool}): the proxy was never dialled"
+                err.to_string().contains("invalid proxy URL"),
+                "{pool_entry} (pool={via_pool}): expected the build_proxy refusal, got {err}"
             );
         }
     }
     unsafe {
         std::env::remove_var("OX_HTTP_PRIVATE_ALLOWLIST");
     }
+    assert_eq!(
+        proxy_hits.load(Ordering::SeqCst),
+        before,
+        "a refused socks proxy was dialled"
+    );
     assert_eq!(
         origin_hits.load(Ordering::SeqCst),
         0,

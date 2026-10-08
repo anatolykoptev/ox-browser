@@ -363,13 +363,16 @@ impl Handler for WreqHandler {
 
 /// Build a wreq proxy from a proxy URL, dialling its canonical form.
 ///
-/// wreq re-parses the string it is given and disagrees with the url crate in
-/// ways that silently send the request DIRECT (case-sensitive socks scheme,
-/// empty port) or to a different host (the non-special-scheme parser
-/// differential), so the raw value is never handed to wreq: it goes through
-/// [`crate::middleware_ssrf::canonicalise_proxy_url`] first. That does NOT vet
+/// wreq re-parses the string it is given and can disagree with the url crate
+/// on the same input (an empty port, a credential the parser reads as part
+/// of the authority, a scheme it has no intercept for — every `socks*`
+/// scheme, since wreq is built without its `socks` feature), which is how a
+/// "proxy" ends up silently sending the request DIRECT. The raw value is
+/// therefore never handed to wreq: it goes through
+/// [`crate::middleware_ssrf::canonicalise_proxy_url`] first, which refuses
+/// what wreq cannot dial (issue #179). That does NOT vet
 /// the target — pool and static proxies are operator-configured and may be
-/// private (e.g. a local Tor); caller proxies are vetted by
+/// private (e.g. a local forward-proxy sidecar); caller proxies are vetted by
 /// `validate_proxy_url` before they get here.
 ///
 /// The wreq error is never surfaced: its Display can echo the URI including
@@ -416,7 +419,7 @@ mod tests {
         for proxy in [
             "http://127.0.0.1:9",
             "http://10.1.2.3:3128",
-            "socks5://172.18.0.1:1080",
+            "http://172.18.0.1:1080",
             "http://[::1]:9",
             "http://169.254.169.254:80",
             "http://localhost:9",
@@ -652,15 +655,126 @@ mod tests {
     }
 
     /// SEC-CR-012 on the pool path: build_proxy refuses a scheme wreq would
-    /// ignore (which would mean a direct request counted as proxied).
+    /// ignore (which would mean a direct request counted as proxied) — the
+    /// `socks*` family included, since wreq is built without its `socks`
+    /// feature (issue #179).
     ///
     /// Falsification: drop the ALLOWED_PROXY_SCHEMES check in
     /// `canonicalise_proxy_url` (which build_proxy calls) → RED.
     #[test]
     fn build_proxy_refuses_unknown_schemes() {
-        for raw in ["ftp://8.8.8.8:21", "socks://8.8.8.8:1080"] {
+        for raw in [
+            "ftp://8.8.8.8:21",
+            "socks://8.8.8.8:1080",
+            "socks5://8.8.8.8:1080",
+            "SOCKS5://8.8.8.8:1080",
+        ] {
             assert!(build_proxy(raw).is_err(), "build_proxy accepted {raw}");
         }
-        assert!(build_proxy("socks5://8.8.8.8:1080").is_ok());
+        assert!(build_proxy("http://8.8.8.8:3128").is_ok());
+        assert!(build_proxy("https://8.8.8.8:443").is_ok());
+    }
+
+    /// #179: a `socks5://` per-request proxy must be refused by
+    /// `validate_proxy_url` before any connection is opened — wreq is built
+    /// without its `socks` feature, so the URL is never a SOCKS dial: it
+    /// would fall through to wreq's auto-proxy path and, notably with
+    /// `max_redirects = 0`, degrade to a DIRECT request from the real IP.
+    /// Driven through the real `WreqHandler::handle` path once with the
+    /// default redirect limit and once with `max_redirects = 0`, asserting
+    /// zero connections on both the listener the proxy URL points at and a
+    /// second "target" listener (the direct path).
+    ///
+    /// Falsification:
+    /// - re-add `"socks5"` to `ALLOWED_PROXY_SCHEMES` (middleware_ssrf.rs):
+    ///   the allowlisted loopback proxy validates, wreq cannot dial SOCKS —
+    ///   the request reaches a listener or errors without the scheme
+    ///   refusal → RED;
+    /// - skip the `validate_proxy_url` call in `execute_with`: the refusal
+    ///   then comes from `build_proxy` and is logged with reason
+    ///   `proxy_attach_invalid_url`, not `proxy_refused` → RED.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn socks5_per_request_proxy_is_refused_before_any_dial() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// Accept-and-count TCP listener answering a bare 200 to anything —
+        /// counts whatever was dialled, proxy handshake or direct request.
+        async fn counting_listener() -> (u16, Arc<AtomicUsize>) {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let hits = Arc::new(AtomicUsize::new(0));
+            let hits_task = Arc::clone(&hits);
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut sock, _)) = listener.accept().await else {
+                        break;
+                    };
+                    hits_task.fetch_add(1, Ordering::SeqCst);
+                    tokio::spawn(async move {
+                        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                        let mut buf = [0u8; 4096];
+                        let _ = sock.read(&mut buf).await;
+                        let _ = sock
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            )
+                            .await;
+                    });
+                }
+            });
+            (port, hits)
+        }
+
+        let (proxy_port, proxy_hits) = counting_listener().await;
+        let (origin_port, origin_hits) = counting_listener().await;
+
+        // SAFETY: serial test — admit the loopback proxy so that, if the
+        // scheme allowlist is mutated to re-allow socks5, the URL passes
+        // the private-host veto and the dial stage is genuinely exercised.
+        unsafe {
+            std::env::set_var(
+                crate::middleware_ssrf::PROXY_ALLOWLIST_ENV,
+                format!("127.0.0.1:{proxy_port}"),
+            )
+        };
+        for max_redirects in [crate::HttpConfig::default().max_redirects, 0] {
+            let handler = WreqHandler::new(wreq::Client::new(), false, max_redirects, 1 << 20);
+            let (result, logs) = capture_logs(handler.handle(Request {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{origin_port}/test"),
+                headers: vec![],
+                body: None,
+                proxy: Some(format!("socks5://127.0.0.1:{proxy_port}")),
+                authenticated: false,
+            }))
+            .await;
+            let err = result.expect_err("a socks5 proxy must be refused, not dialled or dropped");
+            assert!(
+                err.to_string().contains("unsupported proxy scheme"),
+                "max_redirects={max_redirects}: expected the unsupported-scheme \
+                 refusal naming the scheme, got {err}"
+            );
+            assert!(
+                err.to_string().contains("socks5"),
+                "max_redirects={max_redirects}: the refusal must name the scheme, got {err}"
+            );
+            assert!(
+                logs.contains("proxy_refused"),
+                "max_redirects={max_redirects}: the refusal must come from \
+                 validate_proxy_url (reason=proxy_refused): {logs}"
+            );
+        }
+        unsafe { std::env::remove_var(crate::middleware_ssrf::PROXY_ALLOWLIST_ENV) };
+        assert_eq!(
+            proxy_hits.load(Ordering::SeqCst),
+            0,
+            "the socks proxy was dialled — the refusal must precede any connection"
+        );
+        assert_eq!(
+            origin_hits.load(Ordering::SeqCst),
+            0,
+            "the request reached the target DIRECTLY — a real-IP leak"
+        );
     }
 }

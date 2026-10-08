@@ -475,9 +475,10 @@ fn wreq_transport_core(
     }
 
     if let Some(url) = proxy {
-        // Same canonicalising builder as the pool and per-request paths: a raw
-        // `SOCKS5://…` or empty-port value would otherwise go direct, and the
-        // wreq error would echo the credentials.
+        // Same canonicalising builder as the pool and per-request paths: a
+        // scheme wreq cannot dial (any `socks*` — issue #179) or a
+        // non-canonical value would otherwise go direct, and the wreq error
+        // would echo the credentials.
         let proxy = crate::handler_reqwest::build_proxy(url)?;
         builder = builder.proxy(proxy);
     } else {

@@ -174,26 +174,33 @@ pub fn redact_proxy_userinfo(proxy_url: &str) -> String {
 /// case-insensitive host) that may point at a private address.
 pub const PROXY_ALLOWLIST_ENV: &str = "OX_PROXY_ALLOWLIST";
 
-/// Proxy schemes ox-browser will dial. wreq has no intercept for any other
-/// scheme (e.g. `ftp`, `socks`), so such a "proxy" would be silently ignored
-/// and the request sent DIRECT from the real IP. Both [`validate_proxy_url`]
-/// and the pool path (`build_proxy`) refuse anything outside this list.
-pub const ALLOWED_PROXY_SCHEMES: &[&str] =
-    &["http", "https", "socks4", "socks4a", "socks5", "socks5h"];
+/// Proxy schemes ox-browser will dial: `http` and `https` only. wreq is
+/// built WITHOUT its `socks` feature (see `Cargo.toml`), so it has no
+/// intercept for `socks*` — a `socks5://…` URL is never a SOCKS dial and
+/// falls through to wreq's auto-proxy path, which can send the request
+/// DIRECT from the real IP while the caller believes it is proxied
+/// (issue #179). Any other scheme (`ftp`, `socks`, …) is likewise ignored.
+/// Both [`validate_proxy_url`] and the pool path (`build_proxy`) refuse
+/// anything outside this list.
+pub const ALLOWED_PROXY_SCHEMES: &[&str] = &["http", "https"];
 
-/// Default port for a scheme when the proxy URL names none: 1080 for SOCKS,
-/// 443 for https, 80 for http.
+/// `socks*` schemes that are refused by name: a caller plausibly configured
+/// one expecting it to work, so the refusal says which scheme it saw —
+/// from this constant list, never the raw input (SEC-CR-025).
+const SOCKS_SCHEMES: &[&str] = &["socks4", "socks4a", "socks5", "socks5h"];
+
+/// Default port for a scheme when the proxy URL names none: 443 for https,
+/// 80 for http.
 pub fn default_proxy_port(scheme: &str) -> u16 {
     match scheme {
         "https" => 443,
-        "socks4" | "socks4a" | "socks5" | "socks5h" => 1080,
         _ => 80,
     }
 }
 
 /// A proxy URL rebuilt into the one form both the url crate and wreq read
-/// the same way: lowercase known scheme, canonical host, explicit port for
-/// SOCKS, userinfo kept (percent-encoded as parsed).
+/// the same way: lowercase known scheme, canonical host, explicit port,
+/// userinfo kept (percent-encoded as parsed).
 pub struct CanonicalProxy {
     /// `scheme://[userinfo@]host[:port]` — the string to dial.
     pub url: String,
@@ -218,23 +225,24 @@ pub struct CanonicalProxy {
 ///
 /// - Accepted forms only: input that literally starts with
 ///   `<allowed-scheme>://` (scheme case-insensitive, [`ALLOWED_PROXY_SCHEMES`]
-///   — anything else would be ignored by wreq and sent direct), or a bare
+///   — anything else wreq cannot dial; a `socks*` scheme would fall through
+///   to a direct request from the real IP, issue #179), or a bare
 ///   `host:port` (numeric port) with no `/`, `?`, `#`, `\` or `@` anywhere,
 ///   treated as http. `http:/…`, `http:…`, `socks5:/…` are refused.
 /// - A backslash, control character or space is refused outright: it drives
-///   the url/wreq parser differential (`socks5://1.1.1.1\@127.0.0.1:6379`
+///   the url/wreq parser differential (`1.1.1.1\@127.0.0.1:6379`
 ///   validates as one host, dials another) and ends a special-scheme
 ///   authority early.
 /// - After parsing: no query, no fragment, and a path of "" or "/" only. A
 ///   `/`, `?` or `#` before the userinfo `@` makes the url crate end the
 ///   authority there (`u:12#pw@h` = host `u`, port 12), and this rule refuses
 ///   it (SEC-CR-021/022).
-/// - Host and port come from the parse — never from the raw string. A SOCKS
-///   host (opaque for non-special schemes) is canonicalised with the special
-///   host parser, so any IPv4 notation becomes dotted-quad.
-/// - wreq's socks matcher is case-sensitive and treats an empty port as "no
-///   proxy": the scheme is lowercased and SOCKS always gets an explicit port,
-///   its default being 1080 ([`default_proxy_port`]).
+/// - Host and port come from the parse — never from the raw string. Only
+///   special schemes are accepted, so the host is already canonicalised by
+///   the parse itself (IPv4 shorthand → dotted-quad, IDNA).
+/// - wreq treats an empty port as "no proxy": the emitted URL always carries
+///   an explicit port, the scheme default when none was given
+///   ([`default_proxy_port`]).
 pub fn canonicalise_proxy_url(proxy_url: &str) -> Result<CanonicalProxy> {
     let blocked = |msg: &str| HttpError::InvalidUrl(format!("SSRF blocked: {msg}"));
     if proxy_url
@@ -250,9 +258,20 @@ pub fn canonicalise_proxy_url(proxy_url: &str) -> Result<CanonicalProxy> {
                 .iter()
                 .any(|a| a.eq_ignore_ascii_case(s))
             {
-                // No interpolation: the text before "://" may be a username
-                // or password (SEC-CR-025).
-                return Err(blocked("unsupported proxy scheme"));
+                // The raw text before "://" is NEVER echoed — it may be a
+                // username or password (SEC-CR-025). A `socks*` scheme is
+                // named from the constant list instead: it is one a caller
+                // plausibly configured expecting it to work, and the refusal
+                // must say so (issue #179).
+                return Err(
+                    match SOCKS_SCHEMES.iter().find(|a| a.eq_ignore_ascii_case(s)) {
+                        Some(scheme) => blocked(&format!(
+                            "unsupported proxy scheme {scheme:?} — wreq is built \
+                         without SOCKS support; use http or https"
+                        )),
+                        None => blocked("unsupported proxy scheme"),
+                    },
+                );
             }
             // Decide "no path, query or fragment" on the RAW text: the parsed
             // path is WHATWG-normalised, so `/..` and `/%2e%2e` collapse to
@@ -283,17 +302,10 @@ pub fn canonicalise_proxy_url(proxy_url: &str) -> Result<CanonicalProxy> {
     if url.query().is_some() || url.fragment().is_some() || !matches!(url.path(), "" | "/") {
         return Err(blocked("proxy URL must have no path, query or fragment"));
     }
+    // Only http/https reach this point, so the parse already canonicalised
+    // the host (IPv4 shorthand → dotted-quad, IDNA on domains).
     let host = match url.host() {
-        Some(url::Host::Ipv4(v4)) => url::Host::Ipv4(v4),
-        Some(url::Host::Ipv6(v6)) => url::Host::Ipv6(v6),
-        // Special schemes already ran the host parser; a SOCKS host is
-        // opaque, so run it here (IPv4 shorthand → dotted-quad, IDNA).
-        Some(url::Host::Domain(d)) if scheme == "http" || scheme == "https" => {
-            url::Host::Domain(d.to_owned())
-        }
-        Some(url::Host::Domain(d)) => {
-            url::Host::parse(d).map_err(|_| blocked("unparsable proxy host"))?
-        }
+        Some(h) => h,
         None => return Err(blocked("proxy URL has no host")),
     };
     // Special schemes drop their own default port, which is also ours.
@@ -301,7 +313,7 @@ pub fn canonicalise_proxy_url(proxy_url: &str) -> Result<CanonicalProxy> {
     let (host, host_out) = match host {
         url::Host::Ipv6(v6) => (v6.to_string(), format!("[{v6}]")),
         url::Host::Ipv4(v4) => (v4.to_string(), v4.to_string()),
-        url::Host::Domain(d) => (d.clone(), d),
+        url::Host::Domain(d) => (d.to_owned(), d.to_owned()),
     };
     let has_userinfo = !url.username().is_empty() || url.password().is_some();
     let mut out = format!("{scheme}://");
@@ -934,10 +946,12 @@ pub(crate) mod tests {
     #[serial_test::serial]
     fn validate_proxy_url_allowlist_admits_only_listed_host_port() {
         unsafe {
-            std::env::set_var(PROXY_ALLOWLIST_ENV, "tor:9050, 172.18.0.1:1082");
+            std::env::set_var(PROXY_ALLOWLIST_ENV, "127.0.0.1:9050, 172.18.0.1:1082");
         }
         assert!(validate_proxy_url("http://172.18.0.1:1082").is_ok());
-        assert!(validate_proxy_url("socks5://tor:9050").is_ok());
+        // A listed loopback entry is admitted — the allowlist is checked
+        // before the private-host veto.
+        assert!(validate_proxy_url("http://127.0.0.1:9050").is_ok());
         assert!(validate_proxy_url("http://172.18.0.1:8765").is_err());
         unsafe {
             std::env::remove_var(PROXY_ALLOWLIST_ENV);
@@ -958,9 +972,11 @@ pub(crate) mod tests {
             redact_proxy_userinfo("http://USERTOK:S3CRETPW@p.webshare.io:80"),
             "http://***@p.webshare.io:80"
         );
+        // A refused scheme (issue #179) redacts to the placeholder, same
+        // as any unparsable input — no credential can be echoed through it.
         assert_eq!(
             redact_proxy_userinfo("SOCKS5://USERTOK:S3CRETPW@1.2.3.4"),
-            "socks5://***@1.2.3.4:1080"
+            UNPARSABLE_PROXY
         );
         assert_eq!(
             redact_proxy_userinfo("http://[2001:db8::1]:3128/"),
@@ -1048,17 +1064,20 @@ pub(crate) mod tests {
         }
     }
 
-    /// A non-special scheme (socks5) keeps its host opaque in WHATWG
-    /// parsing; validate_proxy_url must canonicalise it like http does.
+    /// A non-special scheme (a `socks*` URL) keeps its host opaque in
+    /// WHATWG parsing — and since #179 it is refused outright, before the
+    /// host is ever looked at. IPv4 shorthand under a special scheme is
+    /// still canonicalised by the parse itself (`127.1` → `127.0.0.1`,
+    /// which the private-host veto then blocks).
     ///
-    /// Falsification: keep the opaque SOCKS host (drop the `url::Host::parse`
-    /// arm in `canonicalise_proxy_url`) and the socks5 shorthand-loopback row
-    /// passes → RED.
+    /// Falsification: re-add `"socks5"` to `ALLOWED_PROXY_SCHEMES` and the
+    /// public socks row validates → RED.
     #[test]
-    fn validate_proxy_url_canonicalises_non_special_scheme_hosts() {
+    fn validate_proxy_url_refuses_non_special_scheme_hosts() {
         assert!(validate_proxy_url("socks5://127.1:1080").is_err());
         assert!(validate_proxy_url("http://127.1:1080").is_err());
-        assert!(validate_proxy_url("socks5://8.8.8.8:1080").is_ok());
+        assert!(validate_proxy_url("socks5://8.8.8.8:1080").is_err());
+        assert!(validate_proxy_url("http://8.8.8.8:1080").is_ok());
     }
 
     /// SEC-CR-028: a trailing dot names the same host, and IDNA maps the
@@ -1066,7 +1085,7 @@ pub(crate) mod tests {
     /// localhost refusal.
     ///
     /// Falsification: drop the `strip_suffix('.')` in `validate_proxy_url`
-    /// and all four rows are accepted → RED.
+    /// and the rows validate → RED.
     #[test]
     fn validate_proxy_url_refuses_trailing_dot_localhost() {
         for host in [
@@ -1075,19 +1094,20 @@ pub(crate) mod tests {
             "localhost\u{3002}",
             "localhost\u{FF0E}",
         ] {
-            for scheme in ["http", "socks5"] {
+            for scheme in ["http", "https"] {
                 let raw = format!("{scheme}://{host}:3128");
                 assert!(validate_proxy_url(&raw).is_err(), "accepted {raw:?}");
             }
         }
     }
-    /// SEC-CR-001: the url/wreq parser differential. A backslash in the
-    /// authority makes url::Url read host 1.1.1.1 while wreq (non-special
-    /// scheme) reads 127.0.0.1. validate_proxy_url refuses the backslash, and
-    /// the string it returns for a legitimate proxy canonicalises the host so
-    /// the caller never dials the raw input.
+    /// SEC-CR-001: the url/wreq parser differential. A backslash or control
+    /// character in the authority makes one parser read a different host
+    /// than another. validate_proxy_url refuses the illegal byte, and the
+    /// string it returns for a legitimate proxy canonicalises the host so
+    /// the caller never dials the raw input. The `socks*` rows double as
+    /// scheme refusals (issue #179).
     ///
-    /// Falsification: drop the backslash/illegal-char guard and the socks5
+    /// Falsification: drop the backslash/illegal-char guard and the http
     /// backslash row is accepted → RED.
     #[test]
     fn validate_proxy_url_refuses_parser_differential_forms() {
@@ -1110,19 +1130,18 @@ pub(crate) mod tests {
     #[test]
     fn validate_proxy_url_returns_canonical_dial_string() {
         assert_eq!(
-            validate_proxy_url("socks5://8.8.8.8:1080").unwrap(),
-            "socks5://8.8.8.8:1080"
-        );
-        assert_eq!(
             validate_proxy_url("http://alice:pw@8.8.8.8:80").unwrap(),
             "http://alice:pw@8.8.8.8:80" // the dialled port is always explicit
         );
-        // shorthand IPv4 under a non-special scheme is canonicalised
-        // no port on a SOCKS proxy: the SOCKS default (1080) is vetted and
-        // emitted explicitly, so the vetted port is the dialled port
+        // No port given: the scheme default is vetted and emitted
+        // explicitly, so the vetted port is the dialled port.
         assert_eq!(
-            validate_proxy_url("socks5://8.8.8.8").unwrap(),
-            "socks5://8.8.8.8:1080"
+            validate_proxy_url("http://8.8.8.8").unwrap(),
+            "http://8.8.8.8:80"
+        );
+        assert_eq!(
+            validate_proxy_url("https://8.8.8.8").unwrap(),
+            "https://8.8.8.8:443"
         );
     }
 
@@ -1131,65 +1150,96 @@ pub(crate) mod tests {
     #[test]
     fn canonicalise_proxy_url_lowercases_scheme_and_fills_empty_port() {
         for (raw, want) in [
-            ("SOCKS5://127.0.0.1:1081", "socks5://127.0.0.1:1081"),
-            ("socks5://127.0.0.1:", "socks5://127.0.0.1:1080"),
-            ("Socks5H://u:p@8.8.8.8", "socks5h://u:p@8.8.8.8:1080"),
             ("HTTP://8.8.8.8:3128", "http://8.8.8.8:3128"),
+            ("http://8.8.8.8:", "http://8.8.8.8:80"),
+            ("HTTPS://u:p@8.8.8.8", "https://u:p@8.8.8.8:443"),
         ] {
             assert_eq!(canonicalise_proxy_url(raw).unwrap().url, want, "{raw}");
         }
     }
 
     /// SEC-CR-012: a scheme wreq has no intercept for would be ignored and the
-    /// request sent direct. Only the allowlisted schemes validate.
+    /// request sent direct. Only the allowlisted schemes validate — the
+    /// `socks*` family included, since wreq is built without its `socks`
+    /// feature (issue #179).
     ///
     /// Falsification: drop the ALLOWED_PROXY_SCHEMES check in
-    /// canonicalise_proxy_url and the ftp/socks rows validate → RED.
+    /// canonicalise_proxy_url and the refused rows validate → RED.
     #[test]
     fn validate_proxy_url_refuses_unknown_schemes() {
         for raw in [
             "ftp://8.8.8.8:21",
             "socks://8.8.8.8:1080",
+            "socks4://8.8.8.8:1080",
+            "socks4a://8.8.8.8:1080",
+            "socks5://8.8.8.8:1080",
+            "socks5h://8.8.8.8:1080",
             "gopher://8.8.8.8:70",
             "file://8.8.8.8/x",
         ] {
             assert!(validate_proxy_url(raw).is_err(), "accepted {raw}");
         }
-        for ok in [
-            "http://8.8.8.8:3128",
-            "https://8.8.8.8:443",
-            "socks4://8.8.8.8:1080",
-            "socks4a://8.8.8.8:1080",
-            "socks5://8.8.8.8:1080",
-            "socks5h://8.8.8.8:1080",
-        ] {
+        for ok in ["http://8.8.8.8:3128", "https://8.8.8.8:443"] {
             assert!(validate_proxy_url(ok).is_ok(), "refused {ok}");
         }
     }
 
-    /// SEC-CR-013: an explicit :80 on a SOCKS proxy must survive (parsing it
-    /// under http would drop :80 as the default and wreq would dial :1080),
-    /// and a port-less SOCKS proxy must be VETTED at 1080, the port it is
-    /// dialled at.
+    /// #179: wreq is built WITHOUT its `socks` feature, so a SOCKS proxy URL
+    /// is never a SOCKS dial — it would fall through to wreq's auto-proxy
+    /// path and the request can go DIRECT from the real IP. Every `socks*`
+    /// scheme, in any letter case, is refused with an error that names the
+    /// scheme. `http` and `https` still validate.
     ///
-    /// Falsification: parse the SOCKS URL under `http://` in
-    /// `canonicalise_proxy_url` → the :80 row dials :1080 → RED; vet with the
-    /// http default → the allowlist row (listed at :1080) is refused → RED.
+    /// Falsification: re-add `"socks5"` to `ALLOWED_PROXY_SCHEMES` → the
+    /// socks5 rows validate → RED.
+    #[test]
+    fn validate_proxy_url_refuses_socks_schemes() {
+        for (raw, scheme) in [
+            ("socks4://8.8.8.8:1080", "socks4"),
+            ("socks4a://8.8.8.8:1080", "socks4a"),
+            ("socks5://8.8.8.8:1080", "socks5"),
+            ("socks5h://8.8.8.8:1080", "socks5h"),
+            ("SOCKS5://8.8.8.8:1080", "socks5"),
+            ("Socks5H://8.8.8.8:1080", "socks5h"),
+        ] {
+            let err = validate_proxy_url(raw).expect_err("a SOCKS proxy must be refused");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("unsupported proxy scheme"),
+                "{raw}: expected the unsupported-scheme refusal, got {err}"
+            );
+            assert!(
+                msg.contains(scheme),
+                "{raw}: the refusal must name the scheme, got {err}"
+            );
+        }
+        assert!(validate_proxy_url("http://8.8.8.8:3128").is_ok());
+        assert!(validate_proxy_url("https://8.8.8.8:443").is_ok());
+    }
+
+    /// SEC-CR-013: an explicit non-default port must survive
+    /// canonicalisation, and a port-less proxy must be VETTED at the port it
+    /// is actually dialled at — the scheme default — not at whatever port an
+    /// allowlist entry names.
+    ///
+    /// Falsification: vet a port-less URL against a port other than the
+    /// scheme default → the :8080 allowlist row wrongly admits a :80 dial →
+    /// RED.
     #[test]
     #[serial_test::serial]
-    fn validate_proxy_url_socks_ports_are_explicit_and_vetted_at_1080() {
+    fn validate_proxy_url_ports_are_explicit_and_vetted() {
         assert_eq!(
-            validate_proxy_url("socks5://8.8.8.8:80").unwrap(),
-            "socks5://8.8.8.8:80"
+            validate_proxy_url("http://8.8.8.8:81").unwrap(),
+            "http://8.8.8.8:81"
         );
-        unsafe { std::env::set_var(PROXY_ALLOWLIST_ENV, "10.9.9.9:1080") };
-        let listed_default = validate_proxy_url("socks5://10.9.9.9");
-        let listed_80 = validate_proxy_url("socks5://10.9.9.9:80");
+        unsafe { std::env::set_var(PROXY_ALLOWLIST_ENV, "10.9.9.9:8080") };
+        let listed_default = validate_proxy_url("http://10.9.9.9");
+        let listed_8080 = validate_proxy_url("http://10.9.9.9:8080");
         unsafe { std::env::remove_var(PROXY_ALLOWLIST_ENV) };
-        assert_eq!(listed_default.unwrap(), "socks5://10.9.9.9:1080");
+        assert_eq!(listed_8080.unwrap(), "http://10.9.9.9:8080");
         assert!(
-            listed_80.is_err(),
-            "allowlisted at :1080 must not admit :80"
+            listed_default.is_err(),
+            "a port-less proxy is vetted at :80 — the :8080 listing must not admit it"
         );
     }
 }
