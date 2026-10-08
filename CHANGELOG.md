@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.18](https://github.com/anatolykoptev/ox-browser/compare/v0.8.17...v0.8.18) (2026-10-08)
+
+
+### Fixed
+
+* **proxy:** refuse SOCKS proxy schemes wreq is not built to dial ([#179](https://github.com/anatolykoptev/ox-browser/issues/179)) ([#187](https://github.com/anatolykoptev/ox-browser/issues/187)) ([1a2ab43](https://github.com/anatolykoptev/ox-browser/commit/1a2ab4332b0d39850ff1b4d63507025d0fb5cf20))
+
 ## [0.8.17](https://github.com/anatolykoptev/ox-browser/compare/v0.8.16...v0.8.17) (2026-10-08)
 
 
