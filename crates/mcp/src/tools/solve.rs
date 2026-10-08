@@ -44,6 +44,7 @@ impl OxMcpServer {
     pub(crate) async fn do_solve_cf(
         &self,
         input: SolveCfInput,
+        authenticated: bool,
     ) -> Result<CallToolResult, McpError> {
         let ct_str = input.challenge_type.as_deref().unwrap_or("js_challenge");
         let challenge_type = match ct_str {
@@ -81,7 +82,13 @@ impl OxMcpServer {
             return Ok(CallToolResult::success(vec![Content::text(json)]));
         }
 
-        match self.provider.solve(&input.url, challenge_type).await {
+        // ox-browser#177: the provider relays the go-wowa secret only when
+        // the gate authenticated this inbound caller.
+        match self
+            .provider
+            .solve(&input.url, challenge_type, authenticated)
+            .await
+        {
             Ok(solved) => {
                 self.cache.put(&domain, solved.clone());
                 tracing::info!(domain, "challenge solved");

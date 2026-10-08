@@ -57,6 +57,10 @@ anyhow.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+# serve.rs tests drive `wowa_auth::capture_one` + solver test helpers; mirror
+# ox-js's dev-dep so `-p ox-browser` builds standalone, not only via
+# workspace feature unification.
+ox-http = { path = "crates/http", features = ["test-utils"] }
 
 [profile.release]
 opt-level = 3

@@ -3,15 +3,15 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use axum::Json;
-use axum::extract::State;
 use axum::http::StatusCode;
+use axum::{Extension, Json, extract::State};
 use ox_http::deadline::{CallOutcome, bounded, resolve_timeout};
 use ox_http::detect_cloudflare;
 use ox_http::metrics::{classify_fetch_outcome, record_fetch_outcome};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
+use crate::inbound_auth::Authenticated;
 
 /// Request body for `POST /fetch`.
 ///
@@ -69,9 +69,14 @@ pub struct FetchResponse {
 
 pub async fn fetch(
     State(state): State<AppState>,
+    auth: Option<Extension<Authenticated>>,
     Json(req): Json<FetchRequest>,
 ) -> (StatusCode, Json<FetchResponse>) {
     let start = Instant::now();
+    // ox-browser#177: stamp the gate's `ok_secret` decision on every
+    // outbound request — a CF solve on behalf of an authenticated caller
+    // relays the go-wowa secret, an anonymous/bearer caller's never does.
+    let http = state.http_client.with_authenticated(auth.is_some());
 
     // Resolve method: default to POST when a body is supplied (curl --data
     // convention), GET otherwise. Existing callers with no method and no
@@ -141,7 +146,7 @@ pub async fn fetch(
     let deadline = resolve_timeout(req.timeout.or(Some(state.defaults.fetch_timeout_secs)));
     let outcome = bounded(
         deadline,
-        state.http_client.request(
+        http.request(
             &method,
             &req.url,
             body_bytes,
@@ -272,6 +277,94 @@ mod tests {
         )
     }
 
+    /// SEC-CR-016 / ox-browser#177 at the middleware seam: POST /fetch in
+    /// soft mode reaches the solver middleware; the real GoBrowserSolver
+    /// must relay ox-browser's go-wowa secret only when the inbound request
+    /// carried the internal secret (the gate's `ok_secret` marker) — the
+    /// same rule the read chrome fallback and GoBrowserProxy already use.
+    ///
+    /// Falsification: stamp `with_authenticated(true)` unconditionally (or
+    /// attach the secret unconditionally in GoBrowserSolver::solve) and the
+    /// anonymous row carries the secret → RED; stamp `false` and the
+    /// authenticated row loses it → RED.
+    #[tokio::test]
+    async fn fetch_relays_solver_secret_only_when_authenticated() {
+        use crate::inbound_auth::{AuthConfig, Gate, Mode, SECRET_HEADER, protect};
+        use tower::ServiceExt;
+
+        /// Every request hits a genuine CF challenge — the solver middleware
+        /// then calls the CookieProvider.
+        struct AlwaysCfHandler;
+        #[async_trait]
+        impl Handler for AlwaysCfHandler {
+            async fn handle(&self, _req: Request) -> ox_http::Result<HttpResponse> {
+                Err(ox_http::HttpError::Cloudflare(
+                    ox_http::ChallengeType::JsChallenge,
+                    403,
+                    "ray".into(),
+                ))
+            }
+        }
+
+        for (inbound, want_secret) in [(Some("s"), true), (None, false)] {
+            let (wowa, captured) = ox_http::wowa_auth::capture_one(
+                r#"{"status":"ok","cookies":{"cf_clearance":"t"}}"#,
+            )
+            .await;
+            let solver = ox_http::solver_gobrowser::GoBrowserSolver::new(
+                ox_http::solver_gobrowser::GoBrowserConfig {
+                    base_url: wowa,
+                    timeout: Duration::from_secs(5),
+                    internal_secret: "wowa-secret".into(),
+                },
+            );
+            let mut state = state_with_500_handler();
+            state.http_client = Arc::new(HttpClient::with_chain(
+                Arc::new(AlwaysCfHandler),
+                HttpConfig {
+                    cookie_provider: Some(Arc::new(solver)),
+                    cookie_cache: Some(Arc::new(CookieCache::new(Duration::from_secs(60)))),
+                    ..HttpConfig::default()
+                },
+            ));
+            let app = protect(
+                crate::router(state),
+                Gate::new(AuthConfig {
+                    internal_secret: "s".into(),
+                    mcp_token: String::new(),
+                    mode: Mode::Soft,
+                    allow_insecure: false,
+                }),
+            );
+            let mut b =
+                axum::http::Request::post("/fetch").header("content-type", "application/json");
+            if let Some(s) = inbound {
+                b = b.header(SECRET_HEADER, s);
+            }
+            let resp = app
+                .oneshot(
+                    b.body(axum::body::Body::from(r#"{"url":"http://1.1.1.1/p"}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            // The challenge is never cleared (the mock keeps answering CF),
+            // so /fetch 502s either way — what matters is the head the
+            // go-wowa capture server received on /solve.
+            assert_eq!(
+                resp.status(),
+                StatusCode::BAD_GATEWAY,
+                "inbound={inbound:?}"
+            );
+            let head = captured.await.expect("capture");
+            assert_eq!(
+                head.contains("x-internal-secret: wowa-secret"),
+                want_secret,
+                "inbound={inbound:?}: {head}"
+            );
+        }
+    }
+
     // ── F-B: /fetch wrapper contract for 500 responses ───────────────────
     //
     // The retry middleware's idempotency gate creates a deliberate asymmetry
@@ -317,7 +410,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), Json(req)).await;
+        let (status, json) = fetch(State(state), None, Json(req)).await;
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
         assert_eq!(
             json.error.as_deref(),
@@ -340,7 +433,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: Some(120),
         };
-        let (status, json) = fetch(State(state), Json(req)).await;
+        let (status, json) = fetch(State(state), None, Json(req)).await;
         assert_eq!(status, StatusCode::OK, "caller timeout → no 1s bound");
         assert_eq!(json.status, 500);
     }
@@ -360,7 +453,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), Json(req)).await;
+        let (status, json) = fetch(State(state), None, Json(req)).await;
         assert_eq!(status, StatusCode::OK, "POST on 500 → HTTP 200");
         assert_eq!(json.status, 500, "status field carries the origin 500");
         assert!(json.error.is_none(), "error must be None for POST on 500");
@@ -386,7 +479,7 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), Json(req)).await;
+        let (status, json) = fetch(State(state), None, Json(req)).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY, "GET on 500 → HTTP 502");
         assert_eq!(json.status, 0, "status field is 0 for an error");
         assert!(json.error.is_some(), "error must be set for GET on 500");

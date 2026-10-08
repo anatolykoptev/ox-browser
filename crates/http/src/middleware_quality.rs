@@ -153,6 +153,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         }
     }
 

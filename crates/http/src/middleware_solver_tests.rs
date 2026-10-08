@@ -58,6 +58,7 @@ impl CookieProvider for MockProvider {
         &self,
         _url: &str,
         _ct: ChallengeType,
+        _authenticated: bool,
     ) -> std::result::Result<SolvedChallenge, String> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         let mut cookies = HashMap::new();
@@ -79,6 +80,7 @@ impl CookieProvider for BodyProvider {
         &self,
         _url: &str,
         _ct: ChallengeType,
+        _authenticated: bool,
     ) -> std::result::Result<SolvedChallenge, String> {
         let mut cookies = HashMap::new();
         cookies.insert("cf_clearance".into(), "token".into());
@@ -108,6 +110,7 @@ async fn solves_js_challenge_and_retries() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let resp = handler.handle(req).await.unwrap();
     assert_eq!(resp.status, 200);
@@ -156,6 +159,7 @@ async fn post_solve_rechallenge_is_counted() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let err = handler.handle(req).await.unwrap_err();
     assert!(
@@ -199,6 +203,7 @@ async fn uses_cached_cookies() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let resp = handler.handle(req).await.unwrap();
     assert!(resp.body.contains("cf_clearance=cached-tok"));
@@ -231,6 +236,7 @@ async fn block_not_solvable() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let err = handler.handle(req).await.unwrap_err();
     assert!(matches!(
@@ -255,6 +261,7 @@ async fn passes_through_normal_requests() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let resp = handler.handle(req).await.unwrap();
     assert_eq!(resp.status, 200);
@@ -293,6 +300,7 @@ async fn negcache_short_circuits_after_repeated_failures() {
             &self,
             _url: &str,
             _ct: ChallengeType,
+            _authenticated: bool,
         ) -> std::result::Result<SolvedChallenge, String> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             Err("solver unavailable".into())
@@ -328,6 +336,7 @@ async fn negcache_short_circuits_after_repeated_failures() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
 
     // Fire the same URL 6×. Without the guard, the provider would be hit 6×.
@@ -384,6 +393,7 @@ async fn returns_body_from_solver_directly() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let resp = handler.handle(req).await.unwrap();
     assert_eq!(resp.status, 200);
@@ -454,6 +464,7 @@ async fn stale_cached_solution_is_evicted_and_resolved() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let resp = handler.handle(req).await.unwrap();
     assert_eq!(resp.status, 200);
@@ -610,6 +621,7 @@ async fn negcache_blocked_domain_fails_before_first_send() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let err = handler.handle(req).await.unwrap_err();
     assert!(
@@ -664,6 +676,7 @@ async fn inferred_challenge_on_post_returns_original_response() {
         headers: vec![],
         body: Some(b"data".to_vec()),
         proxy: None,
+        authenticated: false,
     };
     let resp = handler.handle(req).await.unwrap();
     assert_eq!(resp.status, 403);
@@ -704,6 +717,7 @@ async fn stale_eviction_survives_solve_failure() {
             &self,
             _url: &str,
             _ct: ChallengeType,
+            _authenticated: bool,
         ) -> std::result::Result<SolvedChallenge, String> {
             Err("solver down".into())
         }
@@ -742,6 +756,7 @@ async fn stale_eviction_survives_solve_failure() {
         headers: vec![],
         body: None,
         proxy: None,
+        authenticated: false,
     };
     let err = handler.handle(req).await.unwrap_err();
     assert!(
@@ -866,6 +881,7 @@ async fn body_from_solver_not_served_for_post() {
         headers: vec![],
         body: Some(b"payload".to_vec()),
         proxy: None,
+        authenticated: false,
     };
     let resp = handler.handle(req).await.unwrap();
     assert_eq!(resp.status, 200);
@@ -876,4 +892,66 @@ async fn body_from_solver_not_served_for_post() {
     );
     assert_ne!(resp.body, "<html>solved content</html>");
     assert_eq!(handler_calls.load(Ordering::SeqCst), 2);
+}
+
+/// ox-browser#177: the inbound gate decision on [`Request::authenticated`]
+/// must reach `CookieProvider::solve` — this is the bridge that lets an
+/// authenticated caller's solves relay the go-wowa secret while anonymous
+/// and bearer-only solves carry none.
+///
+/// Mutation probe: drop `req.authenticated` in `solve_and_retry` (pass a
+/// constant) and the `true` row's recorded flag flips to false → RED.
+#[tokio::test]
+async fn solver_sees_request_authenticated_flag() {
+    use std::sync::Mutex;
+
+    /// Provider that records the `authenticated` flag it was called with.
+    struct RecordingProvider {
+        seen: Arc<Mutex<Vec<bool>>>,
+    }
+    #[async_trait]
+    impl CookieProvider for RecordingProvider {
+        async fn solve(
+            &self,
+            _url: &str,
+            _ct: ChallengeType,
+            authenticated: bool,
+        ) -> std::result::Result<SolvedChallenge, String> {
+            self.seen.lock().unwrap().push(authenticated);
+            let mut cookies = HashMap::new();
+            cookies.insert("cf_clearance".into(), "solved-token".into());
+            Ok(SolvedChallenge {
+                cookies,
+                user_agent: "Test/1.0".into(),
+                body: None,
+            })
+        }
+    }
+
+    for authenticated in [true, false] {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let base: Arc<dyn Handler> = Arc::new(AlwaysCfHandler {
+            call_count: Arc::new(AtomicUsize::new(0)),
+        });
+        let provider: Arc<dyn CookieProvider> = Arc::new(RecordingProvider {
+            seen: Arc::clone(&seen),
+        });
+        // Fresh cache per row so the solve is not served from cache.
+        let cache = Arc::new(CookieCache::new(Duration::from_secs(60)));
+        let handler = chain(vec![solver_middleware(provider, cache)], base);
+        let req = Request {
+            method: "GET".into(),
+            url: "https://example.com/page".into(),
+            headers: vec![],
+            body: None,
+            proxy: None,
+            authenticated,
+        };
+        let _ = handler.handle(req).await;
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &[authenticated],
+            "provider must observe authenticated={authenticated}"
+        );
+    }
 }

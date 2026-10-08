@@ -14,7 +14,8 @@ use crate::cookie_provider::{CookieProvider, SolvedChallenge};
 pub struct GoBrowserConfig {
     pub base_url: String,
     pub timeout: Duration,
-    /// Sent as `X-Internal-Secret` (see [`crate::wowa_auth`]); empty = none.
+    /// Sent as `X-Internal-Secret` only for an authenticated inbound caller
+    /// (see [`crate::wowa_auth`], ox-browser#177); empty = none.
     pub internal_secret: String,
 }
 
@@ -31,6 +32,10 @@ impl Default for GoBrowserConfig {
 pub struct GoBrowserSolver {
     base_url: String,
     client: reqwest::Client,
+    /// ox-browser's go-wowa credential, attached to `/solve` only for an
+    /// authenticated inbound caller — same rule `GoBrowserProxy` applies
+    /// (ox-browser#177 / SEC-CR-016).
+    auth_headers: reqwest::header::HeaderMap,
 }
 
 #[derive(Serialize)]
@@ -70,16 +75,6 @@ impl GoBrowserSolver {
     pub fn new(config: GoBrowserConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
-            // ACCEPTED EXCEPTION (SEC-CR-016, followup ox-browser#177): unlike
-            // GoBrowserProxy and read_pipeline::chrome_fallback, this attaches
-            // the go-wowa secret for any inbound caller, because the solver is
-            // a shared CookieProvider deep in the HttpClient middleware chain
-            // with no per-request auth context. It is tolerated because the
-            // /solve body is fixed (URL + challenge type, never caller actions,
-            // proxy or session) and go-wowa's SolveCF uses a fresh browser
-            // context per call (no shared jar). Gate it once #177 threads the
-            // inbound decision through CookieProvider::solve.
-            .default_headers(crate::wowa_auth::headers(&config.internal_secret))
             // Never follow a redirect with a credentialed request (SEC-CR-010).
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -87,6 +82,7 @@ impl GoBrowserSolver {
         Self {
             base_url: config.base_url,
             client,
+            auth_headers: crate::wowa_auth::headers(&config.internal_secret),
         }
     }
 }
@@ -97,6 +93,7 @@ impl CookieProvider for GoBrowserSolver {
         &self,
         url: &str,
         challenge_type: ChallengeType,
+        authenticated: bool,
     ) -> Result<SolvedChallenge, String> {
         let ct = match challenge_type {
             ChallengeType::JsChallenge => "js_challenge",
@@ -106,14 +103,23 @@ impl CookieProvider for GoBrowserSolver {
         };
 
         let endpoint = format!("{}/solve", self.base_url);
-        let resp = self
-            .client
-            .post(&endpoint)
-            .json(&SolveReq {
-                url: url.to_owned(),
-                challenge_type: ct.to_owned(),
-                timeout_secs: 30,
-            })
+        let rb = self.client.post(&endpoint).json(&SolveReq {
+            url: url.to_owned(),
+            challenge_type: ct.to_owned(),
+            timeout_secs: 30,
+        });
+        // ox-browser#177 / SEC-CR-016: the go-wowa secret is a fleet
+        // credential, not a caller pass-through — attach it only when the
+        // inbound caller was authenticated by the gate (`ok_secret`), the
+        // same rule GoBrowserProxy and read_pipeline::chrome_fallback use.
+        // Anonymous soft-mode and OX_MCP_TOKEN bearer callers reach go-wowa
+        // with no credential: soft mode still serves them, enforce refuses.
+        let rb = if authenticated {
+            rb.headers(self.auth_headers.clone())
+        } else {
+            rb
+        };
+        let resp = rb
             .send()
             .await
             .map_err(|e| format!("go-browser /solve: {e}"))?;

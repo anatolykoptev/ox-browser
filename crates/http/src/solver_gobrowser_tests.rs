@@ -41,11 +41,39 @@ fn solve_resp_empty_body_means_still_challenged() {
     assert!(ch.body.is_none(), "empty body must not become Some(\"\")");
 }
 
-/// go-wowa rejects requests without a credential: the `/solve` call must
-/// carry `X-Internal-Secret`.
+/// ox-browser#177 / SEC-CR-016: a `/solve` call made for an UNAUTHENTICATED
+/// inbound caller (anonymous soft-mode request, or a bearer-only one that
+/// never earned the `ok_secret` marker) must carry NO `X-Internal-Secret` —
+/// the go-wowa secret is a fleet credential, not a caller pass-through.
 ///
-/// Falsification: drop the `.default_headers(...)` line in
-/// `GoBrowserSolver::new` and the captured request has no secret → RED.
+/// Falsification: attach the secret unconditionally (the pre-#177 code did,
+/// via `.default_headers`) and the captured head carries it → RED.
+#[tokio::test]
+async fn solve_sends_no_secret_for_anonymous_caller() {
+    let (url, req) =
+        crate::wowa_auth::capture_one(r#"{"status":"ok","cookies":{"cf_clearance":"t"}}"#).await;
+    let solver = GoBrowserSolver::new(GoBrowserConfig {
+        base_url: url,
+        timeout: Duration::from_secs(5),
+        internal_secret: "s3cret".into(),
+    });
+    solver
+        .solve("https://example.com", ChallengeType::JsChallenge, false)
+        .await
+        .expect("solve");
+    let head = req.await.expect("capture");
+    assert!(
+        !head.contains("x-internal-secret"),
+        "anonymous solve relayed the fleet secret: {head}"
+    );
+}
+
+/// The same /solve call made for an AUTHENTICATED inbound caller (the gate's
+/// `ok_secret` marker) carries `X-Internal-Secret` — go-wowa rejects
+/// credentialed routes without it.
+///
+/// Falsification: drop the `if authenticated` header attach in
+/// `GoBrowserSolver::solve` and the captured request has no secret → RED.
 #[tokio::test]
 async fn solve_sends_internal_secret() {
     let (url, req) =
@@ -56,7 +84,7 @@ async fn solve_sends_internal_secret() {
         internal_secret: "s3cret".into(),
     });
     solver
-        .solve("https://example.com", ChallengeType::JsChallenge)
+        .solve("https://example.com", ChallengeType::JsChallenge, true)
         .await
         .expect("solve");
     let head = req.await.expect("capture");
@@ -78,7 +106,7 @@ async fn solve_does_not_follow_redirects() {
         internal_secret: "s3cret".into(),
     });
     let _ = solver
-        .solve("https://example.com", ChallengeType::JsChallenge)
+        .solve("https://example.com", ChallengeType::JsChallenge, true)
         .await;
     assert!(
         tokio::time::timeout(Duration::from_millis(300), hit)

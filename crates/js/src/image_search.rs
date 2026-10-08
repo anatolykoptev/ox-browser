@@ -3,9 +3,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::Json;
-use axum::extract::State;
 use axum::http::StatusCode;
+use axum::{Extension, Json, extract::State};
 use ox_imagesearch::bing::BingImages;
 use ox_imagesearch::brave::BraveImages;
 use ox_imagesearch::ddg::DdgImages;
@@ -16,6 +15,7 @@ use ox_imagesearch::{ImageEngine, ImageResult};
 use serde::{Deserialize, Serialize};
 
 use super::AppState;
+use crate::inbound_auth::Authenticated;
 
 #[derive(Deserialize)]
 pub struct ImageSearchRequest {
@@ -37,6 +37,7 @@ pub struct ImageSearchResponse {
 
 pub async fn image_search(
     State(state): State<AppState>,
+    auth: Option<Extension<Authenticated>>,
     Json(req): Json<ImageSearchRequest>,
 ) -> (StatusCode, Json<ImageSearchResponse>) {
     let start = Instant::now();
@@ -65,9 +66,9 @@ pub async fn image_search(
     let max_results = req.max_results.unwrap_or(state.defaults.image_max_results);
     let engine_names: Vec<String> = engines.iter().map(|e| e.name().to_owned()).collect();
     let search = ImageSearchEngine::new(engines);
-    let results = search
-        .search(state.http_client.clone(), &req.query, max_results)
-        .await;
+    // ox-browser#177: stamp the gate's `ok_secret` decision — see `fetch`.
+    let http = Arc::new(state.http_client.with_authenticated(auth.is_some()));
+    let results = search.search(http, &req.query, max_results).await;
 
     (
         StatusCode::OK,

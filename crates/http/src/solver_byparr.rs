@@ -121,6 +121,9 @@ impl CookieProvider for ByparrSolver {
         &self,
         url: &str,
         _challenge_type: ChallengeType,
+        // byparr holds no fleet credential — nothing to gate (unlike
+        // GoBrowserSolver, which relays the go-wowa secret only when true).
+        _authenticated: bool,
     ) -> Result<SolvedChallenge, String> {
         // Acquire semaphore permit — blocks if max concurrent solves are in-flight.
         let _permit = self

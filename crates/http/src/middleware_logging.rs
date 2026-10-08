@@ -88,6 +88,7 @@ mod tests {
             headers: vec![],
             body: Some(b"hello".to_vec()),
             proxy: None,
+            authenticated: false,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 201);
@@ -113,6 +114,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         let result = handler.handle(req).await;
         assert!(result.is_err());

@@ -86,6 +86,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         let err = handler.handle(req).await.unwrap_err();
         match err {
@@ -111,6 +112,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 200);
@@ -130,6 +132,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 503);

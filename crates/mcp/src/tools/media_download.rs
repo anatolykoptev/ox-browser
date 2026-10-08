@@ -30,6 +30,7 @@ impl OxMcpServer {
     pub(crate) async fn do_media_download(
         &self,
         input: MediaDownloadInput,
+        authenticated: bool,
     ) -> Result<CallToolResult, McpError> {
         let media_type = match input.media_type.as_deref() {
             Some("video") => ox_media::MediaType::Video,
@@ -47,7 +48,9 @@ impl OxMcpServer {
             min_width: input.min_width,
         };
 
-        let result = ox_media::download(&self.http_client, &req, &self.media_config)
+        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
+        let http = self.http_client.with_authenticated(authenticated);
+        let result = ox_media::download(&http, &req, &self.media_config)
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 

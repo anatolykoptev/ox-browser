@@ -46,11 +46,13 @@ impl OxMcpServer {
     pub(crate) async fn do_readability(
         &self,
         input: ReadabilityInput,
+        authenticated: bool,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
 
         let resp = self
             .http_client
+            .with_authenticated(authenticated)
             .get(&input.url)
             .await
             .map_err(|e| McpError::internal_error(format!("fetch: {e}"), None))?;
@@ -59,12 +61,15 @@ impl OxMcpServer {
             (resp.body, "direct")
         } else if ox_http::content::should_fallback(resp.status) {
             tracing::info!(url = %input.url, status = resp.status, "readability: non-200, attempting headless fallback");
-            let html = self.headless_fetch(&input.url).await.map_err(|e| {
-                McpError::internal_error(
-                    format!("HTTP {} + headless fallback failed: {e}", resp.status),
-                    None,
-                )
-            })?;
+            let html = self
+                .headless_fetch(&input.url, authenticated)
+                .await
+                .map_err(|e| {
+                    McpError::internal_error(
+                        format!("HTTP {} + headless fallback failed: {e}", resp.status),
+                        None,
+                    )
+                })?;
             (html, "solved")
         } else {
             return Err(McpError::internal_error(
@@ -100,16 +105,20 @@ impl OxMcpServer {
     }
 
     /// Solve via headless browser, cache cookies, retry GET.
-    async fn headless_fetch(&self, url: &str) -> Result<String, String> {
+    async fn headless_fetch(&self, url: &str, authenticated: bool) -> Result<String, String> {
         let domain = Url::parse(url)
             .ok()
             .and_then(|u| u.host_str().map(String::from))
             .unwrap_or_default();
-        let solved = self.provider.solve(url, ChallengeType::JsChallenge).await?;
+        let solved = self
+            .provider
+            .solve(url, ChallengeType::JsChallenge, authenticated)
+            .await?;
         self.cache.put(&domain, solved);
         tracing::info!(domain = %domain, "headless solved, retrying GET");
         let retry = self
             .http_client
+            .with_authenticated(authenticated)
             .get(url)
             .await
             .map_err(|e| format!("retry after solve: {e}"))?;

@@ -93,7 +93,13 @@ impl SolverHandler {
         record_solver_outcome(SolverOutcome::Attempted);
         let started = std::time::Instant::now();
         info!(domain = %domain, challenge = %challenge_type, "solver: solving challenge");
-        let solution = match self.provider.solve(&req.url, challenge_type).await {
+        // #177: the inbound caller's gate decision rides on the request —
+        // the provider relays ox-browser's go-wowa secret only when true.
+        let solution = match self
+            .provider
+            .solve(&req.url, challenge_type, req.authenticated)
+            .await
+        {
             Ok(s) => {
                 record_solver_outcome(SolverOutcome::Solved);
                 info!(

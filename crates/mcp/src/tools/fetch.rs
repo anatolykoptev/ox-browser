@@ -95,9 +95,17 @@ impl OxMcpServer {
     /// Parity with the REST `/fetch` endpoint: method defaults to GET (or
     /// POST when a body is supplied), body with explicit GET is rejected,
     /// content_type defaults to `application/json` when a body is present.
-    pub(crate) async fn do_fetch(&self, input: FetchInput) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_fetch(
+        &self,
+        input: FetchInput,
+        authenticated: bool,
+    ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
         let elapsed = || start.elapsed().as_millis() as u64;
+        // ox-browser#177: stamp the gate's `ok_secret` decision on outbound
+        // requests — a CF solve relays the go-wowa secret only for an
+        // authenticated inbound caller.
+        let http = self.http_client.with_authenticated(authenticated);
 
         // Resolve method: default to POST when a body is supplied (curl
         // --data convention), GET otherwise.
@@ -149,7 +157,7 @@ impl OxMcpServer {
         let deadline = resolve_timeout(input.timeout.or(Some(self.defaults.fetch_timeout_secs)));
         let outcome = bounded(
             deadline,
-            self.http_client.request(
+            http.request(
                 &method,
                 &input.url,
                 body_bytes,
@@ -222,13 +230,16 @@ impl OxMcpServer {
     pub(crate) async fn do_fetch_smart(
         &self,
         input: FetchSmartInput,
+        authenticated: bool,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
         let save = input.save_to_file;
         let url = input.url.clone();
+        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
+        let http = self.http_client.with_authenticated(authenticated);
 
         // Middleware chain handles CF detect + solve + retry automatically.
-        match self.http_client.get(&input.url).await {
+        match http.get(&input.url).await {
             Ok(resp) => Ok(smart_ok(
                 resp.status,
                 resp.body,

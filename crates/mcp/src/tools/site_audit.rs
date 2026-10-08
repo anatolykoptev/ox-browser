@@ -27,11 +27,14 @@ impl OxMcpServer {
     pub(crate) async fn do_site_audit(
         &self,
         input: SiteAuditInput,
+        authenticated: bool,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
         let focus = input.focus.as_deref().unwrap_or("all");
+        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
+        let http = self.http_client.with_authenticated(authenticated);
 
-        let resp = match self.http_client.get(&input.url).await {
+        let resp = match http.get(&input.url).await {
             Ok(r) => r,
             Err(e) => {
                 let json = serde_json::json!({

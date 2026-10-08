@@ -73,6 +73,10 @@ async fn read_page_inner(
     site_handlers: &[SiteHandler],
     authenticated: bool,
 ) -> ReadOutput {
+    // #177: stamp the inbound gate decision on every Request this pipeline
+    // sends, so a CF solve on behalf of an authenticated caller relays
+    // ox-browser's go-wowa secret — and an anonymous one never does.
+    let http = http.with_authenticated(authenticated);
     let start = Instant::now();
     crate::metrics::record_read();
     let format = ContentFormat::from_param(&params.format);
@@ -88,7 +92,7 @@ async fn read_page_inner(
     }
 
     // Site-specific handlers (rewrite URL, still go through middleware chain)
-    if let Some(output) = crate::site_reddit::try_reddit_json(http, params, format, start).await {
+    if let Some(output) = crate::site_reddit::try_reddit_json(&http, params, format, start).await {
         if output.error.is_none() {
             crate::metrics::record_fetch_success();
         }

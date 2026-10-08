@@ -193,6 +193,7 @@ mod tests {
             headers: vec![],
             body: Some("payload".into()),
             proxy: None,
+            authenticated: false,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 403, "original response status passes through");
@@ -219,6 +220,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -241,6 +243,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -263,6 +266,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
 
         let result = handler.handle(req).await;
@@ -286,6 +290,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -308,6 +313,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -340,6 +346,7 @@ mod tests {
             headers: vec![],
             body: Some(b"{}".to_vec()),
             proxy: None,
+            authenticated: false,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -371,6 +378,7 @@ mod tests {
             headers: vec![],
             body: Some(b"{}".to_vec()),
             proxy: None,
+            authenticated: false,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -411,6 +419,7 @@ mod tests {
             headers: vec![],
             body: Some(b"{}".to_vec()),
             proxy: None,
+            authenticated: false,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 500);
@@ -438,6 +447,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -465,6 +475,7 @@ mod tests {
             headers: vec![],
             body: Some(b"{}".to_vec()),
             proxy: None,
+            authenticated: false,
         };
 
         let resp = handler.handle(req).await.unwrap();
@@ -488,6 +499,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         };
 
         let resp = handler.handle(req).await.unwrap();

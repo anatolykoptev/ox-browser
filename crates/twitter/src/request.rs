@@ -92,6 +92,7 @@ async fn do_graphql_get(
         headers,
         body: None,
         proxy: None,
+        authenticated: false,
     };
 
     let resp = crate::tw_http::twitter_http()
@@ -136,6 +137,7 @@ async fn activate_guest_token() -> Result<String, String> {
         ],
         body: None,
         proxy: None,
+        authenticated: false,
     };
 
     let resp = crate::tw_http::twitter_http()

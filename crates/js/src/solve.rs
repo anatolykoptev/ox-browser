@@ -2,14 +2,14 @@
 
 use std::collections::HashMap;
 
-use axum::Json;
-use axum::extract::State;
 use axum::http::StatusCode;
+use axum::{Extension, Json, extract::State};
 use ox_http::ChallengeType;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::AppState;
+use crate::inbound_auth::Authenticated;
 
 /// Incoming solve request body.
 #[derive(Deserialize)]
@@ -37,6 +37,7 @@ pub struct SolveResponse {
 
 pub async fn solve(
     State(state): State<AppState>,
+    auth: Option<Extension<Authenticated>>,
     Json(req): Json<SolveRequest>,
 ) -> (StatusCode, Json<SolveResponse>) {
     let challenge_type = match req.challenge_type.as_str() {
@@ -75,7 +76,13 @@ pub async fn solve(
         );
     }
 
-    match state.provider.solve(&req.url, challenge_type).await {
+    // ox-browser#177: the provider relays the go-wowa secret only when the
+    // gate authenticated this inbound caller (`ok_secret` marker present).
+    match state
+        .provider
+        .solve(&req.url, challenge_type, auth.is_some())
+        .await
+    {
         Ok(solved) => {
             state.cache.put(&domain, solved.clone());
             tracing::info!(domain, "challenge solved");

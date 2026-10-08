@@ -27,10 +27,13 @@ impl OxMcpServer {
     pub(crate) async fn do_security_scan(
         &self,
         input: SecurityScanInput,
+        authenticated: bool,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
+        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
+        let http = self.http_client.with_authenticated(authenticated);
 
-        let resp = match self.http_client.get(&input.url).await {
+        let resp = match http.get(&input.url).await {
             Ok(r) => r,
             Err(e) => {
                 let json = serde_json::json!({

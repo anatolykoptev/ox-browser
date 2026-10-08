@@ -5,14 +5,14 @@
 
 use std::time::Instant;
 
-use axum::Json;
-use axum::extract::State;
 use axum::http::StatusCode;
+use axum::{Extension, Json, extract::State};
 use ox_http::ChallengeType;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::AppState;
+use crate::inbound_auth::Authenticated;
 
 #[derive(Deserialize)]
 pub struct ReadabilityRequest {
@@ -45,11 +45,14 @@ pub struct ReadabilityResponse {
 
 pub async fn readability(
     State(state): State<AppState>,
+    auth: Option<Extension<Authenticated>>,
     Json(req): Json<ReadabilityRequest>,
 ) -> (StatusCode, Json<ReadabilityResponse>) {
     let start = Instant::now();
+    // ox-browser#177: stamp the gate's `ok_secret` decision — see `fetch`.
+    let http = state.http_client.with_authenticated(auth.is_some());
 
-    let resp = match state.http_client.get(&req.url).await {
+    let resp = match http.get(&req.url).await {
         Ok(r) => r,
         Err(e) => {
             return (
@@ -71,7 +74,7 @@ pub async fn readability(
             status = resp.status,
             "readability: non-200, attempting headless fallback"
         );
-        match headless_fetch(&state, &req.url).await {
+        match headless_fetch(&state, &req.url, auth.is_some()).await {
             Ok(body) => (body, "solved"),
             Err(e) => {
                 return (
@@ -123,7 +126,11 @@ pub async fn readability(
 }
 
 /// Solve via headless browser, cache cookies, retry GET.
-async fn headless_fetch(state: &AppState, url: &str) -> Result<String, String> {
+async fn headless_fetch(
+    state: &AppState,
+    url: &str,
+    authenticated: bool,
+) -> Result<String, String> {
     let domain = Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(String::from))
@@ -131,13 +138,14 @@ async fn headless_fetch(state: &AppState, url: &str) -> Result<String, String> {
 
     let solved = state
         .provider
-        .solve(url, ChallengeType::JsChallenge)
+        .solve(url, ChallengeType::JsChallenge, authenticated)
         .await?;
     state.cache.put(&domain, solved);
 
     tracing::info!(domain = %domain, "headless solved, retrying GET");
     let retry = state
         .http_client
+        .with_authenticated(authenticated)
         .get(url)
         .await
         .map_err(|e| format!("retry after solve: {e}"))?;

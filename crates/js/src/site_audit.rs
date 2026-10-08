@@ -3,13 +3,13 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use axum::Json;
-use axum::extract::State;
 use axum::http::StatusCode;
+use axum::{Extension, Json, extract::State};
 use ox_intelligence::{accessibility, audit, performance, seo};
 use serde::Deserialize;
 
 use crate::AppState;
+use crate::inbound_auth::Authenticated;
 
 #[derive(Deserialize)]
 pub struct SiteAuditRequest {
@@ -20,12 +20,15 @@ pub struct SiteAuditRequest {
 
 pub async fn site_audit(
     State(state): State<AppState>,
+    auth: Option<Extension<Authenticated>>,
     Json(req): Json<SiteAuditRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let start = Instant::now();
     let focus = req.focus.as_deref().unwrap_or("all");
+    // ox-browser#177: stamp the gate's `ok_secret` decision — see `fetch`.
+    let http = state.http_client.with_authenticated(auth.is_some());
 
-    let resp = match state.http_client.get(&req.url).await {
+    let resp = match http.get(&req.url).await {
         Ok(r) => r,
         Err(e) => {
             return (

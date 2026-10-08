@@ -116,6 +116,7 @@ mod tests {
             headers: vec![],
             body: None,
             proxy: None,
+            authenticated: false,
         }
     }
 
@@ -206,6 +207,7 @@ mod tests {
             headers: vec![],
             body: Some("payload".into()),
             proxy: None,
+            authenticated: false,
         };
         let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status, 403);

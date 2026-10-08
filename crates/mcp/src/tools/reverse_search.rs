@@ -29,6 +29,7 @@ impl OxMcpServer {
     pub(crate) async fn do_reverse_search(
         &self,
         input: ReverseSearchInput,
+        authenticated: bool,
     ) -> Result<CallToolResult, McpError> {
         let _start = Instant::now();
 
@@ -47,9 +48,9 @@ impl OxMcpServer {
             .max_results
             .unwrap_or(self.defaults.reverse_max_results);
         let search = ReverseSearchEngine::new(engines);
-        let result = search
-            .search(self.http_client.clone(), &input.url, max_results)
-            .await;
+        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
+        let http = Arc::new(self.http_client.with_authenticated(authenticated));
+        let result = search.search(http, &input.url, max_results).await;
 
         let json =
             serde_json::to_string(&result).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));

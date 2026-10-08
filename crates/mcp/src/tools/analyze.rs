@@ -70,10 +70,17 @@ struct AssetInfo {
 
 impl OxMcpServer {
     /// Fetch a page and run full site intelligence analysis.
-    pub(crate) async fn do_analyze(&self, input: AnalyzeInput) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn do_analyze(
+        &self,
+        input: AnalyzeInput,
+        authenticated: bool,
+    ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
+        // ox-browser#177: stamp the gate's `ok_secret` decision on outbound
+        // requests — see do_fetch.
+        let http = self.http_client.with_authenticated(authenticated);
 
-        let resp = match self.http_client.get(&input.url).await {
+        let resp = match http.get(&input.url).await {
             Ok(r) => r,
             Err(e) => {
                 let r = AnalyzeResult {

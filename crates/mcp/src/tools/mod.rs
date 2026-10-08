@@ -84,8 +84,10 @@ impl OxMcpServer {
     async fn fetch(
         &self,
         Parameters(input): Parameters<FetchInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_fetch(input).await
+        self.do_fetch(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -95,8 +97,10 @@ impl OxMcpServer {
     async fn fetch_smart(
         &self,
         Parameters(input): Parameters<FetchSmartInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_fetch_smart(input).await
+        self.do_fetch_smart(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -106,8 +110,10 @@ impl OxMcpServer {
     async fn analyze(
         &self,
         Parameters(input): Parameters<AnalyzeInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_analyze(input).await
+        self.do_analyze(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -117,8 +123,10 @@ impl OxMcpServer {
     async fn solve_cf(
         &self,
         Parameters(input): Parameters<SolveCfInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_solve_cf(input).await
+        self.do_solve_cf(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -128,8 +136,10 @@ impl OxMcpServer {
     async fn security_scan(
         &self,
         Parameters(input): Parameters<SecurityScanInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_security_scan(input).await
+        self.do_security_scan(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -139,8 +149,10 @@ impl OxMcpServer {
     async fn readability(
         &self,
         Parameters(input): Parameters<ReadabilityInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_readability(input).await
+        self.do_readability(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -163,8 +175,10 @@ impl OxMcpServer {
     async fn image_search(
         &self,
         Parameters(input): Parameters<ImageSearchInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_image_search(input).await
+        self.do_image_search(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -174,8 +188,10 @@ impl OxMcpServer {
     async fn crawl(
         &self,
         Parameters(input): Parameters<CrawlInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_crawl(input).await
+        self.do_crawl(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -185,8 +201,10 @@ impl OxMcpServer {
     async fn media_download(
         &self,
         Parameters(input): Parameters<MediaDownloadInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_media_download(input).await
+        self.do_media_download(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -196,8 +214,10 @@ impl OxMcpServer {
     async fn reverse_image_search(
         &self,
         Parameters(input): Parameters<ReverseSearchInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_reverse_search(input).await
+        self.do_reverse_search(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(
@@ -207,8 +227,10 @@ impl OxMcpServer {
     async fn site_audit(
         &self,
         Parameters(input): Parameters<SiteAuditInput>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        self.do_site_audit(input).await
+        self.do_site_audit(input, chrome_interact::authenticated(&ctx.extensions))
+            .await
     }
 
     #[tool(

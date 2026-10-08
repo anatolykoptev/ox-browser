@@ -42,6 +42,7 @@ impl OxMcpServer {
     pub(crate) async fn do_image_search(
         &self,
         input: ImageSearchInput,
+        authenticated: bool,
     ) -> Result<CallToolResult, McpError> {
         let start = Instant::now();
 
@@ -68,9 +69,9 @@ impl OxMcpServer {
         let engine_names: Vec<String> = engines.iter().map(|e| e.name().to_owned()).collect();
         let max_results = input.max_results.unwrap_or(self.defaults.image_max_results);
         let search = ImageSearchEngine::new(engines);
-        let images = search
-            .search(self.http_client.clone(), &input.query, max_results)
-            .await;
+        // ox-browser#177: stamp the gate's `ok_secret` decision — see do_fetch.
+        let http = Arc::new(self.http_client.with_authenticated(authenticated));
+        let images = search.search(http, &input.query, max_results).await;
 
         let result = ImageSearchResult {
             images,

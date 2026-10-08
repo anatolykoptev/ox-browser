@@ -210,6 +210,7 @@ mod tests {
             &self,
             _url: &str,
             _ct: ox_http::ChallengeType,
+            _authenticated: bool,
         ) -> Result<ox_http::SolvedChallenge, String> {
             Err("none".into())
         }
@@ -436,6 +437,86 @@ mod tests {
             .await
             .expect("the /read chrome fallback never called go-wowa")
             .expect("capture")
+    }
+
+    /// The served app whose CF `CookieProvider` is the REAL GoBrowserSolver
+    /// pointed at `wowa_url` (a capture server) with ox-browser's go-wowa
+    /// secret "wowa-secret".
+    fn app_with_solver(wowa_url: &str) -> axum::Router {
+        let provider: Arc<dyn ox_http::CookieProvider> =
+            Arc::new(ox_http::solver_gobrowser::GoBrowserSolver::new(
+                ox_http::solver_gobrowser::GoBrowserConfig {
+                    base_url: wowa_url.into(),
+                    timeout: Duration::from_secs(5),
+                    internal_secret: "wowa-secret".into(),
+                },
+            ));
+        let proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(
+            "http://127.0.0.1:1".into(),
+            "",
+        ));
+        let state = ox_js::AppState::new(
+            provider,
+            Arc::new(cookie_cache::CookieCache::new(Duration::from_secs(60))),
+            Arc::new(HttpClient::new(ox_http::HttpConfig::default()).unwrap()),
+            EndpointDefaults::default(),
+            ox_media::MediaConfig::default(),
+            Arc::clone(&proxy),
+        );
+        let gate = Gate::new(AuthConfig {
+            internal_secret: "s".into(),
+            mcp_token: String::new(),
+            mode: Mode::Soft,
+            allow_insecure: false,
+        });
+        build_app(
+            state,
+            EndpointDefaults::default(),
+            ox_media::MediaConfig::default(),
+            proxy,
+            gate,
+        )
+    }
+
+    /// SEC-CR-016 / ox-browser#177, REST call site: in soft mode POST /solve
+    /// reaches the real GoBrowserSolver — go-wowa gets ox-browser's secret
+    /// only when the inbound request carried the internal secret (the
+    /// `ok_secret` marker). Anonymous and bearer-free requests get a
+    /// credential-free solve.
+    ///
+    /// Falsification: replace `auth.is_some()` with `true` in
+    /// crates/js/src/solve.rs and the anonymous /solve is relayed with the
+    /// secret → RED; with `false` the authenticated row loses it → RED.
+    #[tokio::test]
+    async fn rest_solve_relays_secret_only_when_authenticated() {
+        for (inbound, want_secret) in [(Some("s"), true), (None, false)] {
+            let (wowa, captured) = ox_http::wowa_auth::capture_one(
+                r#"{"status":"ok","cookies":{"cf_clearance":"t"},"user_agent":"UA"}"#,
+            )
+            .await;
+            let a = app_with_solver(&wowa);
+            let mut b =
+                axum::http::Request::post("/solve").header("content-type", "application/json");
+            if let Some(s) = inbound {
+                b = b.header("x-internal-secret", s);
+            }
+            let resp = a
+                .oneshot(
+                    b.body(axum::body::Body::from(
+                        r#"{"url":"https://example.com/p","challenge_type":"js_challenge"}"#,
+                    ))
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200, "inbound={inbound:?}");
+            let head = captured.await.expect("capture");
+            assert_eq!(
+                head.contains("x-internal-secret: wowa-secret"),
+                want_secret,
+                "inbound={inbound:?}: {head}"
+            );
+        }
     }
 
     /// SEC-CR-014, REST call site: in soft mode, POST /read reaches the chrome
