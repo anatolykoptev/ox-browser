@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.19](https://github.com/anatolykoptev/ox-browser/compare/v0.8.18...v0.8.19) (2026-10-09)
+
+
+### Added
+
+* **fetch:** reach .onion services through a Tor HTTP tunnel ([#188](https://github.com/anatolykoptev/ox-browser/issues/188)) ([#191](https://github.com/anatolykoptev/ox-browser/issues/191)) ([344fb94](https://github.com/anatolykoptev/ox-browser/commit/344fb9414f4fd755c668e86be2a7e3b846085b14))
+
 ## [0.8.18](https://github.com/anatolykoptev/ox-browser/compare/v0.8.17...v0.8.18) (2026-10-08)
 
 
