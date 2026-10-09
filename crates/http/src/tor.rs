@@ -10,14 +10,13 @@
 //!
 //! # Transport
 //!
-//! Tor's `HTTPTunnelPort` is an HTTP **CONNECT**-only proxy (an absolute-URI
-//! forward request gets an empty reply — krolik-server#537). wreq issues a
-//! CONNECT only for `https://` targets; for `http://` targets it sends a
-//! forward-proxy request. So only `https://` onion targets can be fetched
-//! today, and `http://` onion targets are refused with the distinct
-//! [`HttpError::OnionHttpUnsupported`] instead of failing opaquely at the
-//! proxy. Lifting that needs a tunnel-for-http option in the pinned wreq fork
-//! (or an HTTP-to-SOCKS adapter in front of Tor).
+//! `OX_TOR_PROXY` points at an HTTP proxy that forwards to Tor's SOCKS port
+//! with remote name resolution (Privoxy `forward-socks5t`, the `tor-privoxy`
+//! service). It speaks forward-proxy HTTP for `http://` targets and CONNECT for
+//! `https://` ones, which is exactly what wreq sends, so both reach Tor. Tor's
+//! own `HTTPTunnelPort` would not do: it is CONNECT-only and an absolute-URI
+//! forward request (what wreq sends for `http://`) gets an empty reply
+//! (krolik-server#537).
 //!
 //! # Config
 //!
@@ -92,26 +91,17 @@ pub fn refuse_requires_tor() -> HttpError {
     HttpError::OnionRequiresTor
 }
 
-/// Refusal for an `http://` `.onion` target (see the module doc).
-pub fn refuse_http_unsupported() -> HttpError {
-    crate::metrics::record_onion_refused();
-    HttpError::OnionHttpUnsupported
+/// Config gate shared by the pre-resolve tier and the terminal handler: an
+/// onion target is admitted only when a Tor proxy is configured.
+pub fn check_onion_target(tor_configured: bool) -> Result<()> {
+    if tor_configured {
+        Ok(())
+    } else {
+        Err(refuse_requires_tor())
+    }
 }
 
-/// Scheme/config gate shared by the pre-resolve tier and the terminal
-/// handler. Order matters: an unset proxy is reported first, whatever the
-/// scheme.
-pub fn check_onion_target(scheme: &str, tor_configured: bool) -> Result<()> {
-    if !tor_configured {
-        return Err(refuse_requires_tor());
-    }
-    if !scheme.eq_ignore_ascii_case("https") {
-        return Err(refuse_http_unsupported());
-    }
-    Ok(())
-}
-
-/// A validated Tor HTTP-tunnel proxy.
+/// A validated Tor HTTP proxy (`OX_TOR_PROXY`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TorProxy {
     /// Canonical `http://host:port` URL to dial.
@@ -134,7 +124,7 @@ impl TorProxy {
             return Err(invalid("must be http://host:port"));
         };
         if !scheme.eq_ignore_ascii_case("http") {
-            return Err(invalid("scheme must be http (Tor HTTPTunnelPort)"));
+            return Err(invalid("scheme must be http (the proxy in front of Tor)"));
         }
         // The url crate drops `:80` for http, so the explicit-port rule is
         // decided on the raw authority.

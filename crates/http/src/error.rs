@@ -54,14 +54,6 @@ pub enum HttpError {
         "onion_requires_tor: .onion targets are reachable only through OX_TOR_PROXY, which is not configured"
     )]
     OnionRequiresTor,
-
-    /// An `http://` `.onion` target. Tor's HTTPTunnelPort is CONNECT-only and
-    /// wreq tunnels only `https://` targets, so a plain-http onion cannot be
-    /// carried — refused rather than failing opaquely at the proxy.
-    #[error(
-        "onion_http_unsupported: only https:// .onion targets can be tunnelled through OX_TOR_PROXY"
-    )]
-    OnionHttpUnsupported,
 }
 
 impl HttpError {
@@ -87,8 +79,7 @@ impl HttpError {
             | Self::ProxyPool(_)
             | Self::BodyTooLarge { .. }
             | Self::BodyDecodeError(_)
-            | Self::OnionRequiresTor
-            | Self::OnionHttpUnsupported => false,
+            | Self::OnionRequiresTor => false,
         }
     }
 }

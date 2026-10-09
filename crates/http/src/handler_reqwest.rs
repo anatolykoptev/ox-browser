@@ -435,10 +435,7 @@ impl WreqHandler {
         let Some(ref client) = self.tor else {
             return Err(crate::tor::refuse_requires_tor());
         };
-        let scheme = url::Url::parse(&req.url)
-            .map(|u| u.scheme().to_owned())
-            .map_err(|e| HttpError::InvalidUrl(e.to_string()))?;
-        crate::tor::check_onion_target(&scheme, true)?;
+        crate::tor::check_onion_target(true)?;
         crate::tor::record_tor_request();
         self.execute_with(client, req, true).await
     }

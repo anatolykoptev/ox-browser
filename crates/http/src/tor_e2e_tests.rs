@@ -27,6 +27,7 @@ use crate::middleware::{Handler, Request};
 use crate::middleware_ssrf::LookupHost;
 use crate::{CookieCache, HttpClient, HttpConfig, HttpError, HttpResponse, WreqHandler};
 
+const TOR_OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
 const TOR_REFUSES: &[u8] = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
 
 /// A TCP stub: counts accepted connections, records each connection's first
@@ -248,22 +249,36 @@ async fn per_request_proxy_cannot_override_tor() {
     assert_eq!(decoy.accepts(), 0, "the per-request proxy was dialled");
 }
 
-/// `http://` onion: the tunnel cannot carry it (CONNECT-only Tor + wreq
-/// forward mode) — a distinct error, and no DNS and no socket.
+/// `http://` onion: wreq sends a forward-proxy request (absolute-form request
+/// line) to the proxy in front of Tor, which resolves the name itself. Zero
+/// local DNS lookups, one request at the stub, and the stub's answer comes back.
 ///
-/// RED when `check_onion_target` (tor.rs) stops refusing a non-https scheme.
+/// RED when `validate_url_with`'s onion branch stops covering http (e.g.
+/// `if is_onion_host(host) && scheme == "https"` in middleware_ssrf.rs): the
+/// name then reaches the counting lookup (`lookups` == 1).
 #[tokio::test]
-async fn http_onion_is_refused_distinctly() {
-    let tor = Stub::spawn(TOR_REFUSES).await;
-    let (lookup, lookups) = counting_lookup();
-    let client = HttpClient::with_lookup(config(Some(tor.proxy_url())), lookup).expect("client");
-    let res = client.execute(get("http://foo.onion/", None)).await;
-    assert!(
-        matches!(res, Err(HttpError::OnionHttpUnsupported)),
-        "got {res:?}"
-    );
-    assert_eq!(lookups.load(Ordering::SeqCst), 0);
-    assert_eq!(tor.accepts(), 0);
+async fn http_onion_reaches_the_tor_stub_as_a_forward_proxy_request() {
+    for (url, want) in [
+        ("http://foo.onion/", "get http://foo.onion/ http/1.1"),
+        ("http://FOO.ONION./x", "get http://foo.onion./x http/1.1"),
+    ] {
+        let tor = Stub::spawn(TOR_OK).await;
+        let (lookup, lookups) = counting_lookup();
+        let client =
+            HttpClient::with_lookup(config(Some(tor.proxy_url())), lookup).expect("client");
+        let res = client.execute(get(url, None)).await;
+        assert!(
+            matches!(&res, Ok(r) if r.status == 200 && r.body == "ok"),
+            "{url}: expected the stub's 200, got {res:?}"
+        );
+        let lines: Vec<String> = tor.lines().iter().map(|l| l.to_ascii_lowercase()).collect();
+        assert_eq!(lines, vec![want.to_owned()], "{url}: stub request lines");
+        assert_eq!(
+            lookups.load(Ordering::SeqCst),
+            0,
+            "{url}: local DNS lookup for an onion name"
+        );
+    }
 }
 
 /// wreq resolver that maps every name to one address (the "direct" listener).
@@ -277,47 +292,58 @@ impl Resolve for MapAll {
     }
 }
 
-/// A refusing Tor stub is an error, and a "direct" listener (reachable through
-/// the handler's direct-fallback sibling) receives nothing.
+/// A failing Tor proxy is an error, and a "direct" listener (reachable through
+/// the handler's direct-fallback sibling) receives nothing. Two shapes: an
+/// `http://` onion whose Tor proxy is DEAD (connection refused — exactly what
+/// `looks_like_proxy_dial_failure` treats as fallback-eligible for an http
+/// target at `max_redirects == 0`), and an `https://` onion whose tunnel the
+/// proxy refuses.
 ///
-/// RED requires BOTH edits: delete the `if tor_bound { return primary; }` gate
-/// in `handle_hop` AND widen `looks_like_proxy_dial_failure` past HTTP targets
-/// (proxy_fallback.rs `is_http_target`). With only the gate removed the
-/// classifier — which excludes https targets by design — still blocks the
-/// fallback, so this test pins the gate against a future classifier change
-/// rather than against today's classifier.
+/// RED when the `if tor_bound { return primary; }` gate in `handle_hop`
+/// (handler_reqwest.rs) is removed: the http case then falls back to the
+/// direct sibling and `direct.accepts()` becomes 1.
 #[tokio::test]
 async fn tor_failure_never_falls_back_to_direct() {
-    let tor = Stub::spawn(TOR_REFUSES).await;
-    let direct = Stub::spawn(TOR_REFUSES).await;
-    let cfg = config(Some(tor.proxy_url()));
-    let tor_client = HttpClient::build_tor_client(&cfg, None)
-        .expect("tor client")
-        .expect("configured");
-    let direct_client = wreq::Client::builder()
-        .dns_resolver(MapAll(direct.addr))
-        .timeout(Duration::from_secs(3))
-        .no_proxy()
-        .build()
-        .expect("direct client");
-    let base: Arc<dyn Handler> = Arc::new(
-        WreqHandler::new(direct_client.clone(), false, 0, 1 << 20)
-            .with_tor(tor_client)
-            .with_direct_fallback(direct_client),
-    );
-    let client = HttpClient::with_chain(base, cfg);
-    let url = format!("https://foo.onion:{}/", direct.addr.port());
-    let res = client.execute(get(&url, None)).await;
-    assert!(
-        res.is_err(),
-        "a refused tunnel must be an error, got {res:?}"
-    );
-    assert_eq!(tor.lines().len(), 1, "tor stub saw {:?}", tor.lines());
-    assert_eq!(
-        direct.accepts(),
-        0,
-        "the failure fell back to a direct connection"
-    );
+    for scheme in ["http", "https"] {
+        let direct = Stub::spawn(TOR_REFUSES).await;
+        let tor = Stub::spawn(TOR_REFUSES).await;
+        let tor_proxy = if scheme == "http" {
+            // A port nobody listens on: the proxy dial itself fails.
+            let l = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let port = l.local_addr().expect("addr").port();
+            drop(l);
+            format!("http://127.0.0.1:{port}")
+        } else {
+            tor.proxy_url()
+        };
+        let cfg = config(Some(tor_proxy));
+        let tor_client = HttpClient::build_tor_client(&cfg, None)
+            .expect("tor client")
+            .expect("configured");
+        let direct_client = wreq::Client::builder()
+            .dns_resolver(MapAll(direct.addr))
+            .timeout(Duration::from_secs(3))
+            .no_proxy()
+            .build()
+            .expect("direct client");
+        let base: Arc<dyn Handler> = Arc::new(
+            WreqHandler::new(direct_client.clone(), false, 0, 1 << 20)
+                .with_tor(tor_client)
+                .with_direct_fallback(direct_client),
+        );
+        let client = HttpClient::with_chain(base, cfg);
+        let url = format!("{scheme}://foo.onion:{}/", direct.addr.port());
+        let res = client.execute(get(&url, None)).await;
+        assert_eq!(
+            direct.accepts(),
+            0,
+            "{scheme}: the Tor failure fell back to a direct connection"
+        );
+        assert!(
+            res.is_err(),
+            "{scheme}: a failing Tor proxy must be an error, got {res:?}"
+        );
+    }
 }
 
 // ── leak tests: the layers above the terminal handler ─────────────────────

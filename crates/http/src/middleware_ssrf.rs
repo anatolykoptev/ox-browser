@@ -105,7 +105,7 @@ pub fn validate_url(url_str: &str) -> Result<()> {
 ///
 /// A `.onion` host is decided FIRST — before the private-IP allowlist, the IP
 /// parse and the DNS lookup — because it must never be resolved locally
-/// (RFC 7686 §2): with Tor configured it is admitted (https only, see
+/// (RFC 7686 §2): with Tor configured it is admitted (see
 /// [`crate::tor`]) and routed by the terminal handler; without, it is refused
 /// as `onion_requires_tor`.
 pub fn validate_url_with(
@@ -129,7 +129,7 @@ pub fn validate_url_with(
     let port = url.port_or_known_default().unwrap_or(80);
 
     if crate::tor::is_onion_host(host) {
-        return crate::tor::check_onion_target(scheme, tor_configured);
+        return crate::tor::check_onion_target(tor_configured);
     }
 
     // Narrow escape hatch for sidecars / integration tests. Read fresh on
