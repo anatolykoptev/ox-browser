@@ -76,7 +76,7 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 - Both `http://` and `https://` onion targets work.
 - A per-request `proxy`, the proxy pool and the direct fallback never apply to a Tor-bound request; a Tor failure is an error, not a reason to go direct.
 - A redirect that crosses the onion boundary (onion to clearnet or back) is re-routed through normal routing, never followed in place.
-- Onion URLs are never handed to the CF solver, the residential proxy or the chrome render path.
+- Onion URLs never reach a third party. `/fetch`, `/read` and the other endpoints that fetch through the shared client skip the CF solver, the residential retry, the challenge classifiers and `/read`'s Chrome fallback for them. The endpoints that would hand the caller's URL to a third party refuse an onion URL up front with `onion_requires_tor` (REST and MCP): `/solve` (`solve_cf`), `/chrome/interact` (`chrome_interact`, including URLs nested in actions), `/images/reverse` (`reverse_image_search`) and readability's headless-solver fallback. `/media/download` has no Tor path and refuses them too.
 - Default call timeout for `.onion` is 60 s (circuit build) unless the caller sets `timeout`.
 - Metrics: `oxbrowser_tor_requests_total`, `oxbrowser_onion_refused_total`.
 

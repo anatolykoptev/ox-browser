@@ -33,6 +33,12 @@ impl OxMcpServer {
         input: ReverseSearchInput,
         auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
+        // The URL is embedded in a Yandex / Lens query: an onion name would go
+        // to a third party. Refuse before any engine is built.
+        if let Some(e) = ox_http::tor::refuse_onion_for_third_party(&input.url) {
+            let json = serde_json::json!({"error": e.to_string()});
+            return Ok(CallToolResult::error(vec![Content::text(json.to_string())]));
+        }
         let _start = Instant::now();
 
         let mut engines: Vec<Arc<dyn ReverseEngine>> = Vec::new();

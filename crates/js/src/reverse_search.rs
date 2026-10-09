@@ -4,8 +4,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::{Json, extract::State};
-use ox_reverse::{GoogleLens, ReverseEngine, ReverseResult, ReverseSearchEngine, YandexImages};
+use ox_reverse::{GoogleLens, ReverseEngine, ReverseSearchEngine, YandexImages};
 use serde::Deserialize;
 
 use super::AppState;
@@ -26,7 +27,16 @@ pub async fn reverse_search(
     State(state): State<AppState>,
     auth: InboundAuth,
     Json(req): Json<ReverseSearchRequest>,
-) -> (StatusCode, Json<ReverseResult>) {
+) -> axum::response::Response {
+    // The URL is embedded in a Yandex / Lens query: an onion name would go to a
+    // third party. Refuse before any engine is built.
+    if let Some(e) = ox_http::tor::refuse_onion_for_third_party(&req.url) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response();
+    }
     let _start = Instant::now();
 
     let mut engines: Vec<Arc<dyn ReverseEngine>> = Vec::new();
@@ -50,5 +60,5 @@ pub async fn reverse_search(
     let http = Arc::new(state.client_for(auth));
     let result = search.search(http, &req.url, max_results).await;
 
-    (StatusCode::OK, Json(result))
+    (StatusCode::OK, Json(result)).into_response()
 }

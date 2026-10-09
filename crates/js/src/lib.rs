@@ -173,6 +173,9 @@ async fn metrics() -> ([(axum::http::header::HeaderName, &'static str); 1], Stri
 mod auth_relay_tests;
 
 #[cfg(test)]
+mod onion_refusal_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;

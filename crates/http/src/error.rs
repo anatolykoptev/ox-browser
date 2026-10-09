@@ -51,7 +51,7 @@ pub enum HttpError {
     /// Refused before any DNS or socket activity — the onion name must not
     /// leak to a resolver, a pooled proxy or a direct connection.
     #[error(
-        "onion_requires_tor: .onion targets are reachable only through OX_TOR_PROXY, which is not configured"
+        "onion_requires_tor: a .onion target can only be fetched through OX_TOR_PROXY by /fetch and /read; it is refused when OX_TOR_PROXY is not configured and by endpoints that would hand the URL to a third party"
     )]
     OnionRequiresTor,
 }

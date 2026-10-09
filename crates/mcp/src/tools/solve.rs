@@ -48,6 +48,18 @@ impl OxMcpServer {
         input: SolveCfInput,
         auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
+        // An onion URL handed to the solver would be fetched by Byparr /
+        // go-wowa outside Tor: refuse before any cache read or outbound call.
+        if let Some(e) = ox_http::tor::refuse_onion_for_third_party(&input.url) {
+            let r = SolveResult {
+                status: "error".into(),
+                cookies: None,
+                user_agent: None,
+                error: Some(e.to_string()),
+            };
+            let json = serde_json::to_string(&r).unwrap_or_default();
+            return Ok(CallToolResult::error(vec![Content::text(json)]));
+        }
         let ct_str = input.challenge_type.as_deref().unwrap_or("js_challenge");
         let challenge_type = match ct_str {
             "js_challenge" => ChallengeType::JsChallenge,

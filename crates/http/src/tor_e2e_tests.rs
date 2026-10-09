@@ -40,6 +40,11 @@ struct Stub {
 
 impl Stub {
     async fn spawn(reply: &'static [u8]) -> Stub {
+        Self::spawn_vec(reply.to_vec()).await
+    }
+
+    async fn spawn_vec(reply: Vec<u8>) -> Stub {
+        let reply: Arc<Vec<u8>> = Arc::new(reply);
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
         let addr = listener.local_addr().expect("stub addr");
         let accepts = Arc::new(AtomicUsize::new(0));
@@ -49,6 +54,7 @@ impl Stub {
             while let Ok((mut sock, _)) = listener.accept().await {
                 a.fetch_add(1, Ordering::SeqCst);
                 let l = Arc::clone(&l);
+                let reply = Arc::clone(&reply);
                 tokio::spawn(async move {
                     let mut buf = Vec::new();
                     let mut chunk = [0u8; 512];
@@ -61,7 +67,7 @@ impl Stub {
                     let text = String::from_utf8_lossy(&buf);
                     let line = text.lines().next().unwrap_or("").to_owned();
                     l.lock().expect("lines lock").push(line);
-                    let _ = sock.write_all(reply).await;
+                    let _ = sock.write_all(&reply).await;
                     let _ = sock.shutdown().await;
                 });
             }
@@ -580,5 +586,218 @@ fn redirects_are_rerouted_only_across_the_onion_boundary() {
             &redirect_resp(200, "https://example.com/", "https://b.onion/")
         )
         .is_none()
+    );
+}
+
+// ── redirects, build branches, metrics (through the production constructor,
+//    max_redirects > 0 so wreq's redirect policies are live) ──────────────
+
+fn config_redirects(tor_proxy: Option<String>) -> HttpConfig {
+    HttpConfig {
+        max_redirects: 5,
+        ..config(tor_proxy)
+    }
+}
+
+/// Counting lookup that also records the names it was asked about.
+fn recording_lookup() -> (LookupHost, Arc<Mutex<Vec<String>>>) {
+    let names = Arc::new(Mutex::new(Vec::new()));
+    let n = Arc::clone(&names);
+    let lookup: LookupHost = Arc::new(move |host: &str, _port: u16| {
+        n.lock().expect("names lock").push(host.to_owned());
+        Err(std::io::Error::other("no dns in tests"))
+    });
+    (lookup, names)
+}
+
+fn redirect_to(location: &str) -> Vec<u8> {
+    format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        .into_bytes()
+}
+
+/// An onion answering `302 Location: <private target>` must be refused by the
+/// SSRF check on the re-routed hop, and a loopback listener standing in for a
+/// "direct" target must see nothing. Only the handler's own re-validation of
+/// the hop stands between this redirect and an internal service: a literal-IP
+/// first request skips the connect-time resolver.
+///
+/// RED when `validate_url_with` is deleted from the boundary-redirect loop in
+/// `WreqHandler::handle` (handler_reqwest.rs): the hop is dialled and
+/// `direct.accepts()` becomes 1 (or the metadata IP is dialled and the error
+/// is no longer "SSRF blocked").
+#[tokio::test]
+async fn onion_redirect_to_a_private_target_is_refused_by_ssrf() {
+    let direct = Stub::spawn(TOR_REFUSES).await;
+    for target in [
+        "http://169.254.169.254/latest/meta-data".to_owned(),
+        format!("http://127.0.0.1:{}/", direct.addr.port()),
+    ] {
+        let tor = Stub::spawn_vec(redirect_to(&target)).await;
+        let (lookup, _) = counting_lookup();
+        let client = HttpClient::with_lookup(config_redirects(Some(tor.proxy_url())), lookup)
+            .expect("client");
+        let res = client.execute(get("http://foo.onion/", None)).await;
+        assert_eq!(
+            direct.accepts(),
+            0,
+            "{target}: the redirect reached a private listener"
+        );
+        let err = res.expect_err(&target).to_string();
+        assert!(
+            err.contains("SSRF blocked"),
+            "{target}: expected an SSRF refusal, got {err}"
+        );
+        assert_eq!(
+            tor.lines().len(),
+            1,
+            "{target}: tor stub saw {:?}",
+            tor.lines()
+        );
+    }
+}
+
+/// An onion answering a redirect to a clearnet host leaves Tor: the Tor client
+/// does not follow it in place (the stub would see a second request) and the
+/// new URL re-enters normal routing (its host reaches the pre-resolve lookup).
+///
+/// RED when `tor_redirect_policy` (ssrf_connect.rs) stops handing a
+/// non-onion hop back (`crosses_onion_boundary(host, true) => attempt.stop()`
+/// disabled): wreq follows the hop through Tor, the stub sees a second request
+/// line and the clearnet name never reaches the lookup.
+#[tokio::test]
+async fn onion_redirect_to_clearnet_reenters_normal_routing() {
+    let tor = Stub::spawn_vec(redirect_to("http://clearnet.test/x")).await;
+    let (lookup, names) = recording_lookup();
+    let client =
+        HttpClient::with_lookup(config_redirects(Some(tor.proxy_url())), lookup).expect("client");
+    let _ = client.execute(get("http://foo.onion/", None)).await;
+    let lines = tor.lines();
+    assert_eq!(
+        lines.len(),
+        1,
+        "the clearnet hop was followed through Tor: {lines:?}"
+    );
+    let names = names.lock().expect("names lock").clone();
+    assert!(
+        names.iter().any(|n| n == "clearnet.test"),
+        "the clearnet hop never re-entered routing, lookups: {names:?}"
+    );
+    assert!(
+        names.iter().all(|n| !n.contains("onion")),
+        "an onion name reached the lookup: {names:?}"
+    );
+}
+
+/// A clearnet request served through a static proxy that answers
+/// `302 Location: http://foo.onion/` must hand the hop to the Tor client; the
+/// proxy must never see the onion name.
+///
+/// RED when `ssrf_redirect_policy` (ssrf_connect.rs) stops hands-off at the
+/// onion boundary (`crosses_onion_boundary(host, false) => attempt.stop()`
+/// deleted): wreq follows the hop through the static proxy and its stub gets a
+/// `GET http://foo.onion/` line.
+#[tokio::test]
+async fn clearnet_redirect_to_onion_goes_to_tor_not_the_proxy() {
+    let pool = Stub::spawn_vec(redirect_to("http://foo.onion/")).await;
+    let tor = Stub::spawn(TOR_OK).await;
+    let (lookup, _) = counting_lookup();
+    let cfg = HttpConfig {
+        proxy_url: Some(pool.proxy_url()),
+        ..config_redirects(Some(tor.proxy_url()))
+    };
+    let client = HttpClient::with_lookup(cfg, lookup).expect("client");
+    let res = client.execute(get("http://clearnet.test/", None)).await;
+    let pool_lines: Vec<String> = pool
+        .lines()
+        .iter()
+        .map(|l| l.to_ascii_lowercase())
+        .collect();
+    assert_eq!(
+        pool_lines,
+        vec!["get http://clearnet.test/ http/1.1".to_owned()],
+        "the proxy saw the onion hop"
+    );
+    let tor_lines: Vec<String> = tor.lines().iter().map(|l| l.to_ascii_lowercase()).collect();
+    assert_eq!(tor_lines, vec!["get http://foo.onion/ http/1.1".to_owned()]);
+    assert!(
+        matches!(&res, Ok(r) if r.status == 200 && r.body == "ok"),
+        "got {res:?}"
+    );
+}
+
+/// Every `HttpClient::build` branch wires the Tor client: an onion request
+/// reaches the Tor stub (CONNECT) and the branch's own proxy never sees it.
+///
+/// RED per branch when `.with_tor_opt(tor_client.clone())` is dropped from it
+/// (client.rs): the handler has no Tor client, refuses the request, and the
+/// stub sees nothing. Pool and fallback (static / residential) are the
+/// branches that carry a proxy a request could otherwise leak to.
+#[tokio::test]
+async fn every_build_branch_routes_onion_to_tor() {
+    for branch in ["direct", "static_proxy", "pool", "residential_fallback"] {
+        let tor = Stub::spawn(TOR_REFUSES).await;
+        let decoy = Stub::spawn(TOR_REFUSES).await;
+        let mut cfg = config_redirects(Some(tor.proxy_url()));
+        match branch {
+            "static_proxy" => cfg.proxy_url = Some(decoy.proxy_url()),
+            "pool" => {
+                cfg.proxy_pool = Some(Arc::new(crate::StaticPool::new(vec![decoy.proxy_url()])));
+            }
+            "residential_fallback" => cfg.residential_proxy = Some(decoy.proxy_url()),
+            _ => {}
+        }
+        let (lookup, lookups) = counting_lookup();
+        let client = HttpClient::with_lookup(cfg, lookup).expect("client");
+        let _ = client.execute(get("https://foo.onion/", None)).await;
+        let lines = tor.lines();
+        assert_eq!(lines.len(), 1, "{branch}: tor stub saw {lines:?}");
+        assert!(
+            lines[0]
+                .to_ascii_lowercase()
+                .starts_with("connect foo.onion:443"),
+            "{branch}: {:?}",
+            lines[0]
+        );
+        assert_eq!(
+            decoy.accepts(),
+            0,
+            "{branch}: the branch's proxy was dialled"
+        );
+        assert_eq!(
+            lookups.load(Ordering::SeqCst),
+            0,
+            "{branch}: local DNS lookup"
+        );
+    }
+}
+
+/// A dead Tor proxy counts under `oxbrowser_tor_failures_total{kind="dial"}`
+/// and NOT under the Webshare-health `proxy_dial` signal.
+///
+/// RED when `used_proxy && !tor_bound` loses its `!tor_bound` for the dial
+/// metric (handler_reqwest.rs), or `record_tor_outcome` is not called.
+#[tokio::test]
+async fn tor_outage_counts_tor_failures_not_proxy_dial() {
+    use crate::metrics::{PROXY_DIAL_TOTAL, TOR_FAILURE_DIAL};
+    let l = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = l.local_addr().expect("addr").port();
+    drop(l);
+    let (lookup, _) = counting_lookup();
+    let client = HttpClient::with_lookup(config(Some(format!("http://127.0.0.1:{port}"))), lookup)
+        .expect("client");
+    let (dial_before, proxy_before) = (
+        TOR_FAILURE_DIAL.load(Ordering::SeqCst),
+        PROXY_DIAL_TOTAL.load(Ordering::SeqCst),
+    );
+    let res = client.execute(get("https://foo.onion/", None)).await;
+    assert!(res.is_err());
+    assert!(
+        TOR_FAILURE_DIAL.load(Ordering::SeqCst) > dial_before,
+        "tor_failures{{kind=dial}} did not move"
+    );
+    assert_eq!(
+        PROXY_DIAL_TOTAL.load(Ordering::SeqCst),
+        proxy_before,
+        "a Tor outage bumped the Webshare proxy_dial signal"
     );
 }

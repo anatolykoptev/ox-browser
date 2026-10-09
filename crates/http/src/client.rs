@@ -96,7 +96,8 @@ impl HttpClient {
                     max_body_bytes,
                 )
                 .with_direct_fallback(direct_client)
-                .with_tor_opt(tor_client.clone()),
+                .with_tor_opt(tor_client.clone())
+                .with_lookup(Arc::clone(&lookup)),
             )
         } else if needs_fallback {
             Arc::new(
@@ -107,7 +108,8 @@ impl HttpClient {
                     max_body_bytes,
                 )
                 .with_direct_fallback(direct_client)
-                .with_tor_opt(tor_client.clone()),
+                .with_tor_opt(tor_client.clone())
+                .with_lookup(Arc::clone(&lookup)),
             )
         } else {
             Arc::new(
@@ -117,7 +119,8 @@ impl HttpClient {
                     max_redirects,
                     max_body_bytes,
                 )
-                .with_tor_opt(tor_client.clone()),
+                .with_tor_opt(tor_client.clone())
+                .with_lookup(Arc::clone(&lookup)),
             )
         };
 

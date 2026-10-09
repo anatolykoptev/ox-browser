@@ -48,10 +48,12 @@ pub const ONION_DEFAULT_CALL_TIMEOUT_SECS: u64 = 60;
 /// only stops a dead tunnel from living forever.
 pub const TOR_CLIENT_TIMEOUT_SECS: u64 = 120;
 
-/// `true` if `host` is a `.onion` name: case-insensitive, one trailing root
-/// dot tolerated (`FOO.ONION.`), and the bare TLD `onion` itself.
+/// `true` if `host` is a `.onion` name: case-insensitive, trailing root dots
+/// tolerated (`FOO.ONION.`), and the bare TLD `onion` itself.
 pub fn is_onion_host(host: &str) -> bool {
-    let host = host.strip_suffix('.').unwrap_or(host);
+    // ALL trailing root dots: `foo.onion..` is still the onion name to a
+    // resolver that tolerates it.
+    let host = host.trim_end_matches('.');
     let Some(tld) = host.rsplit('.').next() else {
         return false;
     };
@@ -101,6 +103,30 @@ pub fn check_onion_target(tor_configured: bool) -> Result<()> {
     }
 }
 
+/// Lowercase and strip trailing root dots: the one normal form both the stored
+/// proxy host and every name the resolver is asked about are compared in.
+fn normalise_host(host: &str) -> String {
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Third-party endpoints (CF solver, Chrome render, reverse image search)
+/// forward the caller's URL to a service that fetches outside Tor, so an onion
+/// name must never reach them. `Some(refusal)` when `url` is an onion URL.
+pub fn refuse_onion_for_third_party(url: &str) -> Option<HttpError> {
+    is_onion_url(url).then(refuse_requires_tor)
+}
+
+/// `true` if any string anywhere in `value` is an onion URL (free-form request
+/// bodies such as `/chrome/interact` carry URLs in nested actions).
+pub fn json_mentions_onion(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(s) => is_onion_url(s),
+        serde_json::Value::Array(a) => a.iter().any(json_mentions_onion),
+        serde_json::Value::Object(o) => o.values().any(json_mentions_onion),
+        _ => false,
+    }
+}
+
 /// A validated Tor HTTP proxy (`OX_TOR_PROXY`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TorProxy {
@@ -114,7 +140,7 @@ pub struct TorProxy {
 impl TorProxy {
     /// Validate an `OX_TOR_PROXY` value: `http` scheme, explicit port, no
     /// credentials, no path/query. Where the proxy points is NOT vetted — it is
-    /// operator config and legitimately an internal address (`tor:9080`).
+    /// operator config and legitimately an internal address (`tor-privoxy:8118`).
     pub fn parse(raw: &str) -> Result<Self> {
         let invalid = |why: &str| HttpError::InvalidUrl(format!("{TOR_PROXY_ENV}: {why}"));
         // Only the explicit `http://` form: `https` would need a TLS hop to
@@ -142,7 +168,7 @@ impl TorProxy {
         }
         Ok(Self {
             url: canonical.url,
-            host: canonical.host.to_ascii_lowercase(),
+            host: normalise_host(&canonical.host),
         })
     }
 
@@ -190,7 +216,7 @@ impl TorProxyResolver {
         F: FnOnce(String) -> Fut,
         Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
     {
-        let host = name.strip_suffix('.').unwrap_or(name).to_ascii_lowercase();
+        let host = normalise_host(name);
         if is_onion_host(&host) {
             return Err(Box::new(SsrfBlockedError(
                 "onion_requires_tor: a .onion name is never resolved locally".into(),
@@ -249,6 +275,8 @@ mod tests {
             ("foo.onion", true),
             ("FOO.ONION", true),
             ("foo.onion.", true),
+            ("foo.onion..", true),
+            ("FOO.ONION...", true),
             ("FOO.ONION.", true),
             ("a.b.foo.onion", true),
             ("onion", true),
@@ -292,21 +320,21 @@ mod tests {
 
     #[test]
     fn tor_proxy_parse_accepts_and_refuses() {
-        let ok = TorProxy::parse("http://tor:9080").expect("hostname proxy");
-        assert_eq!(ok.url(), "http://tor:9080");
+        let ok = TorProxy::parse("http://tor-privoxy:8118").expect("hostname proxy");
+        assert_eq!(ok.url(), "http://tor-privoxy:8118");
         let ok = TorProxy::parse("http://127.0.0.1:9080/").expect("private IP proxy is the point");
         assert_eq!(ok.url(), "http://127.0.0.1:9080");
         // Explicit :80 must be required even though the url crate drops it.
         assert!(TorProxy::parse("http://tor:80").is_ok());
         for bad in [
-            "tor:9080",
+            "tor-privoxy:8118",
             "http://tor",
             "http://tor:",
-            "https://tor:9080",
+            "https://tor-privoxy:8118",
             "socks5://tor:9050",
-            "http://u:p@tor:9080",
-            "http://tor:9080/path",
-            "http://tor:9080?x=1",
+            "http://u:p@tor-privoxy:8118",
+            "http://tor-privoxy:8118/path",
+            "http://tor-privoxy:8118?x=1",
             "http://:9080",
             "",
         ] {
@@ -316,7 +344,7 @@ mod tests {
 
     #[test]
     fn tor_proxy_errors_do_not_echo_credentials() {
-        let err = TorProxy::parse("http://user:hunter2@tor:9080")
+        let err = TorProxy::parse("http://user:hunter2@tor-privoxy:8118")
             .unwrap_err()
             .to_string();
         assert!(!err.contains("hunter2"), "credential leaked: {err}");
@@ -324,18 +352,35 @@ mod tests {
 
     #[tokio::test]
     async fn tor_resolver_admits_only_its_proxy_host_and_never_onion() {
-        let r = TorProxy::parse("http://Tor:9080").unwrap().resolver();
+        // Stored with a trailing dot and mixed case: both sides normalise alike.
+        let r = TorProxy::parse("http://Tor-Privoxy.:8118")
+            .unwrap()
+            .resolver();
         let calls = std::sync::atomic::AtomicUsize::new(0);
         let lookup = |_: String| {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Ok(vec![SocketAddr::from(([172, 20, 0, 5], 0))]) }
         };
         // The proxy host resolves even though the answer is private.
-        let got = r.resolve_with("TOR", &lookup).await.expect("proxy host");
-        assert_eq!(got.len(), 1);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        for name in [
+            "tor-privoxy",
+            "TOR-PRIVOXY",
+            "tor-privoxy.",
+            "Tor-Privoxy..",
+        ] {
+            let before = calls.load(Ordering::SeqCst);
+            let got = r.resolve_with(name, &lookup).await.expect(name);
+            assert_eq!(got.len(), 1, "{name}");
+            assert_eq!(calls.load(Ordering::SeqCst), before + 1, "{name}");
+        }
         // Anything else, including an onion, is refused without a lookup.
-        for name in ["example.com", "foo.onion", "FOO.ONION.", "tor.evil.com"] {
+        for name in [
+            "example.com",
+            "foo.onion",
+            "FOO.ONION.",
+            "foo.onion..",
+            "tor.evil.com",
+        ] {
             let before = calls.load(Ordering::SeqCst);
             assert!(r.resolve_with(name, &lookup).await.is_err(), "{name}");
             assert_eq!(calls.load(Ordering::SeqCst), before, "{name} did a lookup");

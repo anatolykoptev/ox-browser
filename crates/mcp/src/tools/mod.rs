@@ -89,6 +89,10 @@ impl OxMcpServer {
 #[path = "auth_relay_tests.rs"]
 mod auth_relay_tests;
 
+#[cfg(test)]
+#[path = "onion_refusal_tests.rs"]
+mod onion_refusal_tests;
+
 #[tool_router]
 impl OxMcpServer {
     #[tool(

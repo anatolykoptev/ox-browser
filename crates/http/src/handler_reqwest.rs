@@ -67,6 +67,9 @@ pub struct WreqHandler {
     /// requests use ONLY this client: never `client`, the pool, a per-request
     /// proxy or `direct_client`.
     tor: Option<Client>,
+    /// Pre-resolve DNS lookup used to vet a re-routed redirect hop (the system
+    /// resolver in production; injectable for tests).
+    lookup: crate::middleware_ssrf::LookupHost,
 }
 
 impl WreqHandler {
@@ -95,6 +98,7 @@ impl WreqHandler {
             max_redirects,
             max_body_bytes,
             tor: None,
+            lookup: crate::middleware_ssrf::system_lookup(),
         }
     }
 
@@ -117,7 +121,16 @@ impl WreqHandler {
             max_redirects,
             max_body_bytes,
             tor: None,
+            lookup: crate::middleware_ssrf::system_lookup(),
         }
+    }
+
+    /// Use `lookup` instead of the system resolver for the pre-resolve check
+    /// of re-routed redirect hops.
+    #[must_use]
+    pub fn with_lookup(mut self, lookup: crate::middleware_ssrf::LookupHost) -> Self {
+        self.lookup = lookup;
+        self
     }
 
     /// Attach the Tor client used for every `.onion` request. See
@@ -335,7 +348,7 @@ impl Handler for WreqHandler {
             crate::middleware_ssrf::validate_url_with(
                 &next.url,
                 self.tor.is_some(),
-                crate::middleware_ssrf::system_lookup().as_ref(),
+                self.lookup.as_ref(),
             )?;
             req = next;
         }
@@ -367,7 +380,9 @@ impl WreqHandler {
         // attribution heuristic (is_proxy_attributed_402 / looks_like_proxy_402)
         // was removed because a relayed response can never prove proxy-side
         // attribution (issue #90).
-        if used_proxy && matches!(&primary, Ok(resp) if resp.status == 402) {
+        // Tor is not Webshare: its outcomes feed `oxbrowser_tor_*`, not the
+        // proxy 402 / dial signals the operator reads as Webshare health.
+        if used_proxy && !tor_bound && matches!(&primary, Ok(resp) if resp.status == 402) {
             crate::metrics::record_proxy_402();
         }
 
@@ -382,8 +397,9 @@ impl WreqHandler {
         // though the degradation decision below refuses it. The gap between
         // this and `PROXY_DIAL_FALLBACK_TOTAL` is the signal #86 says needs
         // watching. The scheme gate lives ONLY on the degradation decision.
-        let is_proxy_dial =
-            used_proxy && matches!(&primary, Err(HttpError::Request(e)) if e.is_proxy_connect());
+        let is_proxy_dial = used_proxy
+            && !tor_bound
+            && matches!(&primary, Err(HttpError::Request(e)) if e.is_proxy_connect());
         if is_proxy_dial {
             crate::metrics::record_proxy_dial();
         }
@@ -397,6 +413,7 @@ impl WreqHandler {
         // dial-failure classifier below would otherwise be the only thing
         // standing between a Tor outage and a clearnet attempt.
         if tor_bound {
+            record_tor_outcome(&primary);
             return primary;
         }
         let Some(ref direct) = self.direct_client else {
@@ -439,6 +456,19 @@ impl WreqHandler {
         crate::tor::record_tor_request();
         self.execute_with(client, req, true).await
     }
+}
+
+/// Count a Tor-bound failure under `oxbrowser_tor_failures_total{kind}`.
+fn record_tor_outcome(res: &Result<HttpResponse>) {
+    let kind = match res {
+        Err(HttpError::Request(e)) if e.is_timeout() => "timeout",
+        Err(HttpError::Timeout(_)) => "timeout",
+        Err(HttpError::Request(e)) if e.is_proxy_connect() || e.is_connect() => "dial",
+        Err(_) => "http_error",
+        Ok(r) if (500..600).contains(&r.status) => "http_error",
+        Ok(_) => return,
+    };
+    crate::metrics::record_tor_failure(kind);
 }
 
 /// If `resp` is a redirect whose target lies on the other side of the onion

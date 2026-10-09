@@ -40,6 +40,19 @@ pub async fn solve(
     auth: InboundAuth,
     Json(req): Json<SolveRequest>,
 ) -> (StatusCode, Json<SolveResponse>) {
+    // An onion URL handed to the solver would be fetched by Byparr / go-wowa
+    // outside Tor: refuse before any cache read or outbound call.
+    if let Some(e) = ox_http::tor::refuse_onion_for_third_party(&req.url) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(SolveResponse {
+                status: "error".into(),
+                cookies: None,
+                user_agent: None,
+                error: Some(e.to_string()),
+            }),
+        );
+    }
     let challenge_type = match req.challenge_type.as_str() {
         "js_challenge" => ChallengeType::JsChallenge,
         "managed_challenge" | "turnstile" => ChallengeType::Turnstile,
