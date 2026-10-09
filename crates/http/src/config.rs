@@ -73,6 +73,12 @@ pub struct HttpConfig {
     /// Default: 50 MB (matches webclaw prior art; the largest legitimate
     /// pages are a few MB).
     pub max_body_bytes: u64,
+    /// Tor HTTP-tunnel proxy (`OX_TOR_PROXY=http://host:port`). The one place
+    /// a private/internal proxy address is accepted, and used ONLY for
+    /// `.onion` targets, which are never routed any other way. `None` →
+    /// `.onion` targets are refused (`onion_requires_tor`). Validated by
+    /// `TorProxy::parse` when the client is built.
+    pub tor_proxy: Option<String>,
 }
 
 impl Default for HttpConfig {
@@ -98,6 +104,7 @@ impl Default for HttpConfig {
             render_cache: None,
             solver_negcache: None,
             max_body_bytes: 50 * 1024 * 1024, // 50 MB — see field doc
+            tor_proxy: None,
         }
     }
 }

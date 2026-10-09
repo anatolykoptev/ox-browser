@@ -62,6 +62,14 @@ pub struct WreqHandler {
     /// `HttpConfig::max_body_bytes` at construction so every caller through
     /// the middleware chain inherits the cap without each remembering.
     max_body_bytes: u64,
+    /// Client for Tor-bound (`.onion`) requests, built with the Tor HTTP-tunnel
+    /// proxy baked in. `None` → `.onion` targets are refused. Tor-bound
+    /// requests use ONLY this client: never `client`, the pool, a per-request
+    /// proxy or `direct_client`.
+    tor: Option<Client>,
+    /// Pre-resolve DNS lookup used to vet a re-routed redirect hop (the system
+    /// resolver in production; injectable for tests).
+    lookup: crate::middleware_ssrf::LookupHost,
 }
 
 impl WreqHandler {
@@ -89,6 +97,8 @@ impl WreqHandler {
             client_has_static_proxy,
             max_redirects,
             max_body_bytes,
+            tor: None,
+            lookup: crate::middleware_ssrf::system_lookup(),
         }
     }
 
@@ -110,6 +120,33 @@ impl WreqHandler {
             client_has_static_proxy,
             max_redirects,
             max_body_bytes,
+            tor: None,
+            lookup: crate::middleware_ssrf::system_lookup(),
+        }
+    }
+
+    /// Use `lookup` instead of the system resolver for the pre-resolve check
+    /// of re-routed redirect hops.
+    #[must_use]
+    pub fn with_lookup(mut self, lookup: crate::middleware_ssrf::LookupHost) -> Self {
+        self.lookup = lookup;
+        self
+    }
+
+    /// Attach the Tor client used for every `.onion` request. See
+    /// [`crate::tor`].
+    #[must_use]
+    pub fn with_tor(mut self, tor: Client) -> Self {
+        self.tor = Some(tor);
+        self
+    }
+
+    /// [`Self::with_tor`] when a Tor client is configured, unchanged otherwise.
+    #[must_use]
+    pub fn with_tor_opt(self, tor: Option<Client>) -> Self {
+        match tor {
+            Some(c) => self.with_tor(c),
+            None => self,
         }
     }
 
@@ -289,7 +326,40 @@ impl WreqHandler {
 #[async_trait]
 impl Handler for WreqHandler {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
-        let used_proxy = self.first_attempt_uses_proxy(&req);
+        let mut req = req;
+        let mut hops = 0usize;
+        loop {
+            let resp = self.handle_hop(&req).await?;
+            // A redirect that crosses the onion boundary is handed back by
+            // both clients' redirect policies instead of being followed in
+            // place; route the new URL afresh.
+            let Some(next) = onion_boundary_redirect(&req, &resp) else {
+                return Ok(resp);
+            };
+            hops += 1;
+            if hops > self.max_redirects {
+                return Err(HttpError::InvalidUrl(
+                    "too many redirects across the onion boundary".into(),
+                ));
+            }
+            // Redirect hops inside wreq never see the pre-resolve tier and a
+            // literal-IP first request skips the resolver; vet the new hop
+            // here exactly like a fresh request.
+            crate::middleware_ssrf::validate_url_with(
+                &next.url,
+                self.tor.is_some(),
+                self.lookup.as_ref(),
+            )?;
+            req = next;
+        }
+    }
+}
+
+impl WreqHandler {
+    /// One routed attempt: Tor for `.onion`, the normal client otherwise.
+    async fn handle_hop(&self, req: &Request) -> Result<HttpResponse> {
+        let tor_bound = crate::tor::is_onion_url(&req.url);
+        let used_proxy = tor_bound || self.first_attempt_uses_proxy(req);
 
         // B: `record_proxy_used()` is now called inside `execute_with` ONLY on
         // the branch that actually attached a proxy (or when the base client
@@ -297,7 +367,11 @@ impl Handler for WreqHandler {
         // `first_attempt_uses_proxy`, which returned true even when the proxy
         // failed to attach — the dashboard read 100% proxied while the request
         // egressed on the real IP.
-        let primary = self.execute_with(&self.client, &req, false).await;
+        let primary = if tor_bound {
+            self.execute_tor(req).await
+        } else {
+            self.execute_with(&self.client, req, false).await
+        };
 
         // Observation-only 402 counter: a plain "we saw a 402 while proxied"
         // count. No scheme/attribution guess — a 402 relayed by a healthy
@@ -306,7 +380,9 @@ impl Handler for WreqHandler {
         // attribution heuristic (is_proxy_attributed_402 / looks_like_proxy_402)
         // was removed because a relayed response can never prove proxy-side
         // attribution (issue #90).
-        if used_proxy && matches!(&primary, Ok(resp) if resp.status == 402) {
+        // Tor is not Webshare: its outcomes feed `oxbrowser_tor_*`, not the
+        // proxy 402 / dial signals the operator reads as Webshare health.
+        if used_proxy && !tor_bound && matches!(&primary, Ok(resp) if resp.status == 402) {
             crate::metrics::record_proxy_402();
         }
 
@@ -321,8 +397,9 @@ impl Handler for WreqHandler {
         // though the degradation decision below refuses it. The gap between
         // this and `PROXY_DIAL_FALLBACK_TOTAL` is the signal #86 says needs
         // watching. The scheme gate lives ONLY on the degradation decision.
-        let is_proxy_dial =
-            used_proxy && matches!(&primary, Err(HttpError::Request(e)) if e.is_proxy_connect());
+        let is_proxy_dial = used_proxy
+            && !tor_bound
+            && matches!(&primary, Err(HttpError::Request(e)) if e.is_proxy_connect());
         if is_proxy_dial {
             crate::metrics::record_proxy_dial();
         }
@@ -332,6 +409,13 @@ impl Handler for WreqHandler {
         // 2. The first attempt was proxied, AND
         // 3. The error is a provable proxy-dial failure (the proxy host is
         //    dead — not a response-inferred guess).
+        // Tor-bound: a failure is an error, never a reason to go direct. The
+        // dial-failure classifier below would otherwise be the only thing
+        // standing between a Tor outage and a clearnet attempt.
+        if tor_bound {
+            record_tor_outcome(&primary);
+            return primary;
+        }
         let Some(ref direct) = self.direct_client else {
             return primary;
         };
@@ -354,11 +438,87 @@ impl Handler for WreqHandler {
                 if looks_like_proxy_dial_failure(e, &req.url, self.max_redirects) =>
             {
                 record_proxy_dial_fallback(&req.url);
-                self.execute_with(direct, &req, true).await
+                self.execute_with(direct, req, true).await
             }
             other => other,
         }
     }
+
+    /// Send a `.onion` request through the Tor client, and only it. The
+    /// per-request proxy, the pool and the static proxy are all skipped
+    /// (`skip_proxy = true`): they are third parties that must never see an
+    /// onion name, and a caller cannot redirect Tor-bound traffic elsewhere.
+    async fn execute_tor(&self, req: &Request) -> Result<HttpResponse> {
+        let Some(ref client) = self.tor else {
+            return Err(crate::tor::refuse_requires_tor());
+        };
+        crate::tor::check_onion_target(true)?;
+        crate::tor::record_tor_request();
+        self.execute_with(client, req, true).await
+    }
+}
+
+/// Count a Tor-bound failure under `oxbrowser_tor_failures_total{kind}`.
+fn record_tor_outcome(res: &Result<HttpResponse>) {
+    let kind = match res {
+        Err(HttpError::Request(e)) if e.is_timeout() => "timeout",
+        Err(HttpError::Timeout(_)) => "timeout",
+        Err(HttpError::Request(e)) if e.is_proxy_connect() || e.is_connect() => "dial",
+        Err(_) => "http_error",
+        Ok(r) if (500..600).contains(&r.status) => "http_error",
+        Ok(_) => return,
+    };
+    crate::metrics::record_tor_failure(kind);
+}
+
+/// If `resp` is a redirect whose target lies on the other side of the onion
+/// boundary than `req`, build the request for that hop. Method/body follow
+/// the usual browser rules (301/302 POST and 303 become GET) and credentials
+/// bound to the old origin are dropped.
+pub(crate) fn onion_boundary_redirect(req: &Request, resp: &HttpResponse) -> Option<Request> {
+    if !matches!(resp.status, 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let location = resp.headers.get(wreq::header::LOCATION)?.to_str().ok()?;
+    let next = url::Url::parse(&resp.url).ok()?.join(location).ok()?;
+    if !matches!(next.scheme(), "http" | "https") {
+        return None;
+    }
+    let from_tor = crate::tor::is_onion_url(&req.url);
+    if !crate::tor::crosses_onion_boundary(next.host_str()?, from_tor) {
+        return None;
+    }
+    let downgrade = resp.status == 303 && !req.method.eq_ignore_ascii_case("HEAD")
+        || matches!(resp.status, 301 | 302) && req.method.eq_ignore_ascii_case("POST");
+    let (method, body) = if downgrade {
+        ("GET".to_owned(), None)
+    } else {
+        (req.method.clone(), req.body.clone())
+    };
+    let headers = req
+        .headers
+        .iter()
+        .filter(|(k, _)| {
+            let k = k.to_ascii_lowercase();
+            !matches!(
+                k.as_str(),
+                "authorization" | "cookie" | "proxy-authorization"
+            ) && !(downgrade
+                && matches!(
+                    k.as_str(),
+                    "content-type" | "content-length" | "transfer-encoding"
+                ))
+        })
+        .cloned()
+        .collect();
+    Some(Request {
+        method,
+        url: next.to_string(),
+        headers,
+        body,
+        proxy: req.proxy.clone(),
+        authenticated: req.authenticated,
+    })
 }
 
 /// Build a wreq proxy from a proxy URL, dialling its canonical form.

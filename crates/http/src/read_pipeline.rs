@@ -54,7 +54,13 @@ pub async fn read_page(
     params: &ReadParams,
     site_handlers: &[SiteHandler],
 ) -> ReadOutput {
-    let deadline = resolve_timeout(params.timeout);
+    // A .onion target gets a longer default (circuit build) unless the caller
+    // set a timeout.
+    let deadline = resolve_timeout(
+        params
+            .timeout
+            .or(crate::tor::default_timeout_for_url(&params.url, None)),
+    );
     let secs = deadline.as_secs();
     match bounded(deadline, read_page_inner(http, params, site_handlers)).await {
         CallOutcome::Ok(output) => output,
@@ -263,6 +269,11 @@ async fn chrome_fallback(
     format: ContentFormat,
     start: Instant,
 ) -> Option<ReadOutput> {
+    // go-wowa fetches outside Tor: an onion name sent there is a leak and the
+    // render could not resolve it anyway. Onion targets have no chrome path.
+    if crate::tor::is_onion_url(&params.url) {
+        return None;
+    }
     let body = serde_json::json!({
         "url": params.url,
         "actions": [

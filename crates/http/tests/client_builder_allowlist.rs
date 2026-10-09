@@ -43,6 +43,14 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
         1,
         "shared wreq_transport_core — the ONE transport+identity construction site",
     ),
+    // Test-only: the direct-fallback sibling of the Tor routing test, with a
+    // resolver pinned to a loopback listener so a leak is observable. Never
+    // faces an external host.
+    (
+        "crates/http/src/tor_e2e_tests.rs",
+        1,
+        "test-only direct sibling pinned to a loopback listener (tor failure must not fall back)",
+    ),
     // Internal-facing: our own services / provider APIs. A browser identity
     // here would be wrong, not missing.
     (

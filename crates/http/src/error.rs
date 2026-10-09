@@ -46,6 +46,14 @@ pub enum HttpError {
 
     #[error("body decode error: {0}")]
     BodyDecodeError(String),
+
+    /// A `.onion` target with no Tor proxy configured (`OX_TOR_PROXY`).
+    /// Refused before any DNS or socket activity — the onion name must not
+    /// leak to a resolver, a pooled proxy or a direct connection.
+    #[error(
+        "onion_requires_tor: a .onion target can only be fetched through OX_TOR_PROXY by /fetch and /read; it is refused when OX_TOR_PROXY is not configured and by endpoints that would hand the URL to a third party"
+    )]
+    OnionRequiresTor,
 }
 
 impl HttpError {
@@ -70,7 +78,8 @@ impl HttpError {
             | Self::InvalidMethod(_)
             | Self::ProxyPool(_)
             | Self::BodyTooLarge { .. }
-            | Self::BodyDecodeError(_) => false,
+            | Self::BodyDecodeError(_)
+            | Self::OnionRequiresTor => false,
         }
     }
 }

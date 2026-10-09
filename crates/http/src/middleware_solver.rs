@@ -255,6 +255,11 @@ impl SolverHandler {
 #[async_trait]
 impl Handler for SolverHandler {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
+        // Never hand an onion URL to the solver: Byparr / go-wowa would fetch
+        // it outside Tor, leaking the name (and could not resolve it anyway).
+        if crate::tor::is_onion_url(&req.url) {
+            return self.next.handle(req).await;
+        }
         let domain = domain_from_url(&req.url);
 
         // Check cache first — inject cookies if we have a prior solution.

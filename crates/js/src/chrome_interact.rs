@@ -16,6 +16,14 @@ pub async fn chrome_interact_handler(
     auth: InboundAuth,
     Json(body): Json<serde_json::Value>,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    // go-wowa's Chrome fetches outside Tor: an onion URL anywhere in the body
+    // (top-level `url` or a nested navigate action) is refused up front.
+    if ox_http::tor::json_mentions_onion(&body) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": ox_http::HttpError::OnionRequiresTor.to_string()})),
+        );
+    }
     match state
         .gobrowser_proxy
         .forward("/api/v1/chrome/interact", &body, auth)

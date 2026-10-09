@@ -54,6 +54,27 @@ pub static PROXY_402_TOTAL: AtomicU64 = AtomicU64::new(0);
 /// `InvalidUrl` error (issue: unobservable_enforcement).
 pub static PROXY_ATTACH_INVALID_URL_TOTAL: AtomicU64 = AtomicU64::new(0);
 
+/// `.onion` requests routed through the Tor tunnel (`OX_TOR_PROXY`).
+pub static TOR_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// `.onion` requests refused before any network activity: no `OX_TOR_PROXY`
+/// configured, or an `http://` onion the tunnel cannot carry. A non-zero value
+/// with Tor expected means the deployment forgot `OX_TOR_PROXY`.
+pub static ONION_REFUSED_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// Tor-bound request failures, by kind (`oxbrowser_tor_failures_total{kind}`):
+/// the proxy in front of Tor could not be dialled / the request timed out / the
+/// attempt ended in any other error or a 5xx answer (the proxy's own error
+/// page is indistinguishable from an origin 5xx). Kept apart from the Webshare
+/// `proxy_dial` / `proxy_402` signals on purpose.
+pub static TOR_FAILURE_DIAL: AtomicU64 = AtomicU64::new(0);
+/// See [`TOR_FAILURE_DIAL`].
+pub static TOR_FAILURE_TIMEOUT: AtomicU64 = AtomicU64::new(0);
+/// See [`TOR_FAILURE_DIAL`].
+pub static TOR_FAILURE_HTTP_ERROR: AtomicU64 = AtomicU64::new(0);
+static TOR_FAILURE_ROWS: &[(&str, &AtomicU64)] = &[
+    ("dial", &TOR_FAILURE_DIAL),
+    ("timeout", &TOR_FAILURE_TIMEOUT),
+    ("http_error", &TOR_FAILURE_HTTP_ERROR),
+];
 /// Times an upstream proxy was unreachable at the dial step (connect
 /// refused / timeout / DNS / TLS handshake to the proxy host) for ANY target
 /// scheme. This is the trigger condition for the dial-failure fallback, but
@@ -81,6 +102,19 @@ pub fn record_fetch_success() {
 /// Record that the first attempt routed through an upstream proxy.
 pub fn record_proxy_used() {
     PROXY_USED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a Tor-bound failure (see [`TOR_FAILURE_DIAL`]).
+pub fn record_tor_failure(kind: &str) {
+    if let Some((_, c)) = TOR_FAILURE_ROWS.iter().find(|(k, _)| *k == kind) {
+        c.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Record a `.onion` request refused before any network activity (see
+/// [`ONION_REFUSED_TOTAL`]).
+pub fn record_onion_refused() {
+    ONION_REFUSED_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record an upstream-proxy HTTP 402 (observation-only — see [`PROXY_402_TOTAL`]).
@@ -578,6 +612,16 @@ pub fn render() -> String {
             value: PROXY_ATTACH_INVALID_URL_TOTAL.load(Ordering::Relaxed),
         },
         Counter {
+            name: "oxbrowser_tor_requests_total",
+            help: "Requests routed through the Tor HTTP tunnel (OX_TOR_PROXY), i.e. .onion targets.",
+            value: TOR_REQUESTS_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
+            name: "oxbrowser_onion_refused_total",
+            help: ".onion requests refused before any network activity (OX_TOR_PROXY not configured, or an endpoint that would hand the URL to a third party).",
+            value: ONION_REFUSED_TOTAL.load(Ordering::Relaxed),
+        },
+        Counter {
             name: "oxbrowser_proxy_dial_total",
             help: "Upstream-proxy dial failures (proxy host unreachable) detected for any target scheme.",
             value: PROXY_DIAL_TOTAL.load(Ordering::Relaxed),
@@ -629,6 +673,12 @@ pub fn render() -> String {
             help: "CF-solver decisions, labelled by outcome. Incremented in middleware_solver at each decision branch — distinguishes a never-run solver from a failed solve from a stale-cache replay (issue #125). Labels: cache_hit, stale_evicted, attempted, solved, provider_failed, negcache_skip, block_passthrough, inferred_passthrough, post_solve_rechallenge (issue #154).",
             label: "outcome",
             rows: SOLVER_OUTCOME_ROWS,
+        },
+        LabelledCounter {
+            name: "oxbrowser_tor_failures_total",
+            help: "Tor-bound (.onion) request failures, labelled by kind: dial (proxy in front of Tor unreachable), timeout, http_error (any other error or a 5xx answer).",
+            label: "kind",
+            rows: TOR_FAILURE_ROWS,
         },
         LabelledCounter {
             name: "oxbrowser_auth_requests_total",
@@ -793,6 +843,8 @@ mod tests {
             "oxbrowser_proxy_used_total",
             "oxbrowser_proxy_402_total",
             "oxbrowser_proxy_attach_invalid_url_total",
+            "oxbrowser_tor_requests_total",
+            "oxbrowser_onion_refused_total",
             "oxbrowser_proxy_dial_total",
             "oxbrowser_proxy_dial_fallback_total",
             "oxbrowser_solver_giveup_total",

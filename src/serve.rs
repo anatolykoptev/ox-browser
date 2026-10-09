@@ -49,6 +49,15 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         }
     }
 
+    // Tor HTTP tunnel for .onion targets (ox-browser#188): malformed config
+    // fails startup like the SSRF allowlist above. Independent of
+    // PROXY_DISABLED — it never carries clearnet traffic.
+    if let Some(tor) = ox_http::TorProxy::from_env()? {
+        tracing::info!(proxy = tor.url(), "Tor tunnel enabled for .onion targets");
+        http_config.tor_proxy = Some(tor.url().to_owned());
+    } else {
+        tracing::info!("OX_TOR_PROXY unset: .onion targets are refused (onion_requires_tor)");
+    }
     http_config.cookie_provider = Some(Arc::clone(&provider));
     http_config.cookie_cache = Some(Arc::clone(&cache));
 

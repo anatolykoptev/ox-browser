@@ -132,7 +132,15 @@ pub async fn readability(
 /// `auth` is the inbound gate decision token — the provider's secret-relay
 /// gate and the retry client's stamp both derive from it at the sink, so
 /// this path cannot be given a literal `true` (SEC-CR-018).
-async fn headless_fetch(state: &AppState, url: &str, auth: InboundAuth) -> Result<String, String> {
+pub(crate) async fn headless_fetch(
+    state: &AppState,
+    url: &str,
+    auth: InboundAuth,
+) -> Result<String, String> {
+    // The solver is a third party that fetches outside Tor.
+    if let Some(e) = ox_http::tor::refuse_onion_for_third_party(url) {
+        return Err(e.to_string());
+    }
     let domain = Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(String::from))

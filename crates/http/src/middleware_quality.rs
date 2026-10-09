@@ -36,6 +36,11 @@ fn should_fallback(status: u16) -> bool {
 #[async_trait]
 impl Handler for QualityCheckHandler {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
+        // An onion 403/429/503 is the hidden service speaking, not an anti-bot
+        // challenge; classifying it would route the URL to the CF solver.
+        if crate::tor::is_onion_url(&req.url) {
+            return self.next.handle(req).await;
+        }
         let resp = self.next.handle(req).await?;
 
         // If this is a GENUINE Cloudflare challenge (real CF markers + ray

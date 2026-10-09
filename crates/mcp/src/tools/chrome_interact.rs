@@ -135,6 +135,13 @@ impl OxMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let body = serde_json::to_value(&input)
             .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        // go-wowa's Chrome fetches outside Tor: refuse an onion URL anywhere in
+        // the input before the forward.
+        if ox_http::tor::json_mentions_onion(&body) {
+            let json =
+                serde_json::json!({"error": ox_http::HttpError::OnionRequiresTor.to_string()});
+            return Ok(CallToolResult::error(vec![Content::text(json.to_string())]));
+        }
         let (_, resp) = self
             .gobrowser_proxy
             .forward("/api/v1/chrome/interact", &body, auth)

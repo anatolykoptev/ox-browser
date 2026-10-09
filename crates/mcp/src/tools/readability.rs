@@ -106,7 +106,15 @@ impl OxMcpServer {
     /// Solve via headless browser, cache cookies, retry GET.
     /// `auth` is the inbound gate token — the provider's secret-relay gate
     /// and the retry client's stamp derive from it at the sink (SEC-CR-018).
-    async fn headless_fetch(&self, url: &str, auth: InboundAuth) -> Result<String, String> {
+    pub(crate) async fn headless_fetch(
+        &self,
+        url: &str,
+        auth: InboundAuth,
+    ) -> Result<String, String> {
+        // The solver is a third party that fetches outside Tor.
+        if let Some(e) = ox_http::tor::refuse_onion_for_third_party(url) {
+            return Err(e.to_string());
+        }
         let domain = Url::parse(url)
             .ok()
             .and_then(|u| u.host_str().map(String::from))

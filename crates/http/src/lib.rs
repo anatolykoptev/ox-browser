@@ -48,6 +48,9 @@ pub mod solver_gobrowser;
 pub mod solver_negcache;
 pub mod ssrf_connect;
 pub mod tls;
+pub mod tor;
+#[cfg(test)]
+mod tor_e2e_tests;
 pub mod url_util;
 pub mod wowa_auth;
 
@@ -86,5 +89,6 @@ pub use retry_parse::parse_retry_after;
 pub use solver_byparr::{ByparrConfig, ByparrSolver};
 pub use solver_negcache::{SOLVER_GIVEUP_TOTAL, SolverNegCache, record_solver_giveup};
 pub use ssrf_connect::{SsrfBlockedError, SsrfGuardedResolver, ssrf_redirect_policy};
+pub use tor::{TOR_PROXY_ENV, TorProxy, is_onion_host, is_onion_url};
 pub use url_util::{extract_domain, extract_host};
 pub use wreq::Emulation;
