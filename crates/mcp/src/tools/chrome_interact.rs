@@ -143,11 +143,9 @@ impl OxMcpServer {
             return Ok(CallToolResult::error(vec![Content::text(json.to_string())]));
         }
         // go-wowa's Chrome would dial a caller-supplied `proxy` unchecked —
-        // run it through the same per-request validator /fetch applies (issue
-        // #189) before anything is forwarded. Its refusal carries no userinfo.
-        if let Some(ref proxy) = input.proxy
-            && let Err(e) = ox_http::validate_proxy_url(proxy)
-        {
+        // same vetting as the REST twin (per-request validator, issue #189;
+        // blank = no proxy). Its refusal carries no userinfo.
+        if let Err(e) = ox_js::vet_caller_proxy(&body) {
             let json = serde_json::json!({"error": e.to_string()});
             return Ok(CallToolResult::error(vec![Content::text(json.to_string())]));
         }

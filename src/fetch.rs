@@ -53,7 +53,7 @@ pub async fn run(args: FetchArgs) -> anyhow::Result<()> {
     };
 
     if !config::proxy_disabled()
-        && let Some(proxy_url) = args.proxy
+        && let Some(proxy_url) = config::non_blank(args.proxy)
     {
         // The same startup gate `serve` applies to the proxy envs (issue
         // #189): refuse a value wreq cannot dial before it reaches the pool.

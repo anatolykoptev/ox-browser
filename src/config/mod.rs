@@ -112,6 +112,13 @@ impl ServerConfig {
     }
 }
 
+/// A blank (empty or whitespace-only) setting means "unset": `PROXY_URL=` in a
+/// compose file or an empty `--proxy ""` must behave like no proxy, not fail
+/// startup as an unparsable URL.
+pub fn non_blank(value: Option<String>) -> Option<String> {
+    value.filter(|v| !v.trim().is_empty())
+}
+
 /// Reports whether outbound proxy is disabled via the `PROXY_DISABLED` env var.
 ///
 /// Truthy values (case-insensitive, whitespace-trimmed): `"1"`, `"true"`, `"yes"`, `"on"`.

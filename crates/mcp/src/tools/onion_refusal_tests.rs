@@ -175,6 +175,31 @@ async fn mcp_readability_headless_fallback_refuses_onion() {
     assert_eq!(wowa_hits.load(Ordering::SeqCst), 0);
 }
 
+/// A blank `proxy` means "no proxy" (go-wowa treats `""` as none): it is
+/// forwarded, not refused as an unparsable proxy URL.
+///
+/// Falsification: drop the blank arm in `ox_js::vet_caller_proxy` →
+/// `validate_proxy_url("")` refuses → the stub counts 0 → RED.
+#[tokio::test]
+async fn mcp_chrome_interact_blank_proxy_means_no_proxy() {
+    for proxy in ["", "   "] {
+        let (wowa, wowa_hits) = counting_wowa().await;
+        let s = server(&wowa, Arc::new(AtomicUsize::new(0)));
+        let args = format!(
+            r#"{{"url":"https://example.com","actions":[],"timeout_secs":5,"proxy":{}}}"#,
+            serde_json::to_string(proxy).unwrap()
+        );
+        let _ = s
+            .do_chrome_interact(serde_json::from_str(&args).unwrap(), auth())
+            .await
+            .expect("tool result");
+        assert!(
+            wowa_hits.load(Ordering::SeqCst) >= 1,
+            "{proxy:?}: a blank proxy was refused instead of forwarded"
+        );
+    }
+}
+
 /// #189: `chrome_interact`'s caller-supplied `proxy` goes through the same
 /// validator /fetch applies before go-wowa sees it — a `socks*` scheme or a
 /// malformed value is refused, userinfo is never echoed, and the stub is

@@ -3,6 +3,7 @@
 mod analyze;
 pub mod analyze_types;
 mod chrome_interact;
+pub use chrome_interact::vet_caller_proxy;
 mod crawl;
 mod deadline_layer;
 mod fetch;

@@ -82,13 +82,21 @@ pub fn is_onion_url(url: &str) -> bool {
     }
     // No scheme (`foo.onion`, `//foo.onion/x`): retry under http so the host
     // position is populated. A `:` before the first `/`, `?` or `#` is a
-    // scheme per WHATWG — those already parsed above (or cannot be a host).
+    // scheme per WHATWG — those already parsed above (or cannot be a host)...
     let has_scheme = match (s.find(':'), s.find(['/', '?', '#'])) {
         (Some(c), Some(t)) => c < t,
         (Some(_), None) => true,
         _ => false,
     };
-    !has_scheme && host_is_onion(&format!("http://{s}"))
+    // ...unless the text after the first `:` is a port (`foo.onion:8080`,
+    // `foo.onion:8080/x`, `user@foo.onion:80`): digits then end, `/`, `?` or
+    // `#`. WHATWG reads `foo.onion` there as a scheme, but no real scheme is
+    // followed by a bare port, so retry it as `host:port`.
+    let is_host_port = s.split_once(':').is_some_and(|(_, rest)| {
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        digits > 0 && matches!(rest.as_bytes().get(digits), None | Some(b'/' | b'?' | b'#'))
+    });
+    (!has_scheme || is_host_port) && host_is_onion(&format!("http://{s}"))
 }
 
 /// Default call deadline for a URL: the endpoint's own default, raised to
@@ -327,7 +335,8 @@ mod tests {
     /// `view-source:` wrapper all count; clearnet strings do not.
     ///
     /// Falsification: drop the `http://{s}` retry in `is_onion_url` and the
-    /// scheme-less rows go RED.
+    /// scheme-less rows go RED; drop the `is_host_port` clause and the
+    /// `foo.onion:8080` rows go RED.
     #[test]
     fn onion_url_scheme_less_and_wrapped_forms() {
         for url in [
@@ -336,6 +345,11 @@ mod tests {
             "//foo.onion/x",
             "view-source:http://foo.onion/",
             "View-Source:https://FOO.ONION.",
+            // host:port forms: WHATWG would read `foo.onion` as a scheme.
+            "foo.onion:8080",
+            "foo.onion:8080/x",
+            "foo.onion:8080?q=1",
+            "user@foo.onion:80",
         ] {
             assert!(is_onion_url(url), "must match {url:?}");
         }
@@ -344,6 +358,9 @@ mod tests {
             "https://onion.example.com/",
             "foo.onion.example.com",
             "mailto:x@foo.onion",
+            "http://foo.onion@evil.com",
+            "onion.example.com:8080",
+            "foo.onion.example.com:80/x",
             "the .onion suffix in prose",
         ] {
             assert!(!is_onion_url(url), "must not match {url:?}");

@@ -567,6 +567,11 @@ mod tests {
     /// before wreq dials it (wreq skips DNS for literal proxies, so the
     /// connect-time SSRF resolver never sees it).
     ///
+    /// No row uses the cloud-metadata literal (169.254.169.254): on a veto
+    /// regression the request would dial the runner's real IMDS. The
+    /// classifier unit test `private_classifier_refuses_metadata_and_link_local`
+    /// covers that address without any network.
+    ///
     /// Falsification: delete the `validate_proxy_url` block in
     /// `execute_with` and the request is dialled through 127.0.0.1:9 —
     /// a connection error, not "SSRF blocked" → RED.
@@ -583,7 +588,6 @@ mod tests {
             "http://10.1.2.3:3128",
             "http://172.18.0.1:1080",
             "http://[::1]:9",
-            "http://169.254.169.254:80",
             "http://localhost:9",
             "127.0.0.1:9",
         ] {
@@ -984,7 +988,10 @@ mod tests {
     ///   the allowlisted loopback proxy validates, wreq dials it as an HTTP
     ///   proxy (a connection the proxy listener counts) and, if that dial
     ///   fails `ProxyConnect`, the fallback sibling re-sends to the target —
-    ///   either listener's counter leaves 0, or the response is 200 → RED;
+    ///   either listener's counter leaves 0, or the response is 200 → RED.
+    ///   The `dead` row (port bound then dropped) drives exactly that
+    ///   ProxyConnect → direct-sibling path, so `origin_hits` is what
+    ///   goes RED;
     /// - delete the `validate_proxy_url` call in `execute_with`: same
     ///   outcome via `build_proxy`'s pass → RED;
     /// - widen `looks_like_proxy_dial_failure` to `InvalidUrl` refusals: the
@@ -995,46 +1002,59 @@ mod tests {
     async fn socks5_per_request_proxy_with_direct_fallback_dials_nothing() {
         use std::sync::atomic::Ordering;
 
-        let (proxy_port, proxy_hits) = counting_listener().await;
-        let (origin_port, origin_hits) = counting_listener().await;
-
-        // As above: admit the loopback proxy so a scheme-allowlist mutation
-        // reaches the dial stage instead of stopping at the host veto.
-        let _env = EnvGuard::set(
-            crate::middleware_ssrf::PROXY_ALLOWLIST_ENV,
-            format!("127.0.0.1:{proxy_port}"),
-        );
+        let (live_port, live_hits) = counting_listener().await;
+        // A port that was bound then released: connect is refused. Under the
+        // scheme mutation this row fails ProxyConnect — the exact failure
+        // `looks_like_proxy_dial_failure` routes to the direct sibling (cf.
+        // `proxy_fallback.rs` `dead_proxy_error`). The live listener answers
+        // 200, so it never reaches that path.
+        let dead_port = {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            l.local_addr().unwrap().port()
+        };
         let direct = wreq::Client::builder()
             .no_proxy()
             .build()
             .expect("direct fallback client");
         let handler =
             WreqHandler::new(wreq::Client::new(), false, 0, 1 << 20).with_direct_fallback(direct);
-        let result = handler
-            .handle(Request {
-                method: "GET".into(),
-                url: format!("http://127.0.0.1:{origin_port}/test"),
-                headers: vec![],
-                body: None,
-                proxy: Some(format!("socks5://127.0.0.1:{proxy_port}")),
-                authenticated: false,
-            })
-            .await;
-        let err = result.expect_err("a socks5 proxy must be refused, not dialled or dropped");
-        assert!(
-            err.to_string().contains("unsupported proxy scheme")
-                && err.to_string().contains("socks5"),
-            "expected the unsupported-scheme refusal naming socks5, got {err}"
-        );
-        assert_eq!(
-            proxy_hits.load(Ordering::SeqCst),
-            0,
-            "the socks proxy was dialled — the refusal must precede any connection"
-        );
-        assert_eq!(
-            origin_hits.load(Ordering::SeqCst),
-            0,
-            "the direct-fallback sibling reached the target — a real-IP leak"
-        );
+        // Dead row first: under the mutation its failure takes the dial-failure
+        // path and the direct listener count is the first assertion to fire.
+        for (row, proxy_port) in [("dead", dead_port), ("live", live_port)] {
+            let (origin_port, origin_hits) = counting_listener().await;
+            // As above: admit the loopback proxy so a scheme-allowlist
+            // mutation reaches the dial stage instead of stopping at the
+            // host veto. Dropped at the end of each iteration.
+            let _env = EnvGuard::set(
+                crate::middleware_ssrf::PROXY_ALLOWLIST_ENV,
+                format!("127.0.0.1:{proxy_port}"),
+            );
+            let result = handler
+                .handle(Request {
+                    method: "GET".into(),
+                    url: format!("http://127.0.0.1:{origin_port}/test"),
+                    headers: vec![],
+                    body: None,
+                    proxy: Some(format!("socks5://127.0.0.1:{proxy_port}")),
+                    authenticated: false,
+                })
+                .await;
+            assert_eq!(
+                origin_hits.load(Ordering::SeqCst),
+                0,
+                "{row} proxy: the direct-fallback sibling reached the target — a real-IP leak"
+            );
+            assert_eq!(
+                live_hits.load(Ordering::SeqCst),
+                0,
+                "{row} proxy: the socks proxy was dialled — the refusal must precede any connection"
+            );
+            let err = result.expect_err("a socks5 proxy must be refused, not dialled or dropped");
+            assert!(
+                err.to_string().contains("unsupported proxy scheme")
+                    && err.to_string().contains("socks5"),
+                "{row} proxy: expected the unsupported-scheme refusal naming socks5, got {err}"
+            );
+        }
     }
 }

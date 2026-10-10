@@ -87,7 +87,7 @@ pub(crate) fn build_http_client_for_profile(
     };
 
     if !config::proxy_disabled()
-        && let Some(proxy_url) = proxy
+        && let Some(proxy_url) = config::non_blank(proxy)
     {
         // The same startup gate `serve` applies to the proxy envs (issue
         // #189): refuse a value wreq cannot dial before it reaches the pool.
