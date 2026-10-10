@@ -24,6 +24,17 @@ pub async fn chrome_interact_handler(
             Json(serde_json::json!({"error": ox_http::HttpError::OnionRequiresTor.to_string()})),
         );
     }
+    // The caller's `proxy` is dialled by go-wowa's Chrome — vet it with the
+    // same per-request validator /fetch applies (issue #189) before anything
+    // is forwarded. Its refusal carries no userinfo.
+    if let Some(proxy) = body.get("proxy").and_then(|v| v.as_str())
+        && let Err(e) = ox_http::validate_proxy_url(proxy)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e.to_string()})),
+        );
+    }
     match state
         .gobrowser_proxy
         .forward("/api/v1/chrome/interact", &body, auth)
@@ -178,6 +189,54 @@ mod auth_relay_tests {
                     .await
                     .is_err(),
                 "{path}: go-wowa was called"
+            );
+        }
+    }
+
+    /// #189: a caller `proxy` in the REST body is vetted by the same
+    /// validator /fetch applies before go-wowa sees it — a `socks*` scheme
+    /// or a malformed value is refused 400, userinfo is never echoed, and
+    /// the upstream is never called.
+    ///
+    /// Falsification: remove the `validate_proxy_url` check in
+    /// `chrome_interact_handler` → go-wowa gets the request → RED.
+    #[tokio::test]
+    async fn chrome_interact_refuses_an_invalid_caller_proxy() {
+        for proxy in ["socks5://8.8.8.8:1080", "http://user7:pw9@exa mple:8080"] {
+            let (url, captured) = ox_http::wowa_auth::capture_one(r#"{"status":"ok"}"#).await;
+            let mut state = crate::tests::test_state();
+            state.gobrowser_proxy = Arc::new(crate::gobrowser_proxy::GoBrowserProxy::new(url, ""));
+            let body = format!(
+                r#"{{"url":"https://example.com","actions":[],"proxy":{}}}"#,
+                serde_json::to_string(proxy).unwrap()
+            );
+            let resp = crate::router(state)
+                .oneshot(
+                    axum::http::Request::post("/chrome/interact")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 400, "{proxy}");
+            let text = String::from_utf8(
+                axum::body::to_bytes(resp.into_body(), 1 << 20)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(text.contains("SSRF blocked"), "{proxy}: {text}");
+            assert!(
+                !text.contains("user7") && !text.contains("pw9"),
+                "{proxy}: userinfo leaked into the refusal: {text}"
+            );
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(200), captured)
+                    .await
+                    .is_err(),
+                "{proxy}: go-wowa was called"
             );
         }
     }

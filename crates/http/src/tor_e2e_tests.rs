@@ -615,22 +615,42 @@ fn redirect_to(location: &str) -> Vec<u8> {
         .into_bytes()
 }
 
+/// The metadata address the old redirect row dialled for real, and a v6
+/// link-local — refused by the private-IP classifier itself, no network
+/// involved. This is the ground truth the stub-listener row below relies on.
+#[test]
+fn private_classifier_refuses_metadata_and_link_local() {
+    for ip in ["169.254.169.254", "fe80::1"] {
+        let ip: std::net::IpAddr = ip.parse().expect("ip literal");
+        assert!(crate::is_private_ip(&ip), "{ip} must be refused");
+    }
+}
+
 /// An onion answering `302 Location: <private target>` must be refused by the
-/// SSRF check on the re-routed hop, and a loopback listener standing in for a
-/// "direct" target must see nothing. Only the handler's own re-validation of
-/// the hop stands between this redirect and an internal service: a literal-IP
-/// first request skips the connect-time resolver.
+/// SSRF check on the re-routed hop, and the private listener standing in for
+/// each target must see nothing. The metadata row uses a loopback stub for
+/// `169.254.169.254` — a regression must not dial the runner's real IMDS
+/// endpoint, whose body could land in public CI logs (issue #192). Only the
+/// handler's own re-validation of the hop stands between this redirect and
+/// an internal service: a literal-IP first request skips the connect-time
+/// resolver.
 ///
 /// RED when `validate_url_with` is deleted from the boundary-redirect loop in
-/// `WreqHandler::handle` (handler_reqwest.rs): the hop is dialled and
-/// `direct.accepts()` becomes 1 (or the metadata IP is dialled and the error
-/// is no longer "SSRF blocked").
+/// `WreqHandler::handle` (handler_reqwest.rs): the hop is dialled and the
+/// target's listener counts 1.
 #[tokio::test]
 async fn onion_redirect_to_a_private_target_is_refused_by_ssrf() {
+    // Each private target gets its own loopback listener — the first stands
+    // in for the link-local metadata address — so a regression can never
+    // reach a real internal endpoint.
+    let meta = Stub::spawn(TOR_REFUSES).await;
     let direct = Stub::spawn(TOR_REFUSES).await;
-    for target in [
-        "http://169.254.169.254/latest/meta-data".to_owned(),
-        format!("http://127.0.0.1:{}/", direct.addr.port()),
+    for (target, listener) in [
+        (
+            format!("http://127.0.0.1:{}/latest/meta-data", meta.addr.port()),
+            &meta,
+        ),
+        (format!("http://127.0.0.1:{}/", direct.addr.port()), &direct),
     ] {
         let tor = Stub::spawn_vec(redirect_to(&target)).await;
         let (lookup, _) = counting_lookup();
@@ -638,7 +658,7 @@ async fn onion_redirect_to_a_private_target_is_refused_by_ssrf() {
             .expect("client");
         let res = client.execute(get("http://foo.onion/", None)).await;
         assert_eq!(
-            direct.accepts(),
+            listener.accepts(),
             0,
             "{target}: the redirect reached a private listener"
         );

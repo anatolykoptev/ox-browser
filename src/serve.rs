@@ -40,13 +40,7 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         http_config.proxy_pool = None;
     } else {
         ox_http::metrics::set_gauge(&ox_http::metrics::PROXY_DISABLED, 0);
-        if let Some(ref proxy) = config.proxy.url {
-            http_config.proxy_url = Some(proxy.clone());
-        }
-        // Env fallback for residential proxy (e.g. RESIDENTIAL_PROXY_URL=http://host:port).
-        if http_config.residential_proxy.is_none() {
-            http_config.residential_proxy = std::env::var("RESIDENTIAL_PROXY_URL").ok();
-        }
+        apply_configured_proxies(&config, &mut http_config)?;
     }
 
     // Tor HTTP tunnel for .onion targets (ox-browser#188): malformed config
@@ -139,6 +133,8 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     };
 
     let media_config = config.media.to_media_config();
+    // Not gated on PROXY_DISABLED: the media path dials this proxy regardless.
+    validate_media_proxy(&media_config)?;
 
     let gobrowser_url = config
         .solver
@@ -179,6 +175,49 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
     )
     .await?;
 
+    Ok(())
+}
+
+/// Issue #189: every operator-configured proxy URL goes through the same
+/// gate `build_proxy` applies at client-build — here at startup, so a bad
+/// value (every `socks*` scheme included) refuses startup with its SOURCE
+/// named and the URL's userinfo never echoed. Fills `http_config.proxy_url`
+/// and the `RESIDENTIAL_PROXY_URL` env fallback while it validates. Called
+/// only when `PROXY_DISABLED` is unset; CLI `--proxy` is gated at its own
+/// call sites (`cli.rs`, `fetch.rs`).
+fn apply_configured_proxies(
+    config: &ServerConfig,
+    http_config: &mut ox_http::HttpConfig,
+) -> anyhow::Result<()> {
+    if let Some(ref proxy) = config.proxy.url {
+        ox_http::validate_configured_proxy("[proxy].url / PROXY_URL", proxy)?;
+        http_config.proxy_url = Some(proxy.clone());
+    }
+    // Env fallback for residential proxy (e.g. RESIDENTIAL_PROXY_URL=http://host:port).
+    let residential_source = if http_config.residential_proxy.is_none() {
+        http_config.residential_proxy = std::env::var("RESIDENTIAL_PROXY_URL").ok();
+        "RESIDENTIAL_PROXY_URL"
+    } else {
+        "[proxy].residential_url"
+    };
+    if let Some(ref proxy) = http_config.residential_proxy {
+        ox_http::validate_configured_proxy(residential_source, proxy)?;
+    }
+    Ok(())
+}
+
+/// The media-download proxy (`[media].proxy_url`, overridden by the
+/// `MEDIA_PROXY_URL` env) gets the same startup gate (issue #189).
+fn validate_media_proxy(media_config: &ox_media::MediaConfig) -> anyhow::Result<()> {
+    if media_config.proxy_url.is_empty() {
+        return Ok(());
+    }
+    let source = if std::env::var_os("MEDIA_PROXY_URL").is_some() {
+        "MEDIA_PROXY_URL"
+    } else {
+        "[media].proxy_url"
+    };
+    ox_http::validate_configured_proxy(source, &media_config.proxy_url)?;
     Ok(())
 }
 
@@ -614,5 +653,138 @@ mod tests {
             !head.contains("x-internal-secret"),
             "anonymous MCP read relayed with the secret: {head}"
         );
+    }
+
+    /// Sets/unsets an env var for the test and restores its previous value
+    /// on drop, so a panicking assertion cannot leak it into sibling tests.
+    struct EnvGuard {
+        name: &'static str,
+        saved: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(name: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let saved = std::env::var_os(name);
+            // SAFETY: RESIDENTIAL_PROXY_URL / MEDIA_PROXY_URL are read only
+            // by the helpers under test — `run` itself is never called in
+            // tests — so no sibling test observes the override.
+            unsafe { std::env::set_var(name, value) };
+            Self { name, saved }
+        }
+
+        fn unset(name: &'static str) -> Self {
+            let saved = std::env::var_os(name);
+            // SAFETY: as above.
+            unsafe { std::env::remove_var(name) };
+            Self { name, saved }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: paired with `set`/`unset`.
+            unsafe {
+                match &self.saved {
+                    Some(v) => std::env::set_var(self.name, v),
+                    None => std::env::remove_var(self.name),
+                }
+            }
+        }
+    }
+
+    /// #189: every operator proxy input gets the same gate `build_proxy`
+    /// applies at client-build, run at STARTUP — refusal names the source
+    /// and never echoes userinfo. Driven through `apply_configured_proxies`,
+    /// the helper `run` calls when `PROXY_DISABLED` is unset.
+    ///
+    /// Falsification: delete the `validate_configured_proxy` call on the
+    /// residential value → the socks5 URL just fills the config → RED.
+    #[test]
+    fn configured_proxies_are_validated_at_startup() {
+        // The env-sourced residential proxy names its env var and never
+        // leaks userinfo.
+        let _env = EnvGuard::set("RESIDENTIAL_PROXY_URL", "socks5://user7:pw9@127.0.0.1:1080");
+        let mut http_config = ox_http::HttpConfig::default();
+        let err = apply_configured_proxies(&ServerConfig::default(), &mut http_config)
+            .expect_err("a socks5 RESIDENTIAL_PROXY_URL must refuse startup");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("RESIDENTIAL_PROXY_URL"),
+            "source unnamed: {msg}"
+        );
+        assert!(
+            !msg.contains("user7") && !msg.contains("pw9"),
+            "userinfo leaked into the startup error: {msg}"
+        );
+
+        // Config-file sources name their keys; a private proxy address is
+        // legitimate here and must still pass.
+        let _env = EnvGuard::unset("RESIDENTIAL_PROXY_URL");
+        let mut config = ServerConfig::default();
+        config.proxy.url = Some("socks5://8.8.8.8:1080".into());
+        let mut http_config = ox_http::HttpConfig::default();
+        let err = apply_configured_proxies(&config, &mut http_config)
+            .expect_err("a socks5 [proxy].url must refuse startup");
+        assert!(
+            err.to_string().contains("[proxy].url / PROXY_URL"),
+            "source unnamed: {err}"
+        );
+
+        let mut config = ServerConfig::default();
+        config.proxy.residential_url = Some("socks5://8.8.8.8:1080".into());
+        let mut http_config = config::build_http_config(&config);
+        let err = apply_configured_proxies(&config, &mut http_config)
+            .expect_err("a socks5 [proxy].residential_url must refuse startup");
+        assert!(
+            err.to_string().contains("[proxy].residential_url"),
+            "source unnamed: {err}"
+        );
+
+        // A legitimately private operator proxy (sidecar/tor-privoxy) is
+        // accepted: the host veto is for caller-supplied values only.
+        let mut config = ServerConfig::default();
+        config.proxy.url = Some("http://10.0.0.5:3128".into());
+        let mut http_config = ox_http::HttpConfig::default();
+        apply_configured_proxies(&config, &mut http_config)
+            .expect("a private-address configured proxy must be accepted");
+        assert_eq!(
+            http_config.proxy_url.as_deref(),
+            Some("http://10.0.0.5:3128")
+        );
+    }
+
+    /// #189: `[media].proxy_url` / `MEDIA_PROXY_URL` get the same startup
+    /// gate — the media path dials this proxy regardless of PROXY_DISABLED,
+    /// so it is validated unconditionally.
+    ///
+    /// Falsification: delete the `validate_configured_proxy` call in
+    /// `validate_media_proxy` → the socks5 rows pass → RED.
+    #[test]
+    fn media_proxy_is_validated_at_startup() {
+        let _env = EnvGuard::unset("MEDIA_PROXY_URL");
+        let bad = ox_media::MediaConfig {
+            proxy_url: "socks5://user7:pw9@127.0.0.1:1080".into(),
+            ..Default::default()
+        };
+        let msg = validate_media_proxy(&bad)
+            .expect_err("a socks5 [media].proxy_url must refuse startup")
+            .to_string();
+        assert!(msg.contains("[media].proxy_url"), "source unnamed: {msg}");
+        assert!(
+            !msg.contains("user7") && !msg.contains("pw9"),
+            "userinfo leaked into the startup error: {msg}"
+        );
+
+        // The env override names its env var.
+        let _env = EnvGuard::set("MEDIA_PROXY_URL", "socks5://127.0.0.1:1080");
+        let cfg = ServerConfig::default().media.to_media_config();
+        let msg = validate_media_proxy(&cfg)
+            .expect_err("a socks5 MEDIA_PROXY_URL must refuse startup")
+            .to_string();
+        assert!(msg.contains("MEDIA_PROXY_URL"), "env source unnamed: {msg}");
+
+        // Empty means direct — nothing to vet.
+        let _env = EnvGuard::unset("MEDIA_PROXY_URL");
+        assert!(validate_media_proxy(&ox_media::MediaConfig::default()).is_ok());
     }
 }

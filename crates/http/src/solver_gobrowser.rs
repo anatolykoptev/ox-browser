@@ -75,6 +75,9 @@ impl GoBrowserSolver {
     pub fn new(config: GoBrowserConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
+            // Internal solver hop: never inherit an ambient
+            // HTTP(S)_PROXY/ALL_PROXY from the operator's env.
+            .no_proxy()
             // Never follow a redirect with a credentialed request (SEC-CR-010).
             .redirect(reqwest::redirect::Policy::none())
             .build()

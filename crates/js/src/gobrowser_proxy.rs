@@ -27,6 +27,9 @@ impl GoBrowserProxy {
     pub fn new(base_url: String, internal_secret: &str) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(60))
+            // Internal go-browser hop: never inherit an ambient
+            // HTTP(S)_PROXY/ALL_PROXY from the operator's env.
+            .no_proxy()
             // Never follow a redirect with a credentialed request (SEC-CR-010).
             .redirect(reqwest::redirect::Policy::none())
             .build()

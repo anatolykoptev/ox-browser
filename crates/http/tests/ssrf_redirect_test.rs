@@ -73,6 +73,8 @@ async fn spawn_target_server(hit: Arc<AtomicBool>) -> SocketAddr {
 fn guarded_client() -> wreq::Client {
     wreq::Client::builder()
         .timeout(Duration::from_secs(5))
+        // The SSRF assertions must not see an ambient HTTP(S)_PROXY/ALL_PROXY.
+        .no_proxy()
         .dns_resolver(SsrfGuardedResolver)
         .redirect(ssrf_redirect_policy(10))
         .build()

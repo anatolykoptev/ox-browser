@@ -89,6 +89,9 @@ pub(crate) fn build_http_client_for_profile(
     if !config::proxy_disabled()
         && let Some(proxy_url) = proxy
     {
+        // The same startup gate `serve` applies to the proxy envs (issue
+        // #189): refuse a value wreq cannot dial before it reaches the pool.
+        ox_http::validate_configured_proxy("--proxy", &proxy_url)?;
         let pool = StaticPool::new(vec![proxy_url]);
         cfg.proxy_pool = Some(Arc::new(pool));
     }

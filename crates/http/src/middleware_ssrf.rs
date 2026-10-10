@@ -221,12 +221,15 @@ pub const PROXY_ALLOWLIST_ENV: &str = "OX_PROXY_ALLOWLIST";
 
 /// Proxy schemes ox-browser will dial: `http` and `https` only. wreq is
 /// built WITHOUT its `socks` feature (see `Cargo.toml`), so it has no
-/// intercept for `socks*` — a `socks5://…` URL is never a SOCKS dial and
-/// falls through to wreq's auto-proxy path, which can send the request
-/// DIRECT from the real IP while the caller believes it is proxied
-/// (issue #179). Any other scheme (`ftp`, `socks`, …) is likewise ignored.
-/// Both [`validate_proxy_url`] and the pool path (`build_proxy`) refuse
-/// anything outside this list.
+/// SOCKS intercept: a `socks5://…` URL is treated as an HTTP proxy — wreq
+/// dials the proxy address expecting forward-proxy HTTP and the failure
+/// surfaces as `ProxyConnect`. The historical direct egress (issue #179)
+/// was not wreq ignoring the scheme: it was `looks_like_proxy_dial_failure`
+/// matching that `ProxyConnect` and the `WreqHandler` direct-fallback
+/// sibling re-sending the request from the real IP. Refusing the scheme
+/// here keeps the failure at "refused before any dial". Any other scheme
+/// (`ftp`, `socks`, …) is likewise refused. Both [`validate_proxy_url`] and
+/// the pool path (`build_proxy`) refuse anything outside this list.
 pub const ALLOWED_PROXY_SCHEMES: &[&str] = &["http", "https"];
 
 /// `socks*` schemes that are refused by name: a caller plausibly configured
@@ -270,8 +273,9 @@ pub struct CanonicalProxy {
 ///
 /// - Accepted forms only: input that literally starts with
 ///   `<allowed-scheme>://` (scheme case-insensitive, [`ALLOWED_PROXY_SCHEMES`]
-///   — anything else wreq cannot dial; a `socks*` scheme would fall through
-///   to a direct request from the real IP, issue #179), or a bare
+///   — anything else wreq has no intercept for; a `socks*` scheme is dialled
+///   as an HTTP proxy and its `ProxyConnect` failure once triggered the
+///   direct-fallback sibling — a request from the real IP, issue #179), or a bare
 ///   `host:port` (numeric port) with no `/`, `?`, `#`, `\` or `@` anywhere,
 ///   treated as http. `http:/…`, `http:…`, `socks5:/…` are refused.
 /// - A backslash, control character or space is refused outright: it drives
@@ -421,6 +425,29 @@ pub fn validate_proxy_url(proxy_url: &str) -> Result<String> {
         )));
     }
     Ok(url)
+}
+
+/// Validate an operator-configured proxy URL at startup (issue #189) — the
+/// same gate `build_proxy` runs when the client is built, applied early so a
+/// bad value (every `socks*` scheme included) aborts startup instead of
+/// failing the first request through it. `source` names where the value came
+/// from (`PROXY_URL`, `RESIDENTIAL_PROXY_URL`, `[media].proxy_url`,
+/// `--proxy`, …) and is carried in the error; the URL's userinfo is never
+/// echoed (canonicalise errors quote only constant-list scheme names, and
+/// the `build_proxy` leg redacts).
+///
+/// Where the proxy POINTS is deliberately not vetted — operator-configured
+/// proxies legitimately live on private addresses (sidecars, tor-privoxy).
+/// That veto (`validate_proxy_url`) is for caller-supplied values only.
+pub fn validate_configured_proxy(source: &str, proxy_url: &str) -> Result<()> {
+    // canonicalise first: its refusal carries the detail the operator needs
+    // (`unsupported proxy scheme "socks5" — …`), while `build_proxy` maps
+    // every failure to the generic redacted form.
+    canonicalise_proxy_url(proxy_url)
+        .map_err(|e| HttpError::InvalidUrl(format!("{source}: {e}")))?;
+    crate::handler_reqwest::build_proxy(proxy_url)
+        .map(|_| ())
+        .map_err(|e| HttpError::InvalidUrl(format!("{source}: {e}")))
 }
 
 fn proxy_allowlisted(host: &str, port: u16) -> bool {
@@ -1203,10 +1230,11 @@ pub(crate) mod tests {
         }
     }
 
-    /// SEC-CR-012: a scheme wreq has no intercept for would be ignored and the
-    /// request sent direct. Only the allowlisted schemes validate — the
-    /// `socks*` family included, since wreq is built without its `socks`
-    /// feature (issue #179).
+    /// SEC-CR-012: a scheme wreq has no intercept for is dialled as an HTTP
+    /// proxy, fails `ProxyConnect`, and — through `looks_like_proxy_dial_failure`
+    /// — can reach the direct-fallback sibling. Only the allowlisted schemes
+    /// validate — the `socks*` family included, since wreq is built without
+    /// its `socks` feature (issue #179).
     ///
     /// Falsification: drop the ALLOWED_PROXY_SCHEMES check in
     /// canonicalise_proxy_url and the refused rows validate → RED.
@@ -1230,10 +1258,11 @@ pub(crate) mod tests {
     }
 
     /// #179: wreq is built WITHOUT its `socks` feature, so a SOCKS proxy URL
-    /// is never a SOCKS dial — it would fall through to wreq's auto-proxy
-    /// path and the request can go DIRECT from the real IP. Every `socks*`
-    /// scheme, in any letter case, is refused with an error that names the
-    /// scheme. `http` and `https` still validate.
+    /// is never a SOCKS dial — wreq treats it as an HTTP proxy, the dial
+    /// fails `ProxyConnect`, and `looks_like_proxy_dial_failure` would
+    /// historically route it to the direct-fallback sibling, a request from
+    /// the real IP. Every `socks*` scheme, in any letter case, is refused
+    /// with an error that names the scheme. `http` and `https` still validate.
     ///
     /// Falsification: re-add `"socks5"` to `ALLOWED_PROXY_SCHEMES` → the
     /// socks5 rows validate → RED.
@@ -1286,5 +1315,64 @@ pub(crate) mod tests {
             listed_default.is_err(),
             "a port-less proxy is vetted at :80 — the :8080 listing must not admit it"
         );
+    }
+
+    /// #189: the startup gate runs the same canonicalise/`build_proxy` leg the
+    /// client build applies, names the source in every refusal, and never
+    /// echoes userinfo — even when the URL carries a password. Unlike
+    /// [`validate_proxy_url`] it does NOT veto where the proxy points: an
+    /// operator's proxy legitimately sits on a private address (sidecar,
+    /// tor-privoxy).
+    ///
+    /// Falsification: drop the `canonicalise_proxy_url`/`build_proxy` call and
+    /// return `Ok(())` → the socks5 rows pass → RED.
+    #[test]
+    fn validate_configured_proxy_names_source_and_redacts_userinfo() {
+        let err =
+            validate_configured_proxy("RESIDENTIAL_PROXY_URL", "socks5://user7:pw9@8.8.8.8:1080")
+                .expect_err("a socks5 configured proxy must refuse startup");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("RESIDENTIAL_PROXY_URL"),
+            "the source must be named: {msg}"
+        );
+        assert!(
+            msg.contains("unsupported proxy scheme") && msg.contains("socks5"),
+            "the refusal must say why: {msg}"
+        );
+        assert!(
+            !msg.contains("user7") && !msg.contains("pw9"),
+            "userinfo leaked into the startup error: {msg}"
+        );
+
+        // An operator proxy on a private address is accepted — the host veto
+        // is for caller-supplied proxies only.
+        for ok in [
+            "http://10.0.0.5:3128",
+            "https://user:pw@192.168.1.1:8080",
+            "http://tor-privoxy:8118",
+            "127.0.0.1:8888",
+        ] {
+            assert!(
+                validate_configured_proxy("[proxy].url", ok).is_ok(),
+                "refused a legitimately private configured proxy {ok}"
+            );
+        }
+
+        // Malformed input still refuses — with the source named.
+        for (source, bad) in [
+            ("MEDIA_PROXY_URL", "http://exa mple:8080"),
+            ("--proxy", "not a url"),
+            ("[media].proxy_url", "http://8.8.8.8:8080/secret/path"),
+        ] {
+            let err = validate_configured_proxy(source, bad)
+                .expect_err("a malformed configured proxy must refuse startup");
+            let msg = err.to_string();
+            assert!(
+                msg.contains(source),
+                "{source} must be named in the refusal: {msg}"
+            );
+            assert!(!msg.contains("secret"), "raw input leaked: {msg}");
+        }
     }
 }

@@ -526,9 +526,11 @@ pub(crate) fn onion_boundary_redirect(req: &Request, resp: &HttpResponse) -> Opt
 /// wreq re-parses the string it is given and can disagree with the url crate
 /// on the same input (an empty port, a credential the parser reads as part
 /// of the authority, a scheme it has no intercept for — every `socks*`
-/// scheme, since wreq is built without its `socks` feature), which is how a
-/// "proxy" ends up silently sending the request DIRECT. The raw value is
-/// therefore never handed to wreq: it goes through
+/// scheme, since wreq is built without its `socks` feature). Such a URL is
+/// dialled as an HTTP proxy, fails `ProxyConnect`, and is exactly what
+/// `looks_like_proxy_dial_failure` matched — the direct-fallback sibling then
+/// re-sent the request from the real IP. The raw value is therefore never
+/// handed to wreq: it goes through
 /// [`crate::middleware_ssrf::canonicalise_proxy_url`] first, which refuses
 /// what wreq cannot dial (issue #179). That does NOT vet
 /// the target — pool and static proxies are operator-configured and may be
@@ -835,11 +837,71 @@ mod tests {
         assert!(build_proxy("https://8.8.8.8:443").is_ok());
     }
 
+    /// Accept-and-count TCP listener answering a bare 200 to anything —
+    /// counts whatever was dialled, proxy handshake or direct request.
+    async fn counting_listener() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_task = Arc::clone(&hits);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                hits_task.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    let _ = sock
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        )
+                        .await;
+                });
+            }
+        });
+        (port, hits)
+    }
+
+    /// Sets an env var for the test and restores its previous value on drop,
+    /// so a panicking assertion cannot leak the override into sibling tests.
+    /// Still `#[serial]` — two live guards on the same var would race.
+    struct EnvGuard {
+        name: &'static str,
+        saved: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(name: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let saved = std::env::var_os(name);
+            // SAFETY: callers are `#[serial]`; no other thread reads the var
+            // between save and restore.
+            unsafe { std::env::set_var(name, value) };
+            Self { name, saved }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: paired with `set`; runs before the next serial test.
+            unsafe {
+                match &self.saved {
+                    Some(v) => std::env::set_var(self.name, v),
+                    None => std::env::remove_var(self.name),
+                }
+            }
+        }
+    }
+
     /// #179: a `socks5://` per-request proxy must be refused by
     /// `validate_proxy_url` before any connection is opened — wreq is built
-    /// without its `socks` feature, so the URL is never a SOCKS dial: it
-    /// would fall through to wreq's auto-proxy path and, notably with
-    /// `max_redirects = 0`, degrade to a DIRECT request from the real IP.
+    /// without its `socks` feature, so the URL is never a SOCKS dial: wreq
+    /// treats it as an HTTP proxy, the dial fails `ProxyConnect`, and with
+    /// `max_redirects = 0` `looks_like_proxy_dial_failure` matches — the
+    /// direct-fallback sibling then re-sends the request from the real IP.
     /// Driven through the real `WreqHandler::handle` path once with the
     /// default redirect limit and once with `max_redirects = 0`, asserting
     /// zero connections on both the listener the proxy URL points at and a
@@ -847,8 +909,8 @@ mod tests {
     ///
     /// Falsification:
     /// - re-add `"socks5"` to `ALLOWED_PROXY_SCHEMES` (middleware_ssrf.rs):
-    ///   the allowlisted loopback proxy validates, wreq cannot dial SOCKS —
-    ///   the request reaches a listener or errors without the scheme
+    ///   the allowlisted loopback proxy validates, wreq dials it as an HTTP
+    ///   proxy — the request reaches a listener or errors without the scheme
     ///   refusal → RED;
     /// - skip the `validate_proxy_url` call in `execute_with`: the refusal
     ///   then comes from `build_proxy` and is logged with reason
@@ -856,48 +918,18 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn socks5_per_request_proxy_is_refused_before_any_dial() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        /// Accept-and-count TCP listener answering a bare 200 to anything —
-        /// counts whatever was dialled, proxy handshake or direct request.
-        async fn counting_listener() -> (u16, Arc<AtomicUsize>) {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let port = listener.local_addr().unwrap().port();
-            let hits = Arc::new(AtomicUsize::new(0));
-            let hits_task = Arc::clone(&hits);
-            tokio::spawn(async move {
-                loop {
-                    let Ok((mut sock, _)) = listener.accept().await else {
-                        break;
-                    };
-                    hits_task.fetch_add(1, Ordering::SeqCst);
-                    tokio::spawn(async move {
-                        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                        let mut buf = [0u8; 4096];
-                        let _ = sock.read(&mut buf).await;
-                        let _ = sock
-                            .write_all(
-                                b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                            )
-                            .await;
-                    });
-                }
-            });
-            (port, hits)
-        }
+        use std::sync::atomic::Ordering;
 
         let (proxy_port, proxy_hits) = counting_listener().await;
         let (origin_port, origin_hits) = counting_listener().await;
 
-        // SAFETY: serial test — admit the loopback proxy so that, if the
-        // scheme allowlist is mutated to re-allow socks5, the URL passes
-        // the private-host veto and the dial stage is genuinely exercised.
-        unsafe {
-            std::env::set_var(
-                crate::middleware_ssrf::PROXY_ALLOWLIST_ENV,
-                format!("127.0.0.1:{proxy_port}"),
-            )
-        };
+        // Admit the loopback proxy so that, if the scheme allowlist is
+        // mutated to re-allow socks5, the URL passes the private-host veto
+        // and the dial stage is genuinely exercised.
+        let _env = EnvGuard::set(
+            crate::middleware_ssrf::PROXY_ALLOWLIST_ENV,
+            format!("127.0.0.1:{proxy_port}"),
+        );
         for max_redirects in [crate::HttpConfig::default().max_redirects, 0] {
             let handler = WreqHandler::new(wreq::Client::new(), false, max_redirects, 1 << 20);
             let (result, logs) = capture_logs(handler.handle(Request {
@@ -925,7 +957,7 @@ mod tests {
                  validate_proxy_url (reason=proxy_refused): {logs}"
             );
         }
-        unsafe { std::env::remove_var(crate::middleware_ssrf::PROXY_ALLOWLIST_ENV) };
+        drop(_env);
         assert_eq!(
             proxy_hits.load(Ordering::SeqCst),
             0,
@@ -935,6 +967,74 @@ mod tests {
             origin_hits.load(Ordering::SeqCst),
             0,
             "the request reached the target DIRECTLY — a real-IP leak"
+        );
+    }
+
+    /// #189: the leak scenario the scheme veto exists for. `WreqHandler` is
+    /// built WITH its direct-fallback sibling (the shape `HttpClient::build`
+    /// produces whenever any proxy is configured) and `max_redirects = 0` —
+    /// the exact precondition under which `looks_like_proxy_dial_failure`
+    /// routes a failed proxy dial to the direct sibling. A `socks5://`
+    /// per-request proxy must still be refused before ANY connection: no
+    /// TCP to the "proxy" listener, and — the regression this guards — no
+    /// TCP to the target listener (the historical real-IP egress).
+    ///
+    /// Falsification:
+    /// - re-add `"socks5"` to `ALLOWED_PROXY_SCHEMES` (middleware_ssrf.rs):
+    ///   the allowlisted loopback proxy validates, wreq dials it as an HTTP
+    ///   proxy (a connection the proxy listener counts) and, if that dial
+    ///   fails `ProxyConnect`, the fallback sibling re-sends to the target —
+    ///   either listener's counter leaves 0, or the response is 200 → RED;
+    /// - delete the `validate_proxy_url` call in `execute_with`: same
+    ///   outcome via `build_proxy`'s pass → RED;
+    /// - widen `looks_like_proxy_dial_failure` to `InvalidUrl` refusals: the
+    ///   refusal itself becomes a fallback trigger → the target listener
+    ///   counts 1 → RED.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn socks5_per_request_proxy_with_direct_fallback_dials_nothing() {
+        use std::sync::atomic::Ordering;
+
+        let (proxy_port, proxy_hits) = counting_listener().await;
+        let (origin_port, origin_hits) = counting_listener().await;
+
+        // As above: admit the loopback proxy so a scheme-allowlist mutation
+        // reaches the dial stage instead of stopping at the host veto.
+        let _env = EnvGuard::set(
+            crate::middleware_ssrf::PROXY_ALLOWLIST_ENV,
+            format!("127.0.0.1:{proxy_port}"),
+        );
+        let direct = wreq::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("direct fallback client");
+        let handler =
+            WreqHandler::new(wreq::Client::new(), false, 0, 1 << 20).with_direct_fallback(direct);
+        let result = handler
+            .handle(Request {
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:{origin_port}/test"),
+                headers: vec![],
+                body: None,
+                proxy: Some(format!("socks5://127.0.0.1:{proxy_port}")),
+                authenticated: false,
+            })
+            .await;
+        let err = result.expect_err("a socks5 proxy must be refused, not dialled or dropped");
+        assert!(
+            err.to_string().contains("unsupported proxy scheme")
+                && err.to_string().contains("socks5"),
+            "expected the unsupported-scheme refusal naming socks5, got {err}"
+        );
+        assert_eq!(
+            proxy_hits.load(Ordering::SeqCst),
+            0,
+            "the socks proxy was dialled — the refusal must precede any connection"
+        );
+        assert_eq!(
+            origin_hits.load(Ordering::SeqCst),
+            0,
+            "the direct-fallback sibling reached the target — a real-IP leak"
         );
     }
 }
