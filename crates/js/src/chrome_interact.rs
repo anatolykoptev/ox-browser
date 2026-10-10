@@ -10,6 +10,39 @@ use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use super::AppState;
 use crate::inbound_auth::InboundAuth;
 
+/// Vet the caller's `proxy` in a `chrome/interact` body before it is
+/// forwarded: go-wowa's Chrome dials it, so it gets the same per-request
+/// validator /fetch applies (issue #189). Its refusal carries no userinfo.
+///
+/// go-wowa decodes the body with Go `encoding/json`, which matches object
+/// keys case-insensitively, so EVERY top-level key that is `proxy` modulo
+/// ASCII case is vetted (`{"Proxy": ...}` must not skip the check). A value
+/// that is neither a string nor null is refused, as is more than one such
+/// key (Go keeps the last; which one wins is not ours to guess). A blank
+/// string means "no proxy", as it does for go-wowa.
+pub fn vet_caller_proxy(body: &serde_json::Value) -> Result<(), ox_http::HttpError> {
+    let refused = |msg: &str| ox_http::HttpError::InvalidUrl(format!("SSRF blocked: {msg}"));
+    let Some(obj) = body.as_object() else {
+        return Ok(());
+    };
+    let mut values = obj
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("proxy"))
+        .map(|(_, v)| v);
+    let Some(value) = values.next() else {
+        return Ok(());
+    };
+    if values.next().is_some() {
+        return Err(refused("multiple proxy keys"));
+    }
+    match value {
+        serde_json::Value::Null => Ok(()),
+        serde_json::Value::String(s) if s.trim().is_empty() => Ok(()),
+        serde_json::Value::String(s) => ox_http::validate_proxy_url(s).map(|_| ()),
+        _ => Err(refused("proxy must be a string")),
+    }
+}
+
 #[axum::debug_handler]
 pub async fn chrome_interact_handler(
     State(state): State<AppState>,
@@ -22,6 +55,12 @@ pub async fn chrome_interact_handler(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": ox_http::HttpError::OnionRequiresTor.to_string()})),
+        );
+    }
+    if let Err(e) = vet_caller_proxy(&body) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e.to_string()})),
         );
     }
     match state
@@ -179,6 +218,114 @@ mod auth_relay_tests {
                     .is_err(),
                 "{path}: go-wowa was called"
             );
+        }
+    }
+
+    /// #189: a caller `proxy` in the REST body is vetted by the same
+    /// validator /fetch applies before go-wowa sees it — a `socks*` scheme
+    /// or a malformed value is refused 400, userinfo is never echoed, and
+    /// the upstream is never called.
+    ///
+    /// Falsification: remove the `validate_proxy_url` check in
+    /// `chrome_interact_handler` → go-wowa gets the request → RED.
+    #[tokio::test]
+    async fn chrome_interact_refuses_an_invalid_caller_proxy() {
+        for proxy in ["socks5://8.8.8.8:1080", "http://user7:pw9@exa mple:8080"] {
+            let (url, captured) = ox_http::wowa_auth::capture_one(r#"{"status":"ok"}"#).await;
+            let mut state = crate::tests::test_state();
+            state.gobrowser_proxy = Arc::new(crate::gobrowser_proxy::GoBrowserProxy::new(url, ""));
+            let body = format!(
+                r#"{{"url":"https://example.com","actions":[],"proxy":{}}}"#,
+                serde_json::to_string(proxy).unwrap()
+            );
+            let resp = crate::router(state)
+                .oneshot(
+                    axum::http::Request::post("/chrome/interact")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 400, "{proxy}");
+            let text = String::from_utf8(
+                axum::body::to_bytes(resp.into_body(), 1 << 20)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(text.contains("SSRF blocked"), "{proxy}: {text}");
+            assert!(
+                !text.contains("user7") && !text.contains("pw9"),
+                "{proxy}: userinfo leaked into the refusal: {text}"
+            );
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(200), captured)
+                    .await
+                    .is_err(),
+                "{proxy}: go-wowa was called"
+            );
+        }
+    }
+
+    /// POST `body` to /chrome/interact against a go-wowa capture stub;
+    /// returns the response status and whether go-wowa saw a request.
+    async fn post_chrome_interact(body: &str) -> (u16, bool) {
+        let (url, captured) = ox_http::wowa_auth::capture_one(r#"{"status":"ok"}"#).await;
+        let mut state = crate::tests::test_state();
+        state.gobrowser_proxy = Arc::new(crate::gobrowser_proxy::GoBrowserProxy::new(url, ""));
+        let resp = crate::router(state)
+            .oneshot(
+                axum::http::Request::post("/chrome/interact")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_owned()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let forwarded = tokio::time::timeout(std::time::Duration::from_millis(500), captured)
+            .await
+            .is_ok();
+        (resp.status().as_u16(), forwarded)
+    }
+
+    /// Go `encoding/json` matches keys case-insensitively, so `{"Proxy":..}`
+    /// reaches go-wowa as the proxy: every case variant is vetted, a
+    /// non-string value is refused, and two proxy keys are refused.
+    ///
+    /// Falsification: revert `vet_caller_proxy` to `body.get("proxy")` →
+    /// the `Proxy` / `PROXY` rows are forwarded → RED.
+    #[tokio::test]
+    async fn chrome_interact_vets_every_case_variant_of_the_proxy_key() {
+        for body in [
+            r#"{"url":"https://example.com","Proxy":"socks5://127.0.0.1:9050"}"#,
+            r#"{"url":"https://example.com","PROXY":"socks5://127.0.0.1:9050"}"#,
+            r#"{"url":"https://example.com","pRoXy":"http://127.0.0.1:3128"}"#,
+            r#"{"url":"https://example.com","proxy":5}"#,
+            r#"{"url":"https://example.com","Proxy":5}"#,
+            r#"{"url":"https://example.com","proxy":["http://8.8.8.8:80"]}"#,
+            r#"{"url":"https://example.com","proxy":"http://8.8.8.8:80","Proxy":"http://8.8.4.4:80"}"#,
+        ] {
+            let (status, forwarded) = post_chrome_interact(body).await;
+            assert_eq!(status, 400, "{body}");
+            assert!(!forwarded, "{body}: go-wowa was called");
+        }
+    }
+
+    /// Blank / null `proxy` means "no proxy" (go-wowa treats `""` as none)
+    /// and is forwarded; so is a valid public proxy under a case variant.
+    #[tokio::test]
+    async fn chrome_interact_blank_or_null_proxy_means_no_proxy() {
+        for body in [
+            r#"{"url":"https://example.com","proxy":""}"#,
+            r#"{"url":"https://example.com","Proxy":"   "}"#,
+            r#"{"url":"https://example.com","proxy":null}"#,
+            r#"{"url":"https://example.com","Proxy":"http://8.8.8.8:3128"}"#,
+        ] {
+            let (status, forwarded) = post_chrome_interact(body).await;
+            assert_eq!(status, 200, "{body}");
+            assert!(forwarded, "{body}: go-wowa was not called");
         }
     }
 

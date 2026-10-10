@@ -40,6 +40,9 @@ impl WebsharePool {
         }
         let client = wreq::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            // Never inherit an ambient HTTP(S)_PROXY/ALL_PROXY: an operator's
+            // shell env must not silently route the pool fetch itself.
+            .no_proxy()
             .build()?;
         let resp = client
             .get(WEBSHARE_API_URL)

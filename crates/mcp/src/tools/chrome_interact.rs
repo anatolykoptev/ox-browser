@@ -142,6 +142,13 @@ impl OxMcpServer {
                 serde_json::json!({"error": ox_http::HttpError::OnionRequiresTor.to_string()});
             return Ok(CallToolResult::error(vec![Content::text(json.to_string())]));
         }
+        // go-wowa's Chrome would dial a caller-supplied `proxy` unchecked —
+        // same vetting as the REST twin (per-request validator, issue #189;
+        // blank = no proxy). Its refusal carries no userinfo.
+        if let Err(e) = ox_js::vet_caller_proxy(&body) {
+            let json = serde_json::json!({"error": e.to_string()});
+            return Ok(CallToolResult::error(vec![Content::text(json.to_string())]));
+        }
         let (_, resp) = self
             .gobrowser_proxy
             .forward("/api/v1/chrome/interact", &body, auth)

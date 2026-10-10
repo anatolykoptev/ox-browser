@@ -60,13 +60,43 @@ pub fn is_onion_host(host: &str) -> bool {
     tld.eq_ignore_ascii_case("onion")
 }
 
-/// `true` if `url` parses and its host is a `.onion` name. An unparsable URL
+/// `true` if `url` parses and its host is a `.onion` name. Free-form values
+/// (request-body strings searched by [`json_mentions_onion`]) are normalised
+/// first: a `view-source:` wrapper is stripped, and a string with no scheme is
+/// retried as `http://<s>` so bare `foo.onion` and protocol-relative
+/// `//foo.onion/x` still hit the host check (issue #192). An unparsable URL
 /// is not onion-bound here — the URL validator rejects it on its own.
 pub fn is_onion_url(url: &str) -> bool {
-    Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(is_onion_host))
-        .unwrap_or(false)
+    let s = match url.get(..12) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("view-source:") => &url[12..],
+        _ => url,
+    };
+    let host_is_onion = |raw: &str| {
+        Url::parse(raw)
+            .ok()
+            .and_then(|u| u.host_str().map(is_onion_host))
+            .unwrap_or(false)
+    };
+    if host_is_onion(s) {
+        return true;
+    }
+    // No scheme (`foo.onion`, `//foo.onion/x`): retry under http so the host
+    // position is populated. A `:` before the first `/`, `?` or `#` is a
+    // scheme per WHATWG — those already parsed above (or cannot be a host)...
+    let has_scheme = match (s.find(':'), s.find(['/', '?', '#'])) {
+        (Some(c), Some(t)) => c < t,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    // ...unless the text after the first `:` is a port (`foo.onion:8080`,
+    // `foo.onion:8080/x`, `user@foo.onion:80`): digits then end, `/`, `?` or
+    // `#`. WHATWG reads `foo.onion` there as a scheme, but no real scheme is
+    // followed by a bare port, so retry it as `host:port`.
+    let is_host_port = s.split_once(':').is_some_and(|(_, rest)| {
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        digits > 0 && matches!(rest.as_bytes().get(digits), None | Some(b'/' | b'?' | b'#'))
+    });
+    (!has_scheme || is_host_port) && host_is_onion(&format!("http://{s}"))
 }
 
 /// Default call deadline for a URL: the endpoint's own default, raised to
@@ -298,6 +328,64 @@ mod tests {
         assert!(!is_onion_url("https://example.com/foo.onion"));
         assert!(!is_onion_url("https://foo.onion@example.com/"));
         assert!(!is_onion_url("not a url"));
+    }
+
+    /// #192: free-form strings a request body can carry still resolve to a
+    /// host — bare `foo.onion`, protocol-relative `//foo.onion/x`, and a
+    /// `view-source:` wrapper all count; clearnet strings do not.
+    ///
+    /// Falsification: drop the `http://{s}` retry in `is_onion_url` and the
+    /// scheme-less rows go RED; drop the `is_host_port` clause and the
+    /// `foo.onion:8080` rows go RED.
+    #[test]
+    fn onion_url_scheme_less_and_wrapped_forms() {
+        for url in [
+            "foo.onion",
+            "FOO.ONION./",
+            "//foo.onion/x",
+            "view-source:http://foo.onion/",
+            "View-Source:https://FOO.ONION.",
+            // host:port forms: WHATWG would read `foo.onion` as a scheme.
+            "foo.onion:8080",
+            "foo.onion:8080/x",
+            "foo.onion:8080?q=1",
+            "user@foo.onion:80",
+        ] {
+            assert!(is_onion_url(url), "must match {url:?}");
+        }
+        for url in [
+            "example.com",
+            "https://onion.example.com/",
+            "foo.onion.example.com",
+            "mailto:x@foo.onion",
+            "http://foo.onion@evil.com",
+            "onion.example.com:8080",
+            "foo.onion.example.com:80/x",
+            "the .onion suffix in prose",
+        ] {
+            assert!(!is_onion_url(url), "must not match {url:?}");
+        }
+    }
+
+    /// `json_mentions_onion` inherits the same normalisation for strings
+    /// nested anywhere in a request body.
+    #[test]
+    fn json_mentions_onion_finds_scheme_less_and_wrapped_urls() {
+        for v in [
+            serde_json::json!("foo.onion"),
+            serde_json::json!("//foo.onion/x"),
+            serde_json::json!("view-source:http://foo.onion/"),
+            serde_json::json!({"url": "https://clearnet.example/", "go": "//a.onion"}),
+        ] {
+            assert!(json_mentions_onion(&v), "{v}");
+        }
+        for v in [
+            serde_json::json!("example.com"),
+            serde_json::json!("https://onion.example.com/"),
+            serde_json::json!("foo.onion.example.com"),
+        ] {
+            assert!(!json_mentions_onion(&v), "{v}");
+        }
     }
 
     #[test]

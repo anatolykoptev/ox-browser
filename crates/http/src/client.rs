@@ -560,9 +560,12 @@ fn wreq_transport_core(
     };
     if let Some(url) = proxy_url {
         // Same canonicalising builder as the pool and per-request paths: a
-        // scheme wreq cannot dial (any `socks*` — issue #179) or a
-        // non-canonical value would otherwise go direct, and the wreq error
-        // would echo the credentials.
+        // scheme wreq has no intercept for (any `socks*` — wreq dials it as
+        // an HTTP proxy, fails `ProxyConnect`, and issue #179's direct
+        // fallback then re-sent from the real IP) or a non-canonical value
+        // must be refused, and the wreq error would echo the credentials.
+        // `.proxy()` also clears `auto_sys_proxy` (wreq client.rs:1001) —
+        // ambient `HTTP(S)_PROXY`/`ALL_PROXY` never applies.
         let proxy = crate::handler_reqwest::build_proxy(url)?;
         builder = builder.proxy(proxy);
     } else {

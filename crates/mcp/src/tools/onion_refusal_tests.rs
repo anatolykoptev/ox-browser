@@ -174,3 +174,93 @@ async fn mcp_readability_headless_fallback_refuses_onion() {
     assert!(err.starts_with("onion_requires_tor"), "{err}");
     assert_eq!(wowa_hits.load(Ordering::SeqCst), 0);
 }
+
+/// A blank `proxy` means "no proxy" (go-wowa treats `""` as none): it is
+/// forwarded, not refused as an unparsable proxy URL.
+///
+/// Falsification: drop the blank arm in `ox_js::vet_caller_proxy` →
+/// `validate_proxy_url("")` refuses → the stub counts 0 → RED.
+#[tokio::test]
+async fn mcp_chrome_interact_blank_proxy_means_no_proxy() {
+    for proxy in ["", "   "] {
+        let (wowa, wowa_hits) = counting_wowa().await;
+        let s = server(&wowa, Arc::new(AtomicUsize::new(0)));
+        let args = format!(
+            r#"{{"url":"https://example.com","actions":[],"timeout_secs":5,"proxy":{}}}"#,
+            serde_json::to_string(proxy).unwrap()
+        );
+        let _ = s
+            .do_chrome_interact(serde_json::from_str(&args).unwrap(), auth())
+            .await
+            .expect("tool result");
+        assert!(
+            wowa_hits.load(Ordering::SeqCst) >= 1,
+            "{proxy:?}: a blank proxy was refused instead of forwarded"
+        );
+    }
+}
+
+/// #189: `chrome_interact`'s caller-supplied `proxy` goes through the same
+/// validator /fetch applies before go-wowa sees it — a `socks*` scheme or a
+/// malformed value is refused, userinfo is never echoed, and the stub is
+/// never called.
+///
+/// Falsification: remove the `validate_proxy_url` call in
+/// `chrome_interact::do_chrome_interact` → the bad proxy is forwarded and
+/// the wowa stub counts a request → RED.
+#[tokio::test]
+async fn mcp_chrome_interact_refuses_an_invalid_caller_proxy() {
+    for proxy in [
+        "socks5://8.8.8.8:1080",
+        "http://user7:pw9@exa mple:8080",
+        "not a url",
+    ] {
+        let (wowa, wowa_hits) = counting_wowa().await;
+        let s = server(&wowa, Arc::new(AtomicUsize::new(0)));
+        let args = format!(
+            r#"{{"url":"https://example.com","actions":[],"timeout_secs":5,"proxy":{}}}"#,
+            serde_json::to_string(proxy).unwrap()
+        );
+        let res = s
+            .do_chrome_interact(serde_json::from_str(&args).unwrap(), auth())
+            .await
+            .expect("tool result");
+        let text = serde_json::to_string(&res).expect("serialize");
+        assert_eq!(
+            res.is_error,
+            Some(true),
+            "{proxy}: not an error result: {text}"
+        );
+        assert!(
+            text.contains("SSRF blocked"),
+            "{proxy}: the refusal must carry the validator error: {text}"
+        );
+        assert!(
+            !text.contains("user7") && !text.contains("pw9"),
+            "{proxy}: userinfo leaked into the refusal: {text}"
+        );
+        assert_eq!(
+            wowa_hits.load(Ordering::SeqCst),
+            0,
+            "{proxy}: go-wowa stub called"
+        );
+    }
+
+    // Control: a valid public proxy is forwarded untouched.
+    let (wowa, wowa_hits) = counting_wowa().await;
+    let s = server(&wowa, Arc::new(AtomicUsize::new(0)));
+    let _ = s
+        .do_chrome_interact(
+            serde_json::from_str(
+                r#"{"url":"https://example.com","actions":[],"timeout_secs":5,"proxy":"http://8.8.8.8:3128"}"#,
+            )
+            .unwrap(),
+            auth(),
+        )
+        .await
+        .expect("tool result");
+    assert!(
+        wowa_hits.load(Ordering::SeqCst) >= 1,
+        "control never reached go-wowa"
+    );
+}

@@ -285,6 +285,9 @@ async fn chrome_fallback(
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
+        // Internal go-wowa hop: never inherit an ambient
+        // HTTP(S)_PROXY/ALL_PROXY from the operator's env.
+        .no_proxy()
         // `secret` is already GATED by the caller: read_page_inner passes
         // ox-browser's go-wowa secret only when the inbound request carried
         // the shared internal secret (inbound_auth `Authenticated`, set on

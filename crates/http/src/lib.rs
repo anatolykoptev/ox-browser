@@ -71,7 +71,10 @@ pub use middleware_ratelimit::rate_limit_middleware;
 pub use middleware_residential::residential_proxy_middleware;
 pub use middleware_retry::retry_middleware;
 pub use middleware_solver::{solver_middleware, solver_middleware_with_negcache};
-pub use middleware_ssrf::{is_private_ip, ssrf_middleware, validate_allowlist, validate_url};
+pub use middleware_ssrf::{
+    is_private_ip, ssrf_middleware, validate_allowlist, validate_configured_proxy,
+    validate_proxy_url, validate_url,
+};
 pub use profile::{
     BUILTIN_PROFILES, BrowserProfile, ProfileFilter, platform_matched_profile,
     profile_to_emulation, random_profile,

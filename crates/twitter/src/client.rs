@@ -118,6 +118,9 @@ async fn fetch_tweet_from_hully(base_url: &str, id: &str) -> Result<Tweet, Strin
     let url = format!("{base_url}/v1/tweet/{id}");
     let client = wreq::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        // Internal go-hully hop: never inherit an ambient
+        // HTTP(S)_PROXY/ALL_PROXY from the operator's env.
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -187,6 +190,7 @@ mod tests {
         // fetch_tweet_from_hully but with a test-sized cap.
         let client = wreq::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .no_proxy()
             .build()
             .unwrap();
         let resp = client

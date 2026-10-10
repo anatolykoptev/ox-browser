@@ -98,6 +98,9 @@ impl ByparrSolver {
     pub fn new(config: ByparrConfig) -> Self {
         let client = wreq::Client::builder()
             .timeout(config.timeout)
+            // Internal solver hop: never inherit an ambient
+            // HTTP(S)_PROXY/ALL_PROXY from the operator's env.
+            .no_proxy()
             .build()
             .expect("failed to build wreq client");
         let max_concurrent = config.max_concurrent();

@@ -49,6 +49,9 @@ pub async fn fetch_tweet(base_url: &str, tweet_id: &str) -> Result<Tweet, String
 
     let client = wreq::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
+        // Internal go-social hop: never inherit an ambient
+        // HTTP(S)_PROXY/ALL_PROXY from the operator's env.
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
 

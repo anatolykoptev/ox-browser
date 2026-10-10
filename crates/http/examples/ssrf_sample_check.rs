@@ -14,6 +14,8 @@ use ox_http::{SsrfGuardedResolver, ssrf_redirect_policy};
 async fn main() {
     let client = wreq::Client::builder()
         .timeout(Duration::from_secs(15))
+        // The sample must not inherit an ambient HTTP(S)_PROXY/ALL_PROXY.
+        .no_proxy()
         .dns_resolver(SsrfGuardedResolver)
         .redirect(ssrf_redirect_policy(10))
         .build()

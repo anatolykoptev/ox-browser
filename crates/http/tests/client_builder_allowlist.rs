@@ -106,6 +106,11 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
         "cfg(test) dead-proxy error generator (targets 127.0.0.1)",
     ),
     (
+        "crates/http/src/handler_reqwest.rs",
+        1,
+        "cfg(test) direct-fallback sibling for the socks5 leak test (targets 127.0.0.1)",
+    ),
+    (
         "crates/http/examples/ssrf_sample_check.rs",
         1,
         "example, not shipped",
