@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.20](https://github.com/anatolykoptev/ox-browser/compare/v0.8.19...v0.8.20) (2026-10-10)
+
+
+### Fixed
+
+* **proxy:** validate every proxy env at startup, guard the direct-fallback leak path, onion follow-ups ([#189](https://github.com/anatolykoptev/ox-browser/issues/189), [#192](https://github.com/anatolykoptev/ox-browser/issues/192)) ([#194](https://github.com/anatolykoptev/ox-browser/issues/194)) ([ab14c5e](https://github.com/anatolykoptev/ox-browser/commit/ab14c5e93d17392210625a3578b59cf59e662e84))
+
 ## [0.8.19](https://github.com/anatolykoptev/ox-browser/compare/v0.8.18...v0.8.19) (2026-10-09)
 
 
