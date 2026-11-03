@@ -59,6 +59,7 @@ fn animation_key_matches_the_browser_on_every_vector() {
             Err(e) => bad.push(format!("#{i} error {e}")),
         }
     }
+    assert_eq!(total, 1000, "vectors compared");
     assert!(
         bad.is_empty(),
         "{} of {total} keys differ, first: {:#?}",

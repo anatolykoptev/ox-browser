@@ -21,11 +21,11 @@ since the vectors were recorded, so the vectors cannot drift from their inputs.
 ## Where they come from
 
 Recorded with headless Chromium 148 (playwright-core 1.60) on macOS arm64. The
-harness (a small Node script, not part of this crate) serves `live_page.html` from
+harness (a small Node script, not part of this crate; `run.mjs` and the key list `keys.json`, which `runnerSha256` and `keysSha256` in the provenance refer to, are in go-twitter's public repository under `xtid/testdata/browser/`) serves `live_page.html` from
 a local HTTP server with the verification meta tag replaced by each key, runs
 `live_ondemand.js` unmodified in the page, intercepts its `crypto.subtle.digest`
 call to read the string it hashes
-(`<path>!<method>!<time>obfiowerehiring<animation key>`), and records the text
+(`<method>!<path>!<time>obfiowerehiring<animation key>`), and records the text
 after the keyword. The browser is started with
 `--host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"`, so nothing leaves the
 machine.
@@ -43,5 +43,7 @@ the three files here, and run `cargo test -p ox-twitter xtid`.
 ## What this does not establish
 
 Only Chromium on arm64 macOS is recorded. Firefox and Safari run the same script
-but with different engines (easing solver, colour and matrix serialisation); X
-accepts the Chromium value. The vectors cover one page and one script version.
+but with different engines (easing solver, colour and matrix serialisation). X has
+been measured to accept ids built from the Chromium value on `UserTweetsAndReplies`
+in go-twitter; that is the only server-side evidence. The vectors cover one page
+and one script version.

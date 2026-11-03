@@ -293,12 +293,17 @@ fn js_round(num: f64) -> f64 {
     x.copysign(num)
 }
 
+/// 2^64: from here `x as u64` saturates.
+const TWO_POW_64: f64 = 18_446_744_073_709_551_616.0;
+
 /// Hex expansion of a non-negative double, as the reference prints it: the
 /// integer part in hex, then ".", then fraction digits until the fraction is
 /// exactly zero. Multiplying a double by 16 is exact, so the loop ends after at
-/// most ~270 steps; stopping earlier truncates the expansion and corrupts the key.
+/// most ~270 steps for any finite x below 2^64 (larger values saturate `as u64` and
+/// never reach a zero fraction, so they return an empty string); stopping earlier
+/// truncates the expansion and corrupts the key.
 fn float_to_hex(x: f64) -> String {
-    if !x.is_finite() || x < 0.0 {
+    if !x.is_finite() || !(0.0..TWO_POW_64).contains(&x) {
         return String::new();
     }
     let quotient = x as u64;
@@ -381,6 +386,20 @@ mod tests {
         // 0.07 needs 14 hex digits; the expansion ends only at an exactly zero fraction.
         assert_eq!(float_to_hex(0.07), ".11eb851eb851ec");
         assert_eq!(float_to_hex(7.09), "7.170a3d70a3d7");
+    }
+
+    #[test]
+    fn test_float_to_hex_refuses_what_it_cannot_expand() {
+        assert_eq!(float_to_hex(f64::NAN), "");
+        assert_eq!(float_to_hex(f64::INFINITY), "");
+        assert_eq!(float_to_hex(-1.0), "");
+        // finite but past u64: must return, not loop
+        assert_eq!(float_to_hex(1.8446744073709552e19), "");
+        assert_eq!(float_to_hex(1e300), "");
+        assert_eq!(
+            float_to_hex(18_446_744_073_709_549_568.0),
+            "fffffffffffff800"
+        );
     }
 
     #[test]
