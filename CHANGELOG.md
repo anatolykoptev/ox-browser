@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.21](https://github.com/anatolykoptev/ox-browser/compare/v0.8.20...v0.8.21) (2026-11-03)
+
+
+### Fixed
+
+* **twitter:** match the browser animation key ([#200](https://github.com/anatolykoptev/ox-browser/issues/200)) ([a5da74b](https://github.com/anatolykoptev/ox-browser/commit/a5da74bf2d010c5803a3ddd09133692fca0a6157))
+
 ## [0.8.20](https://github.com/anatolykoptev/ox-browser/compare/v0.8.19...v0.8.20) (2026-10-10)
 
 
