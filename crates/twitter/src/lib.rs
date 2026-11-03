@@ -11,6 +11,8 @@ pub mod url;
 
 pub(crate) mod tw_http;
 pub(crate) mod xtid;
+#[cfg(test)]
+mod xtid_browser_test;
 mod xtid_cubic;
 pub(crate) mod xtid_manager;
 mod xtid_parser;

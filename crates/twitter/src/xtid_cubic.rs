@@ -1,67 +1,155 @@
 /// Cubic bezier easing, linear interpolation, and rotation matrix utilities.
-/// Ported from go-twitter cubic.go / interpolate.go / rotation.go.
-/// Fix vs go-twitter: epsilon is 1e-6 (not 1e-5).
+///
+/// `Cubic` is a port of Chromium's `gfx::CubicBezier` (ui/gfx/geometry/cubic_bezier.cc):
+/// X's loading animation runs in the browser, so the easing value is whatever the
+/// browser computes: a piecewise-linear first guess from 11 samples of x(t), up to
+/// four Newton steps, then bisection inside the sample bracket, tolerance 1e-7.
+/// Plain bisection (the reference implementation's method) returns a different t
+/// for some keys and moves a printed digit. `testdata/browser` holds the browser's
+/// own answers.
 use std::f64::consts::PI;
 
+/// `kBezierEpsilon`, the tolerance `CubicBezier::Solve` uses.
+const EPSILON: f64 = 1e-7;
+/// `kMaxNewtonIterations`.
+const NEWTON_ITERATIONS: usize = 4;
+/// `CUBIC_BEZIER_SPLINE_SAMPLES`.
+const SPLINE_SAMPLES: usize = 11;
+
 pub(crate) struct Cubic {
-    curves: [f64; 4],
+    ax: f64,
+    bx: f64,
+    cx: f64,
+    ay: f64,
+    by: f64,
+    cy: f64,
+    start_gradient: f64,
+    end_gradient: f64,
+    spline_samples: [f64; SPLINE_SAMPLES],
 }
 
 impl Cubic {
+    /// Builds the curve from `[x1, y1, x2, y2]`.
     pub(crate) fn new(curves: &[f64]) -> Self {
         assert!(curves.len() >= 4, "curves must have at least 4 elements");
-        Self {
-            curves: [curves[0], curves[1], curves[2], curves[3]],
+        let (x1, y1, x2, y2) = (curves[0], curves[1], curves[2], curves[3]);
+        let cx = 3.0 * x1;
+        let bx = 3.0 * (x2 - x1) - cx;
+        let ax = 1.0 - cx - bx;
+        let cy = 3.0 * y1;
+        let by = 3.0 * (y2 - y1) - cy;
+        let ay = 1.0 - cy - by;
+
+        let start_gradient = if x1 > 0.0 {
+            y1 / x1
+        } else if y1 == 0.0 && x2 > 0.0 {
+            y2 / x2
+        } else if y1 == 0.0 && y2 == 0.0 {
+            1.0
+        } else {
+            0.0
+        };
+        let end_gradient = if x2 < 1.0 {
+            (y2 - 1.0) / (x2 - 1.0)
+        } else if y2 == 1.0 && x1 < 1.0 {
+            (y1 - 1.0) / (x1 - 1.0)
+        } else if y2 == 1.0 && y1 == 1.0 {
+            1.0
+        } else {
+            0.0
+        };
+
+        let mut c = Self {
+            ax,
+            bx,
+            cx,
+            ay,
+            by,
+            cy,
+            start_gradient,
+            end_gradient,
+            spline_samples: [0.0; SPLINE_SAMPLES],
+        };
+        let delta_t = 1.0 / (SPLINE_SAMPLES as f64 - 1.0);
+        for i in 0..SPLINE_SAMPLES {
+            c.spline_samples[i] = c.sample_x(i as f64 * delta_t);
         }
+        c
     }
 
+    fn sample_x(&self, t: f64) -> f64 {
+        ((self.ax * t + self.bx) * t + self.cx) * t
+    }
+
+    fn sample_y(&self, t: f64) -> f64 {
+        ((self.ay * t + self.by) * t + self.cy) * t
+    }
+
+    fn sample_derivative_x(&self, t: f64) -> f64 {
+        (3.0 * self.ax * t + 2.0 * self.bx) * t + self.cx
+    }
+
+    /// `CubicBezier::SolveCurveX`: finds t with `sample_x(t) ~= x`.
+    fn solve_curve_x(&self, x: f64, epsilon: f64) -> f64 {
+        let (mut t0, mut t1, mut t2) = (0.0_f64, 1.0_f64, x);
+        let delta_t = 1.0 / (SPLINE_SAMPLES as f64 - 1.0);
+        for i in 1..SPLINE_SAMPLES {
+            if x <= self.spline_samples[i] {
+                t1 = delta_t * i as f64;
+                t0 = t1 - delta_t;
+                t2 = t0
+                    + (t1 - t0) * (x - self.spline_samples[i - 1])
+                        / (self.spline_samples[i] - self.spline_samples[i - 1]);
+                break;
+            }
+        }
+
+        // Newton's method. `x2` keeps the residual of the last point evaluated,
+        // the one before the final step: Chromium tests that stale value too.
+        let mut x2 = 0.0_f64;
+        let newton_epsilon = EPSILON.min(epsilon);
+        for _ in 0..NEWTON_ITERATIONS {
+            x2 = self.sample_x(t2) - x;
+            if x2.abs() < newton_epsilon {
+                return t2;
+            }
+            let d2 = self.sample_derivative_x(t2);
+            if d2.abs() < EPSILON {
+                break;
+            }
+            t2 -= x2 / d2;
+        }
+        if x2.abs() < epsilon {
+            return t2;
+        }
+
+        // Bisection, for reliability.
+        while t0 < t1 {
+            x2 = self.sample_x(t2);
+            if (x2 - x).abs() < epsilon {
+                return t2;
+            }
+            if x > x2 {
+                t0 = t2;
+            } else {
+                t1 = t2;
+            }
+            t2 = (t1 + t0) * 0.5;
+        }
+        t2
+    }
+
+    /// `CubicBezier::Solve`: the eased value at progress `t`, extended linearly by
+    /// the end gradients outside [0, 1].
     pub(crate) fn get_value(&self, t: f64) -> f64 {
-        let c = &self.curves;
-
-        if t <= 0.0 {
-            let start_gradient = if c[0] > 0.0 {
-                c[1] / c[0]
-            } else if c[1] == 0.0 && c[2] > 0.0 {
-                c[3] / c[2]
-            } else {
-                0.0
-            };
-            return start_gradient * t;
+        if t < 0.0 {
+            return self.start_gradient * t;
         }
-
-        if t >= 1.0 {
-            let end_gradient = if c[2] < 1.0 {
-                (c[3] - 1.0) / (c[2] - 1.0)
-            } else if c[2] == 1.0 && c[0] < 1.0 {
-                (c[1] - 1.0) / (c[0] - 1.0)
-            } else {
-                0.0
-            };
-            return 1.0 + end_gradient * (t - 1.0);
+        if t > 1.0 {
+            return 1.0 + self.end_gradient * (t - 1.0);
         }
-
-        let mut start = 0.0_f64;
-        let mut end = 1.0_f64;
-        let mut mid = 0.0_f64;
-
-        while start < end {
-            mid = (start + end) / 2.0;
-            let x_est = cubic_calc(c[0], c[2], mid);
-            if (t - x_est).abs() < 1e-6 {
-                return cubic_calc(c[1], c[3], mid);
-            }
-            if x_est < t {
-                start = mid;
-            } else {
-                end = mid;
-            }
-        }
-        cubic_calc(c[1], c[3], mid)
+        self.sample_y(self.solve_curve_x(t, EPSILON))
     }
-}
-
-pub(crate) fn cubic_calc(a: f64, b: f64, m: f64) -> f64 {
-    3.0 * a * (1.0 - m) * (1.0 - m) * m + 3.0 * b * (1.0 - m) * m * m + m * m * m
 }
 
 pub(crate) fn interpolate(from: &[f64], to: &[f64], progress: f64) -> Vec<f64> {
@@ -80,15 +168,6 @@ pub(crate) fn rotation_to_matrix(degrees: f64) -> [f64; 4] {
 mod tests {
     use super::*;
     use std::f64::consts::SQRT_2;
-
-    #[test]
-    fn test_cubic_calc_known_values() {
-        // m=0 → 0, m=1 → 1
-        assert!((cubic_calc(0.25, 0.75, 0.0)).abs() < 1e-10);
-        assert!((cubic_calc(0.25, 0.75, 1.0) - 1.0).abs() < 1e-10);
-        // m=0.5, a=0.25, b=0.75: 3*0.25*0.25*0.5 + 3*0.75*0.5*0.25 + 0.125 = 0.09375+0.28125+0.125 = 0.5
-        assert!((cubic_calc(0.25, 0.75, 0.5) - 0.5).abs() < 1e-10);
-    }
 
     #[test]
     fn test_cubic_get_value_edges() {
