@@ -7,7 +7,7 @@ Existing Rust headless browser options fall into two categories:
 1. **Chrome wrappers** (`headless_chrome`, `chromiumoxide`) — require 200MB+ Chromium binary
 2. **From-scratch attempts** — incomplete, low quality, dead code
 
-Neither provides a lightweight, self-contained browser suitable for stealth scraping,
+Neither provides a lightweight, self-contained browser suitable for stealth fetching,
 Cloudflare bypass, and headless automation without external binary dependencies.
 
 ## Solution

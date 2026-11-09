@@ -16,7 +16,7 @@
 //! `https://` ones, which is exactly what wreq sends, so both reach Tor. Tor's
 //! own `HTTPTunnelPort` would not do: it is CONNECT-only and an absolute-URI
 //! forward request (what wreq sends for `http://`) gets an empty reply
-//! (krolik-server#537).
+//! (see the infrastructure repo, issue 537).
 //!
 //! # Config
 //!

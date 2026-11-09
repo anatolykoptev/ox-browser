@@ -12,7 +12,7 @@
 //! ## The allowlist is the design
 //!
 //! These sites target our OWN services (CF solvers, the chrome-render
-//! endpoint, the go-twitter/hully tweet API, the Webshare provider API) or
+//! endpoint, the go-twitter tweet API, the Webshare provider API) or
 //! are test/example fixtures. A browser identity there would be WRONG, not
 //! missing — they are not browser-facing fetches. A new site that is neither
 //! on this allowlist nor routed through `ox_http::build_profiled_wreq_client`
@@ -81,7 +81,7 @@ const ALLOWLIST: &[(&str, usize, &str)] = &[
     (
         "crates/twitter/src/client.rs",
         2,
-        "hully tweet API client (internal service) + test fixture mock server (127.0.0.1)",
+        "legacy tweet API client (internal service) + test fixture mock server (127.0.0.1)",
     ),
     (
         "crates/twitter/src/social.rs",

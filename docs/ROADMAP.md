@@ -249,7 +249,7 @@ See `docs/plans/2026-03-06-phase5-imagesearch-design.md` for full design.
 - [x] 25 unit tests (bing 4, ddg 4, fusion 5, openverse 4, pexels 4, brave 4)
 - [ ] Yandex Images engine (requires headless browser, out of scope)
 
-**Result:** 5-engine image search with stealth scraping. ~1400 LOC, 25 tests.
+**Result:** 5-engine image search with stealth fetching. ~1400 LOC, 25 tests.
 **Depends on:** Phase 2
 
 ## Phase 4.7: Runtime Configuration (v0.5.3) ✅

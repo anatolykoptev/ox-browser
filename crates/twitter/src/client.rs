@@ -1,19 +1,19 @@
-//! Fallback orchestrator: go-social → go-hully → FxTwitter → GraphQL.
+//! Fallback orchestrator: go-social → legacy tweet service → FxTwitter → GraphQL.
 
 use crate::types::{Tweet, UserProfile};
 use crate::{fxtwitter, graphql, parser, request, social};
 
-const GO_HULLY_ENV: &str = "GO_HULLY_URL";
+const LEGACY_TWEET_URL_ENV: &str = "GO_HULLY_URL";
 const GO_SOCIAL_URL_ENV: &str = "GO_SOCIAL_URL";
 
-/// Maximum go-hully response body (1 MB). A single tweet JSON is <10 KB;
-/// 1 MB is very generous. go-hully is our own service, but "it is our own
+/// Maximum legacy-service response body (1 MB). A single tweet JSON is <10 KB;
+/// 1 MB is very generous. The legacy tweet service is our own service, but "it is our own
 /// service" is the assumption that stops holding the day something upstream
 /// breaks (issue #119).
-const HULLY_MAX_BODY_BYTES: u64 = 1024 * 1024;
+const LEGACY_MAX_BODY_BYTES: u64 = 1024 * 1024;
 
 /// Fetch a single tweet by ID with fallback chain.
-/// Order: go-social (auth pool) → go-hully → FxTwitter → GraphQL (guest token).
+/// Order: go-social (auth pool) → the legacy tweet service → FxTwitter → GraphQL (guest token).
 pub async fn fetch_tweet(id: &str) -> Option<Tweet> {
     // 1. Try go-social (centralized auth account pool — most reliable)
     if let Some(base) = go_social_url() {
@@ -27,15 +27,15 @@ pub async fn fetch_tweet(id: &str) -> Option<Tweet> {
         }
     }
 
-    // 2. Try go-hully (existing fallback)
-    if let Some(base) = go_hully_url() {
-        tracing::debug!(id, "twitter: trying go-hully");
-        match fetch_tweet_from_hully(&base, id).await {
+    // 2. Try the legacy tweet service (existing fallback)
+    if let Some(base) = legacy_tweet_url() {
+        tracing::debug!(id, "twitter: trying legacy tweet service");
+        match fetch_tweet_from_legacy(&base, id).await {
             Ok(tweet) => {
-                tracing::info!(id, "twitter: got tweet from go-hully");
+                tracing::info!(id, "twitter: got tweet from legacy tweet service");
                 return Some(tweet);
             }
-            Err(e) => tracing::debug!(id, error = %e, "twitter: go-hully failed"),
+            Err(e) => tracing::debug!(id, error = %e, "twitter: legacy tweet service failed"),
         }
     }
 
@@ -110,15 +110,17 @@ fn go_social_url() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn go_hully_url() -> Option<String> {
-    std::env::var(GO_HULLY_ENV).ok().filter(|s| !s.is_empty())
+fn legacy_tweet_url() -> Option<String> {
+    std::env::var(LEGACY_TWEET_URL_ENV)
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
-async fn fetch_tweet_from_hully(base_url: &str, id: &str) -> Result<Tweet, String> {
+async fn fetch_tweet_from_legacy(base_url: &str, id: &str) -> Result<Tweet, String> {
     let url = format!("{base_url}/v1/tweet/{id}");
     let client = wreq::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
-        // Internal go-hully hop: never inherit an ambient
+        // Internal legacy-service hop: never inherit an ambient
         // HTTP(S)_PROXY/ALL_PROXY from the operator's env.
         .no_proxy()
         .build()
@@ -133,10 +135,10 @@ async fn fetch_tweet_from_hully(base_url: &str, id: &str) -> Result<Tweet, Strin
 
     let status = resp.status().as_u16();
     if status != 200 {
-        return Err(format!("go-hully HTTP {status}"));
+        return Err(format!("legacy tweet service HTTP {status}"));
     }
 
-    let body = ox_http::body_cap::read_text_capped(resp, HULLY_MAX_BODY_BYTES)
+    let body = ox_http::body_cap::read_text_capped(resp, LEGACY_MAX_BODY_BYTES)
         .await
         .map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
@@ -163,7 +165,7 @@ mod tests {
     /// value (issue #119).
     #[tokio::test]
     #[serial_test::serial]
-    async fn hully_cap_rejects_oversized_body() {
+    async fn legacy_cap_rejects_oversized_body() {
         use std::sync::atomic::Ordering;
 
         let before = ox_http::metrics::BODY_CAP_REJECTIONS_TOTAL.load(Ordering::Relaxed);
@@ -187,7 +189,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Use a bare wreq client with a small cap — same mechanism as
-        // fetch_tweet_from_hully but with a test-sized cap.
+        // fetch_tweet_from_legacy but with a test-sized cap.
         let client = wreq::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .no_proxy()
