@@ -1,7 +1,8 @@
 //! Text-level CSS class detection — identifies visible content that looks
 //! like CSS utility class names (Tailwind, Bootstrap, etc.).
 //!
-//! This is the text-level subset of webclaw's `noise.rs`, adapted to work
+//! This is the text-level subset of webclaw's `noise.rs` (AGPL-3.0; see
+//! THIRD_PARTY_NOTICES.md), adapted to work
 //! without `scraper::ElementRef` — the DOM-level noise filtering lives in
 //! issue #59. Here we only need `is_css_class_text` and `is_css_class_word`
 //! for the LLM cleanup pipeline's `strip_css_class_lines` step.

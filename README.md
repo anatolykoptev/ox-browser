@@ -159,4 +159,4 @@ Releases are automated via [release-please](https://github.com/googleapis/releas
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0-only](LICENSE). ox-browser includes code derived from [webclaw](https://github.com/0xMassi/webclaw), which is AGPL-3.0, so the whole project is released under the same licence; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Releases up to v0.8.21 remain available under MIT.

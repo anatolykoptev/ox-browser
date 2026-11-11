@@ -1,7 +1,7 @@
 //! Image handling for LLM output: linked image conversion, logo detection,
 //! standalone image stripping, and bare image reference removal.
 //!
-//! Ported from webclaw `crates/webclaw-core/src/llm/images.rs` (MIT).
+//! Ported from webclaw `crates/webclaw-core/src/llm/images.rs` (AGPL-3.0; see THIRD_PARTY_NOTICES.md).
 use once_cell::sync::Lazy;
 use regex::Regex;
 

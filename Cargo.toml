@@ -17,7 +17,7 @@ members = [
 [workspace.package]
 version = "0.8.21" # x-release-please-version
 edition = "2024"
-license = "MIT"
+license = "AGPL-3.0-only"
 repository = "https://github.com/anatolykoptev/ox-browser"
 authors = ["Anatoly Koptev"]
 

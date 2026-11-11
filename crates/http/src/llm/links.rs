@@ -1,7 +1,7 @@
 //! Link extraction, deduplication, noise filtering, and label formatting
 //! for the LLM output's deduplicated links section.
 //!
-//! Ported from webclaw `crates/webclaw-core/src/llm/links.rs` (MIT).
+//! Ported from webclaw `crates/webclaw-core/src/llm/links.rs` (AGPL-3.0; see THIRD_PARTY_NOTICES.md).
 use std::collections::HashSet;
 
 use once_cell::sync::Lazy;
