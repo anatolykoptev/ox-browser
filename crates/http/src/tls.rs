@@ -1,7 +1,8 @@
 //! Browser TLS + HTTP/2 fingerprint profiles built from scratch on wreq
 //! (BoringSSL).
 //!
-//! This is a port of webclaw-fetch's `tls.rs`, adapted for ox-browser's
+//! This is a port of webclaw-fetch's `tls.rs` (AGPL-3.0; see
+//! THIRD_PARTY_NOTICES.md), adapted for ox-browser's
 //! profile system. Each profile configures TLS options (cipher suites, curves,
 //! extensions, PSK, ECH GREASE) and HTTP/2 options (SETTINGS order,
 //! pseudo-header order, stream dependency, priorities) to match real browser

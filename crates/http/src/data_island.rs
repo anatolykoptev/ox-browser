@@ -7,7 +7,7 @@
 //! results.
 //!
 //! Clean-room adaptation informed by webclaw's `crates/webclaw-core/src/data_island.rs`
-//! (AGPL-3.0). Rewritten for `dom_query::Document` — not a port.
+//! (AGPL-3.0; see THIRD_PARTY_NOTICES.md). Rewritten for `dom_query::Document` — not a port.
 //!
 //! Issue #60: data island + JS eval — SPA content recovery.
 

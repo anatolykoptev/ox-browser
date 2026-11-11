@@ -23,6 +23,9 @@ ignore = [
 
 [licenses]
 allow = [
+    # The workspace crates themselves (relicensed 2026-11, see THIRD_PARTY_NOTICES.md).
+    # They are not `publish = false`, so [licenses.private] below does not skip them.
+    "AGPL-3.0-only",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "MIT",
@@ -41,7 +44,7 @@ confidence-threshold = 0.8
 exceptions = []
 
 [licenses.private]
-# Workspace crates have no published license field — skip them.
+# Reserved for crates marked `publish = false`; none of ours are, see the allow list.
 ignore = true
 registries = []
 

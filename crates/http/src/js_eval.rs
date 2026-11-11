@@ -7,7 +7,7 @@
 //! tags in a sandboxed QuickJS runtime to capture those JS-assigned data blobs.
 //!
 //! Clean-room adaptation informed by webclaw's `crates/webclaw-core/src/js_eval.rs`
-//! (AGPL-3.0). Rewritten for `dom_query::Document` — not a port.
+//! (AGPL-3.0; see THIRD_PARTY_NOTICES.md). Rewritten for `dom_query::Document` — not a port.
 //!
 //! Issue #60: data island + JS eval — SPA content recovery.
 

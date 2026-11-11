@@ -5,7 +5,7 @@
 //! visual-only formatting (bold/italic), and inline link URLs — moving links
 //! to a deduplicated section at the end.
 //!
-//! Ported from webclaw `crates/webclaw-core/src/llm/mod.rs` (MIT), adapted
+//! Ported from webclaw `crates/webclaw-core/src/llm/mod.rs` (AGPL-3.0; see THIRD_PARTY_NOTICES.md), adapted
 //! to ox-browser's [`ReadOutput`] type instead of webclaw's `ExtractionResult`.
 //!
 //! Issue #58: LLM cleanup pipeline (strip JS/CSS/noise from markdown).
