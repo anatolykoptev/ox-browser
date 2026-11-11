@@ -236,7 +236,7 @@ ox-security/src/
 **Goal:** Scrape image search results from multiple engines using the stealth HTTP
 infrastructure. Expose via REST and MCP. Primary consumer: go-imagefy.
 
-See `docs/plans/2026-03-06-phase5-imagesearch-design.md` for full design.
+Phase 5 image search design (design notes kept privately).
 
 - [x] `ox-imagesearch` crate with `ImageResult` + `ImageEngine` trait
 - [x] Bing Images engine (`/images/async` endpoint parser)
@@ -274,7 +274,7 @@ See `docs/plans/2026-03-06-phase5-imagesearch-design.md` for full design.
 **Goal:** Crawl websites with configurable depth/scope, streaming results,
 markdown output for AI consumers (Claude, go-code).
 
-See `docs/plans/2026-03-07-phase5-crawler-design.md` for full design.
+Phase 5 crawler design (design notes kept privately).
 
 ### Phase 5.0: Core Crawl Engine ✅
 
