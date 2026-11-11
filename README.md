@@ -16,7 +16,7 @@ Self-hosted web data extraction in Rust. Turns arbitrary pages into clean, LLM-r
 - **Cloudflare and anti-bot handling** — integrates [Byparr](https://github.com/V4NSF/Byparr) (Camoufox-based) and [GoBrowser](https://github.com/gospider007/gobrowser) solvers. Optional Chromium fallback for hard challenges.
 - **Security scanning** — headers (CSP, HSTS, X-Frame-Options), cookies, CORS, SRI, supply chain, redirect chains, body content scan.
 - **Site audit** — tech stack fingerprinting (Wappalyzer), SEO analysis, performance metrics, accessibility checks.
-- **MCP server** — 11 tools for AI agents (Claude Desktop, Claude Code, any MCP client).
+- **MCP server** — 13 tools for AI agents (Claude Desktop, Claude Code, any MCP client).
 - **Proxy support** — Webshare pool with health tracking, residential proxy, per-domain rate limiting with wildcard matching.
 
 ## Architecture
@@ -43,8 +43,12 @@ ox-browser/
 
 ```bash
 docker build -t ox-browser .
-docker run -p 8901:8901 ox-browser
+docker run -p 8901:8901 -e OX_MCP_TOKEN -e INTERNAL_SERVICE_SECRET ox-browser
 ```
+
+The server rejects every request except `GET /health` unless a credential is configured; see
+[Inbound authentication](#inbound-authentication). Each `-e NAME` above passes the variable through
+from your shell.
 
 ### From source
 
@@ -53,6 +57,9 @@ cargo build --release
 ./target/release/ox-browser serve --config config.toml
 ```
 
+The binary also has one-shot subcommands: `fetch <url>`, `read <url>`, `version` and `doctor`
+(a live self-check of the fingerprint, configuration and solver reachability).
+
 ### Configuration
 
 See [`config.toml`](config.toml) for all options. Secrets are passed via environment variables:
@@ -60,13 +67,34 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 | Env var | Purpose |
 |---------|---------|
 | `BYPARR_URL` | Byparr solver URL (e.g. `http://localhost:8191`) |
-| `GOBROWSER_URL` | GoBrowser solver URL |
+| `GO_BROWSER_URL` | GoBrowser solver URL; also enables the Chrome-render escalation |
 | `PROXY_URL` | HTTP/HTTPS proxy URL |
+| `PROXY_DISABLED` | When set, every outbound proxy is disabled and fetches go direct |
+| `OX_PORT` | Listen port; overrides `config.toml` |
+| `OX_BROWSER_CONFIG` | Path of the config file (default `config.toml`) |
+| `PEXELS_API_KEY`, `OPENVERSE_ACCESS_TOKEN` | Credentials for the Pexels and Openverse image-search engines |
+| `OUTPUT_DIR` | Directory for downloaded media |
 | `RESIDENTIAL_PROXY_URL` | Residential proxy for CF bypass |
 | `WEBSHARE_API_KEY` | Webshare proxy pool API key |
 | `MEDIA_PROXY_URL` | Proxy for media downloads |
 | `OX_HTTP_PRIVATE_ALLOWLIST` | SSRF allowlist (e.g. `127.0.0.1:80,10.0.0.1:80`) |
 | `OX_TOR_PROXY` | HTTP proxy in front of Tor for `.onion` targets, `http://host:port` (explicit port; the one place a private address is accepted). Unset → `.onion` is refused with `onion_requires_tor`; fleet value `http://tor-privoxy:8118`. See [Onion services](#onion-services-via-tor) |
+
+### Inbound authentication
+
+One middleware guards every route (REST, `/mcp`, `/metrics`); only `GET` and `HEAD` on `/health` are
+exempt. A request is accepted with either credential:
+
+| Credential | Sent as | Configured by |
+|---|---|---|
+| Internal service secret | `X-Internal-Secret` header | `INTERNAL_SERVICE_SECRET` |
+| MCP token | `Authorization: Bearer <token>` | `OX_MCP_TOKEN` |
+
+`OX_AUTH_MODE` is `enforce` (default; unknown values also enforce) or `soft`, a rollout aid that lets
+a request with no credential through, counted and logged, while a wrong credential is still 401. With
+neither credential configured every request except `/health` is refused; `OX_AUTH_ALLOW_INSECURE=true`
+is the development opt-out. The internal secret is also what authorises the endpoints that relay to
+a headless Chrome service, so keep both values out of logs and images.
 
 ### Onion services via Tor
 
@@ -97,6 +125,8 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 | `/security` | POST | Security scan |
 | `/site-audit` | POST | Full site audit |
 | `/analyze` | POST | Tech stack analysis |
+| `/chrome/interact` | POST | Drive a headless Chrome session (relayed; needs the internal secret) |
+| `/chrome/session/:id` | DELETE | Close a Chrome session |
 | `/metrics` | GET | Prometheus metrics |
 
 ### MCP
@@ -105,16 +135,21 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 claude mcp add -s user -t http ox-browser http://localhost:8901/mcp
 ```
 
-13 tools: `fetch`, `read`, `analyze`, `solve_cf`, `security_scan`, `crawl`, `chrome_interact`, `image_search`, `reverse_image_search`, `media_download`, `site_audit` (+ deprecated `fetch_smart`, `readability`).
+Send the MCP token as `Authorization: Bearer <token>` (see
+[Inbound authentication](#inbound-authentication)). 13 tools: `fetch`, `read`, `analyze`, `solve_cf`, `security_scan`, `crawl`, `chrome_interact`, `image_search`, `reverse_image_search`, `media_download`, `site_audit` (+ deprecated `fetch_smart`, `readability`).
 
 ## Build
 
 ```bash
-make build    # cargo build --workspace
-make test     # cargo test --workspace
-make lint     # cargo clippy -- -D warnings
-make check    # fmt + lint + test
+make build      # cargo build --workspace
+make test       # cargo nextest run (needs cargo-nextest) plus doctests
+make lint       # cargo clippy --workspace --all-targets -- -D warnings
+make check      # fmt + lint + test
+make preflight  # the CI gate, see CONTRIBUTING.md
 ```
+
+Rust 1.97 or newer, edition 2024. Every document is indexed in [docs/INDEX.md](docs/INDEX.md);
+contributor notes are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Releasing
 
