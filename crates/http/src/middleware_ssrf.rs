@@ -758,9 +758,9 @@ pub(crate) mod tests {
     #[test]
     fn allows_public_ips() {
         assert!(!is_private_ip(&"8.8.8.8".parse().unwrap()));
-        assert!(!is_private_ip(&"93.184.215.14".parse().unwrap()));
+        assert!(!is_private_ip(&"9.9.9.9".parse().unwrap()));
         assert!(!is_private_ip(&"1.1.1.1".parse().unwrap()));
-        assert!(!is_private_ip(&"2606:4700::6810:85e5".parse().unwrap()));
+        assert!(!is_private_ip(&"2001:4860:4860::8888".parse().unwrap()));
     }
 
     #[test]
