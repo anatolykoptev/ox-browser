@@ -157,7 +157,7 @@ impl CookieProvider for NoOpProvider {
 /// "no solver configured" at solve time, which is a silent downgrade. To make
 /// that loud we emit a `tracing::warn!` naming NoOpProvider here and set the
 /// `oxbrowser_solver_configured` gauge to 0 (1 when a real solver is selected)
-/// so operators scraping Prometheus can alert on it (issue #29).
+/// so operators polling Prometheus can alert on it (issue #29).
 pub fn build_cookie_provider(config: &ServerConfig) -> Arc<dyn CookieProvider> {
     // Highest priority: go-browser HTTP solver
     let go_browser_url = config

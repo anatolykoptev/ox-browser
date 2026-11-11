@@ -361,7 +361,7 @@ pub static SSRF_ALLOWLIST_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
 /// Whether outbound proxy is disabled via `PROXY_DISABLED` (1) or not (0).
 /// Set once at startup from `config::proxy_disabled()` in `src/serve.rs` so
-/// operators scraping Prometheus can see the degraded state without grepping
+/// operators polling Prometheus can see the degraded state without grepping
 /// logs (issue #27, silent_downgrade).
 pub static PROXY_DISABLED: AtomicU64 = AtomicU64::new(0);
 
@@ -954,7 +954,7 @@ mod tests {
     }
 
     /// RED test for issue #27: render() must emit `oxbrowser_proxy_disabled`
-    /// reflecting the gauge value so operators scraping Prometheus can see the
+    /// reflecting the gauge value so operators polling Prometheus can see the
     /// PROXY_DISABLED degraded state. With the gauge set to 1 (proxy disabled),
     /// render() emits `oxbrowser_proxy_disabled 1`; with 0, it emits `… 0`.
     #[test]
