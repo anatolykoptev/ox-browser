@@ -13,7 +13,7 @@
 //! elements, and combined heuristics.
 //!
 //! Clean-room adaptation informed by webclaw's `crates/webclaw-core/src/noise.rs`
-//! (AGPL-3.0). Rewritten from scratch for `dom_query::NodeRef` — not a port.
+//! (AGPL-3.0; see THIRD_PARTY_NOTICES.md). Rewritten from scratch for `dom_query::NodeRef` — not a port.
 //!
 //! Issue #59: Noise filter — Tailwind-safe DOM noise detection.
 

@@ -4,7 +4,7 @@
 //! token-efficient LLM text. Each step is implemented in a sibling module
 //! (cleanup, images, links) — this module just wires them together in order.
 //!
-//! Ported from webclaw `crates/webclaw-core/src/llm/body.rs` (MIT).
+//! Ported from webclaw `crates/webclaw-core/src/llm/body.rs` (AGPL-3.0; see THIRD_PARTY_NOTICES.md).
 use std::collections::{HashMap, HashSet};
 
 use once_cell::sync::Lazy;

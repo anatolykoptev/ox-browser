@@ -1,7 +1,7 @@
 //! Whitespace cleanup, HTML entity decoding, invisible Unicode stripping,
 //! leaked JS removal, CSS artifact filtering, and text-level noise removal.
 //!
-//! Ported from webclaw `crates/webclaw-core/src/llm/cleanup.rs` (MIT).
+//! Ported from webclaw `crates/webclaw-core/src/llm/cleanup.rs` (AGPL-3.0; see THIRD_PARTY_NOTICES.md).
 use once_cell::sync::Lazy;
 use regex::Regex;
 

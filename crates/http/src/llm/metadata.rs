@@ -3,7 +3,7 @@
 //! Produces `> ` prefixed lines with URL, title, author, etc.
 //! Omits empty/zero fields to minimize token waste.
 //!
-//! Ported from webclaw `crates/webclaw-core/src/llm/metadata.rs` (MIT),
+//! Ported from webclaw `crates/webclaw-core/src/llm/metadata.rs` (AGPL-3.0; see THIRD_PARTY_NOTICES.md),
 //! adapted to ox-browser's [`ReadOutput`] type.
 
 use crate::content::ReadOutput;
