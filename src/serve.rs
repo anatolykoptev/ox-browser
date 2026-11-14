@@ -145,7 +145,21 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         Arc::clone(&gobrowser_proxy),
     );
     let gate = ox_js::inbound_auth::Gate::new(ox_js::inbound_auth::AuthConfig::from_env());
-    let app = build_app(state, defaults, media_config, gobrowser_proxy, gate);
+    let mcp_hosts = config
+        .server
+        .mcp_allowed_hosts_with(std::env::var(config::MCP_ALLOWED_HOSTS_ENV).ok().as_deref());
+    tracing::info!(
+        extra_hosts = mcp_hosts.len(),
+        "MCP Host allowlist: loopback plus extras"
+    );
+    let app = build_app(
+        state,
+        defaults,
+        media_config,
+        gobrowser_proxy,
+        gate,
+        &mcp_hosts,
+    );
 
     // Background task: clean up media files older than 7 days (runs every 24h)
     ox_media::cleanup::spawn_cleanup_task();
@@ -251,12 +265,14 @@ fn validate_media_proxy(media_config: &ox_media::MediaConfig) -> anyhow::Result<
 /// whole thing wrapped by the inbound auth gate so every route and every
 /// unmatched path goes through it (ox_js::inbound_auth). `run` and the tests
 /// below both call this, so removing the gate here turns a test RED.
+#[allow(clippy::too_many_arguments)] // DI ctor wiring the shared dep set
 pub(crate) fn build_app(
     state: ox_js::AppState,
     defaults: EndpointDefaults,
     media_config: ox_media::MediaConfig,
     gobrowser_proxy: Arc<ox_js::gobrowser_proxy::GoBrowserProxy>,
     gate: ox_js::inbound_auth::Gate,
+    mcp_allowed_hosts: &[String],
 ) -> axum::Router {
     let rest_router = ox_js::router(state.clone());
     let mcp_router = ox_mcp::build_mcp_router(
@@ -266,6 +282,7 @@ pub(crate) fn build_app(
         defaults,
         media_config,
         gobrowser_proxy,
+        mcp_allowed_hosts,
     );
     ox_js::inbound_auth::protect(rest_router.merge(mcp_router), gate)
 }
@@ -308,6 +325,17 @@ mod tests {
         mode: Mode,
         http_cfg: ox_http::HttpConfig,
     ) -> axum::Router {
+        app_with_hosts(wowa_url, wowa_secret, mode, http_cfg, &[])
+    }
+
+    /// `app_with_http` plus extra MCP `Host` allowlist entries.
+    fn app_with_hosts(
+        wowa_url: String,
+        wowa_secret: &str,
+        mode: Mode,
+        http_cfg: ox_http::HttpConfig,
+        mcp_hosts: &[String],
+    ) -> axum::Router {
         let proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(
             wowa_url,
             wowa_secret,
@@ -332,6 +360,7 @@ mod tests {
             ox_media::MediaConfig::default(),
             proxy,
             gate,
+            mcp_hosts,
         )
     }
 
@@ -339,6 +368,7 @@ mod tests {
         let mut b = axum::http::Request::builder()
             .method(method)
             .uri(path)
+            .header("host", "localhost")
             .header("content-type", "application/json")
             .header("accept", "application/json, text/event-stream");
         if let Some(s) = secret {
@@ -383,6 +413,66 @@ mod tests {
         );
     }
 
+    /// POST /mcp initialize (authenticated) with an explicit `Host`.
+    async fn mcp_status_with_host(a: &axum::Router, host: &str) -> u16 {
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#;
+        a.clone()
+            .oneshot(
+                axum::http::Request::post("/mcp")
+                    .header("host", host)
+                    .header("x-internal-secret", "s")
+                    .header("content-type", "application/json")
+                    .header("accept", "application/json, text/event-stream")
+                    .body(axum::body::Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    }
+
+    /// RUSTSEC-2026-0189 (DNS rebinding): the MCP endpoint answers 403 to a
+    /// foreign `Host` even with valid credentials, admits loopback, and
+    /// admits an operator-listed authority only when it is configured.
+    ///
+    /// Falsification: in `ox_mcp::build_mcp_router` replace
+    /// `.with_allowed_hosts(allowed_hosts(extra_allowed_hosts))` with
+    /// `.disable_allowed_hosts()` (crates/mcp/src/lib.rs) and the foreign-host
+    /// rows return the MCP handler's status instead of 403 -> RED.
+    #[tokio::test]
+    async fn mcp_rejects_foreign_host_and_admits_configured_ones() {
+        let build = |hosts: &[String]| {
+            app_with_hosts(
+                "http://127.0.0.1:1".into(),
+                "",
+                Mode::Enforce,
+                ox_http::HttpConfig::default(),
+                hosts,
+            )
+        };
+        let default = build(&[]);
+        assert_eq!(mcp_status_with_host(&default, "attacker.test").await, 403);
+        assert_eq!(
+            mcp_status_with_host(&default, "attacker.test:8901").await,
+            403
+        );
+        assert_eq!(mcp_status_with_host(&default, "mesh.test:8901").await, 403);
+        for ok in [
+            "localhost",
+            "localhost:8901",
+            "127.0.0.1:8901",
+            "[::1]:8901",
+        ] {
+            assert_eq!(mcp_status_with_host(&default, ok).await, 200, "{ok}");
+        }
+        let extra = build(&["mesh.test:8901".to_string()]);
+        assert_eq!(mcp_status_with_host(&extra, "mesh.test:8901").await, 200);
+        assert_eq!(mcp_status_with_host(&extra, "mesh.test:9999").await, 403);
+        assert_eq!(mcp_status_with_host(&extra, "attacker.test").await, 403);
+        assert_eq!(mcp_status_with_host(&extra, "localhost").await, 200);
+    }
+
     async fn mcp_post(
         a: &axum::Router,
         inbound_secret: Option<&str>,
@@ -390,6 +480,7 @@ mod tests {
         body: &str,
     ) -> axum::http::Response<axum::body::Body> {
         let mut b = axum::http::Request::post("/mcp")
+            .header("host", "localhost")
             .header("content-type", "application/json")
             .header("accept", "application/json, text/event-stream")
             .header("mcp-protocol-version", "2025-06-18");
@@ -550,6 +641,7 @@ mod tests {
             ox_media::MediaConfig::default(),
             proxy,
             gate,
+            &[],
         )
     }
 
