@@ -11,4 +11,11 @@ lines, a blank line, the body.
 - `imperva_*`: SYNTHETIC. No reachable page produced one; they follow the documented shape of the
   vendor's stub page (an `incident ID` line plus a resource iframe).
 - `ok_*`: pages that must NOT be classified as an interstitial or a bad-quality page.
+- `ok_bank_home`, `ok_usps`, `ok_walmart`, `ok_vendor_own_site`, `ok_profile_with_signin_chrome`
+  are TRIMMED to about 24 KB: the head plus the opening of the body (scripts, styles and
+  presentation attributes removed for the profile and the retailer page; for the vendor's own
+  site, the head plus its first 14 text blocks). That is the minimum that still has enough text to
+  be an ordinary page, the vendor tag or cookies, and the sign-in chrome. They stay above the
+  16 KB stub limit on purpose.
+- Akamai reference ids in the denial pages are replaced by `REDACTED`.
 - `empty_video_shell`: a few third-party config key names containing two common words were masked (`scr_p`, `byp_ss`).

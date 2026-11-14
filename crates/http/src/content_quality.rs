@@ -22,8 +22,7 @@
 //! in prose stays `ok`. Phrases exist for English, Russian, German, French and
 //! Spanish.
 
-use std::sync::LazyLock;
-
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
 
@@ -43,6 +42,10 @@ const NOT_FOUND_WORDS: usize = 200;
 /// A title that names the page itself as missing may sit on a page with a
 /// large navigation/footer.
 const NOT_FOUND_TITLED_WORDS: usize = 600;
+/// Minimum share of the main-content words that sit inside the password form.
+const FORM_SHARE: f64 = 0.25;
+/// Each visible form control counts as this many words of form content.
+const CONTROL_WORDS: usize = 3;
 /// Below this many effective words a page is empty.
 const EMPTY_WORDS: usize = 15;
 /// Markup this large with almost no text is an empty shell.
@@ -116,20 +119,31 @@ pub struct Input<'a> {
     pub interstitial: Option<&'a Interstitial>,
 }
 
-static PASSWORD_INPUT: LazyLock<Regex> = LazyLock::new(|| {
+static PASSWORD_INPUT: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?i)<input\b[^>]*\btype\s*=\s*["']?password\b"#).expect("static regex")
 });
-static HEADING: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?is)<(h1|h2)\b[^>]*>(.*?)</(?:h1|h2)>").expect("static regex"));
-static HTML_TITLE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?is)<title\b[^>]*>(.*?)</title>").expect("static regex"));
-static NON_TEXT: LazyLock<Regex> = LazyLock::new(|| {
+static HEADING: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)<(h1|h2)\b[^>]*>(.*?)</(?:h1|h2)>").expect("static regex"));
+static HTML_TITLE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)<title\b[^>]*>(.*?)</title>").expect("static regex"));
+static NON_TEXT: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?is)<(script|style|noscript|template)\b[^>]*>.*?</(?:script|style|noscript|template)>",
     )
     .expect("static regex")
 });
-static TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)<[^>]*>").expect("static regex"));
+/// Page chrome: a login widget in these is site-wide, not the page itself.
+static CHROME: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)<(header|nav|footer|aside)\b[^>]*>.*?</(?:header|nav|footer|aside)>")
+        .expect("static regex")
+});
+static FORM_CONTROL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)<(?:input|button|select)\b").expect("static regex"));
+static HIDDEN_INPUT: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)<input\b[^>]*\btype\s*=\s*["']?hidden"#).expect("static regex"));
+static FORM: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)<form\b[^>]*>.*?</form>").expect("static regex"));
+static TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)<[^>]*>").expect("static regex"));
 
 // --- marker phrases (matched against normalised, lowercased text) ---------
 
@@ -274,6 +288,9 @@ const CONSENT_MARKERS: &[&str] = &[
     "согласие на использование",
 ];
 
+/// Bare not-found words: trusted in a title or heading only, never in prose.
+const NOT_FOUND_TITLE_ONLY: &[&str] = &["not found", "nicht gefunden", "introuvable", "не найдена"];
+
 const NOT_FOUND_MARKERS: &[&str] = &[
     "page not found",
     "page cannot be found",
@@ -286,23 +303,16 @@ const NOT_FOUND_MARKERS: &[&str] = &[
     "this page isn't available",
     "this page is no longer available",
     "no longer available",
-    "not found",
-    "404 error",
-    "error 404",
     "seite nicht gefunden",
     "seite wurde nicht gefunden",
-    "nicht gefunden",
     "page introuvable",
     "page non trouvée",
     "page non trouvee",
-    "introuvable",
     "página no encontrada",
     "pagina no encontrada",
     "no se encontró la página",
     "страница не найдена",
     "страница не существует",
-    "не найдена",
-    "ошибка 404",
 ];
 
 /// Hosts that exist only to serve consent screens.
@@ -321,7 +331,7 @@ pub fn assess(input: &Input<'_>) -> ContentQuality {
     let text = if input.text_is_html {
         visible_text(input.text, usize::MAX)
     } else {
-        normalise(input.text)
+        normalise(clip(input.text, SCAN_BYTES))
     };
     // The extractor can come back empty on pages that are all chrome (login
     // forms, shells); read the visible text of the markup in that case.
@@ -350,8 +360,7 @@ pub fn assess(input: &Input<'_>) -> ContentQuality {
         return ContentQuality::new(Verdict::Challenge, "challenge_marker");
     }
 
-    let password_inputs = PASSWORD_INPUT.find_iter(html).take(3).count();
-    if password_inputs > 0 && words < FORM_PAGE_WORDS {
+    if words < FORM_PAGE_WORDS && password_form_dominates(html) {
         return ContentQuality::new(Verdict::LoginRequired, "password_form_dominates");
     }
     if words < SHORT_PAGE_WORDS
@@ -374,12 +383,10 @@ pub fn assess(input: &Input<'_>) -> ContentQuality {
     }
 
     if (words < NOT_FOUND_WORDS && any_marker(&lead, NOT_FOUND_MARKERS))
+        || (words < NOT_FOUND_WORDS && any_marker(&titles, NOT_FOUND_TITLE_ONLY))
         || (words < NOT_FOUND_TITLED_WORDS && titled_not_found(&titles))
     {
         return ContentQuality::new(Verdict::Soft404, "not_found_marker");
-    }
-    if words < NOT_FOUND_WORDS && title_has_404_code(input, html) {
-        return ContentQuality::new(Verdict::Soft404, "not_found_code");
     }
 
     if words < EMPTY_WORDS {
@@ -535,7 +542,7 @@ fn any_marker(lead: &str, markers: &[&str]) -> bool {
 /// Not-found phrases that name "the page" itself, so a headline that merely
 /// contains "not found" does not qualify for the larger word budget.
 fn titled_not_found(titles: &str) -> bool {
-    const PAGE_WORDS: [&str; 6] = ["page", "seite", "página", "pagina", "страниц", "404"];
+    const PAGE_WORDS: [&str; 5] = ["page", "seite", "página", "pagina", "страниц"];
     NOT_FOUND_MARKERS
         .iter()
         .filter(|m| PAGE_WORDS.iter().any(|w| m.contains(w)))
@@ -549,13 +556,27 @@ fn title_starts_with(input: &Input<'_>, html: &str, prefixes: &[&str]) -> bool {
         .any(|t| prefixes.iter().any(|p| t.starts_with(p)))
 }
 
-/// "404" as a standalone token in a title or heading.
-fn title_has_404_code(input: &Input<'_>, html: &str) -> bool {
-    let mut fields = vec![normalise(&decode_entities(input.title)), html_title(html)];
-    fields.extend(heading_texts(html));
-    fields
-        .iter()
-        .any(|f| f.split(|c: char| !c.is_alphanumeric()).any(|t| t == "404"))
+/// A password form counts as the page's purpose only when it sits in the main
+/// content (not in a header, nav, footer or aside) and holds a real share of
+/// the text left there. A site-wide sign-in widget on an otherwise short public
+/// page fails both tests.
+/// Words in a form plus a few per control: a login form is mostly inputs, which
+/// carry no text of their own.
+fn form_weight(form: &str) -> usize {
+    let controls = FORM_CONTROL
+        .find_iter(form)
+        .count()
+        .saturating_sub(HIDDEN_INPUT.find_iter(form).count());
+    effective_words(&visible_text(form, FALLBACK_TEXT_CHARS)) + controls * CONTROL_WORDS
+}
+
+fn password_form_dominates(html: &str) -> bool {
+    let main = CHROME.replace_all(clip(html, SCAN_BYTES), " ");
+    let main_words = effective_words(&visible_text(&main, FALLBACK_TEXT_CHARS * 4)).max(1);
+    FORM.find_iter(&main)
+        .filter(|f| PASSWORD_INPUT.is_match(f.as_str()))
+        .map(|f| form_weight(f.as_str()))
+        .any(|form_words| (form_words as f64) / (main_words as f64) >= FORM_SHARE)
 }
 
 fn is_consent_host(url: &str) -> bool {
@@ -672,14 +693,83 @@ mod tests {
             judge(&h, "Page Not Found Try the search.").verdict,
             Verdict::Soft404
         );
-        let h = page("Oops 404", "<p>gone</p>");
-        assert_eq!(
-            judge(&h, "gone fishing today, back soon, honest folks, truly").reason,
-            "not_found_code"
+        // A bare "404" or "error 404" is not a not-found phrase.
+        let text = "A short history of the band, their first record and the tour that followed it.";
+        for title in [
+            "Error 404: the band",
+            "404 (album)",
+            "Route A4040 timetable",
+        ] {
+            let h = page(title, &format!("<h1>{title}</h1><p>{text}</p>"));
+            let q = judge(&h, &format!("{title} {text} {text}"));
+            assert_eq!(q.verdict, Verdict::Ok, "{title}: {q:?}");
+        }
+        // "not found" in prose is not a not-found page; in a title it is.
+        let h = page(
+            "Field notes",
+            "<p>The missing letter was not found in the archive.</p>",
         );
-        // "404" inside a longer token is not the code
-        let h = page("Route A4040 timetable", &format!("<p>{}</p>", prose(3)));
-        assert_eq!(judge(&h, &prose(3)).verdict, Verdict::Ok);
+        assert_eq!(
+            judge(
+                &h,
+                "The missing letter was not found in the archive, and so the case rested for another long year."
+            )
+            .verdict,
+            Verdict::Ok
+        );
+        let h = page(
+            "Not Found",
+            "<h1>Not Found</h1><p>The requested URL was not on this server.</p>",
+        );
+        assert_eq!(
+            judge(&h, "Not Found The requested URL was not on this server.").verdict,
+            Verdict::Soft404
+        );
+    }
+
+    #[test]
+    fn site_wide_login_widget_does_not_make_a_login_page() {
+        let widget = "<header><form action=/login><input name=u><input type=password name=p><button>Log in</button></form></header>";
+        let article = "<main><article><h1>Opening hours</h1><p>The reading room is open on weekdays from nine until five, and the archive can be visited by appointment on Saturdays.</p></article></main>";
+        let h = page("Opening hours", &format!("{widget}{article}"));
+        let q = judge(
+            &h,
+            "Opening hours The reading room is open on weekdays from nine until five, and the archive can be visited by appointment on Saturdays.",
+        );
+        assert_eq!(q.verdict, Verdict::Ok, "{q:?}");
+        // the same form as the main content is a login page
+        let h = page(
+            "Welcome",
+            "<main><form action=/login><input name=u><input type=password name=p><button>Go</button></form></main>",
+        );
+        assert_eq!(
+            judge(&h, "Username Password Go").verdict,
+            Verdict::LoginRequired
+        );
+        // a form that is a small share of a short main section is not
+        let filler =
+            "The reading room is open on weekdays and the archive can be visited by appointment. "
+                .repeat(8);
+        let h = page(
+            "Hours",
+            &format!("<main><p>{filler}</p><form><input type=password name=p></form></main>"),
+        );
+        assert_eq!(judge(&h, &filler).verdict, Verdict::Ok);
+    }
+
+    #[test]
+    fn every_static_regex_compiles() {
+        for re in [
+            &*PASSWORD_INPUT,
+            &*HEADING,
+            &*HTML_TITLE,
+            &*NON_TEXT,
+            &*TAG,
+            &*CHROME,
+            &*FORM,
+        ] {
+            assert!(!re.as_str().is_empty());
+        }
     }
 
     #[test]

@@ -33,6 +33,40 @@ fn akamai_denied_200() -> (HeaderMap, String) {
     (headers, body.to_owned())
 }
 
+/// Real captured ordinary page (24 KB, plenty of visible text).
+fn ordinary_page() -> String {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/interstitial/ok_usps.http");
+    let raw = std::fs::read_to_string(path).unwrap();
+    raw.split_once("\n\n").unwrap().1.replace("</body>", "")
+}
+
+/// Serves a fixed 200/202 response with the given headers.
+struct Fixed {
+    status: u16,
+    headers: Vec<(&'static str, &'static str)>,
+    body: String,
+}
+
+#[async_trait]
+impl Handler for Fixed {
+    async fn handle(&self, req: Request) -> Result<HttpResponse> {
+        let mut headers = HeaderMap::new();
+        for (k, v) in &self.headers {
+            headers.append(
+                wreq::header::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        Ok(HttpResponse {
+            status: self.status,
+            url: req.url,
+            headers,
+            body: self.body.clone(),
+        })
+    }
+}
+
 /// Origin: serves the vendor stub until a request carries solver cookies.
 struct StubThenContent {
     calls: Arc<AtomicUsize>,
@@ -210,4 +244,75 @@ async fn ordinary_200_passes_through_without_solver() {
     );
     handler.handle(get("https://example.test/a")).await.unwrap();
     assert_eq!(solver_calls.load(Ordering::SeqCst), 0);
+}
+
+/// A healthy page that embeds a vendor's tag, or carries the vendor's response
+/// header, must never reach the solver or the negative cache — whatever status
+/// it is served with. The tags below carry the exact markers the stub rules
+/// look for.
+#[tokio::test]
+async fn ordinary_pages_embedding_vendor_tags_never_escalate() {
+    let embeds: [(&str, Vec<(&str, &str)>); 6] = [
+        (
+            "<script>var dd={'host':'geo.captcha-delivery.com'}</script><script src=\"https://ct.captcha-delivery.com/c.js\"></script>",
+            vec![("x-datadome", "protected"), ("x-dd-b", "1")],
+        ),
+        (
+            "<div id=\"px-captcha\"></div><script>var pxCaptchaSrc='/a/captcha/captcha.js'</script>",
+            vec![("x-px-blocked", "1")],
+        ),
+        (
+            "<a href=\"https://errors.edgesuite.net/x\">help</a><script src=\"/_sec/cp_challenge/ak.js\"></script>",
+            vec![("server", "AkamaiGHost")],
+        ),
+        (
+            "<script src=\"/_Incapsula_Resource?SWJIYLWA=1\"></script><!-- Incapsula incident ID: 1 -->",
+            vec![("x-iinfo", "1-2"), ("x-cdn", "Imperva")],
+        ),
+        (
+            "<script src=\"https://a.sdk.awswaf.com/a/challenge.js\"></script><script>AwsWafIntegration.saveReferrer()</script>",
+            vec![("x-amzn-waf-action", "challenge")],
+        ),
+        // the AWS action header alone on an unmodified page
+        ("", vec![("x-amzn-waf-action", "challenge")]),
+    ];
+    for status in [200u16, 202] {
+        for (tag, headers) in &embeds {
+            let solver_calls = Arc::new(AtomicUsize::new(0));
+            let negcache = Arc::new(SolverNegCache::new(
+                1,
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            ));
+            let body = format!("{}{tag}</body></html>", ordinary_page());
+            let handler = chain(
+                vec![
+                    solver_middleware_with_negcache(
+                        Arc::new(CountingProvider {
+                            calls: solver_calls.clone(),
+                            succeed: false,
+                        }),
+                        Arc::new(CookieCache::new(Duration::from_secs(60))),
+                        negcache.clone(),
+                    ),
+                    quality_check_middleware(),
+                ],
+                Arc::new(Fixed {
+                    status,
+                    headers: headers.clone(),
+                    body: body.clone(),
+                }),
+            );
+            let resp = handler
+                .handle(get("https://example.test/a"))
+                .await
+                .unwrap_or_else(|e| panic!("{status} {tag}: escalated: {e:?}"));
+            assert_eq!(resp.body, body, "{status} {tag}: body must pass through");
+            assert_eq!(solver_calls.load(Ordering::SeqCst), 0, "{status} {tag}");
+            assert!(
+                !negcache.is_blocked("example.test", false),
+                "{status} {tag}"
+            );
+        }
+    }
 }
