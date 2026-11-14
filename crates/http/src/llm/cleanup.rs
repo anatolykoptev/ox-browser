@@ -1643,6 +1643,47 @@ mod tests {
     }
 
     #[test]
+    fn digit_dot_tokens_are_not_sentence_ends() {
+        // A digit before the full stop is a number, ordinal or version, even
+        // though digits are neither cased nor lowercase.
+        assert!(!is_sentence_end("v2."));
+        assert!(!is_sentence_end("2026."));
+        assert!(!is_sentence_end("1.)"));
+        assert!(!is_sentence_end("\u{FF12}\u{FF10}\u{FF12}\u{FF16}\u{3002}"));
+        // Caseless alphabetic scripts still close a sentence.
+        assert!(is_sentence_end("있다."));
+        assert!(is_sentence_end("です。"));
+        assert!(is_sentence_end("光合作用。"));
+    }
+
+    #[test]
+    fn numbered_version_list_still_collapsed() {
+        let mut tokens = Vec::new();
+        for n in 1..=30 {
+            tokens.push("Release".to_string());
+            tokens.push(format!("{n}."));
+            tokens.push("Update".to_string());
+            tokens.push(format!("{}.", 2000 + n));
+        }
+        let line = tokens.join(" ");
+        assert!(line.len() >= 200, "fixture too short: {}", line.len());
+        let result = collapse_word_lists(&line);
+        assert!(result.contains("... and"), "should collapse: {result}");
+    }
+
+    #[test]
+    fn korean_sentences_still_end_a_run() {
+        // A two-character Hangul word followed by a full stop ends a
+        // sentence, so a dump-like run broken by it is not collapsed.
+        let mut tokens: Vec<String> = (0..14).map(|n| format!("항목{n}")).collect();
+        tokens.push("있다.".to_string());
+        tokens.extend((0..14).map(|n| format!("이름{n}")));
+        let line = tokens.join(" ");
+        assert!(line.len() >= 200, "fixture too short: {}", line.len());
+        assert_eq!(collapse_word_lists(&line), line);
+    }
+
+    #[test]
     fn normal_prose_not_collapsed() {
         let input = "This is a perfectly normal paragraph with lots of words but they are all lowercase prose that should not be collapsed because it's actual content.";
         assert_eq!(collapse_word_lists(input), input);
