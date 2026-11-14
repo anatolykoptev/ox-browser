@@ -265,6 +265,7 @@ fn validate_media_proxy(media_config: &ox_media::MediaConfig) -> anyhow::Result<
 /// whole thing wrapped by the inbound auth gate so every route and every
 /// unmatched path goes through it (ox_js::inbound_auth). `run` and the tests
 /// below both call this, so removing the gate here turns a test RED.
+#[allow(clippy::too_many_arguments)] // DI ctor wiring the shared dep set
 pub(crate) fn build_app(
     state: ox_js::AppState,
     defaults: EndpointDefaults,
