@@ -5,6 +5,9 @@
 [server]
 # port = 8901
 # bind = "0.0.0.0"
+# Extra Host authorities admitted on /mcp (DNS-rebinding guard); loopback is
+# always admitted. Also settable via OX_MCP_ALLOWED_HOSTS (comma-separated).
+# mcp_allowed_hosts = ["private-addr:8901"]
 
 [http]
 # timeout_secs = 20
