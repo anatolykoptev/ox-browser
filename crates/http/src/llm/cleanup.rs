@@ -974,8 +974,8 @@ pub(crate) fn collapse_word_lists(input: &str) -> String {
         }
 
         // Detect name/identifier dumps by looking at prose structure.
-        // Real prose has common English function words (the, a, of, to, etc.).
-        // Name dumps and API lists have almost none.
+        // Real prose, in any language, has sentence-ending punctuation and
+        // short function words. Name dumps and API lists have almost none.
 
         let dump_start = find_dump_start(&words);
 
@@ -1006,34 +1006,106 @@ pub(crate) fn collapse_word_lists(input: &str) -> String {
 }
 
 /// Scan a word list to find where a name/identifier dump begins.
-/// Uses a sliding window: when 15+ consecutive words have no function words, that's a dump.
+///
+/// A dump is a run of 15+ consecutive tokens with no sentence structure, and
+/// the whole tail from its start must also look structureless. Both signals
+/// are language-agnostic:
+///
+/// * sentence structure: a token that closes a sentence (see [`is_sentence_end`])
+///   breaks a run and disqualifies any tail that contains it;
+/// * prose evidence: function-word-like tokens, i.e. short lowercase words
+///   ("in", "и", "de", "der", "ve") plus the English function-word list. A tail
+///   where fewer than 5% of the tokens are such words is a dump.
+///
+/// Name, identifier and keyword dumps have neither; prose in any alphabetic
+/// script has both.
 fn find_dump_start(words: &[&str]) -> Option<usize> {
     if words.len() < 25 {
         return None;
     }
     let window = 15;
+    // evidence_before[i] = number of prose-evidence tokens in words[..i], so the
+    // tail ratio is O(1) per candidate instead of a rescan of the line.
+    let mut evidence_before = Vec::with_capacity(words.len() + 1);
+    let mut evidence = 0usize;
+    evidence_before.push(0);
+    for word in words {
+        if is_prose_evidence(word) {
+            evidence += 1;
+        }
+        evidence_before.push(evidence);
+    }
+    let last_sentence_end = words.iter().rposition(|w| is_sentence_end(w));
+
     let mut consecutive_non_prose = 0;
     for (i, word) in words.iter().enumerate() {
-        if is_prose_function_word(&word.to_lowercase()) {
+        if is_sentence_end(word) || is_prose_function_word(&word.to_lowercase()) {
             consecutive_non_prose = 0;
-        } else {
-            consecutive_non_prose += 1;
-            if consecutive_non_prose >= window {
-                let start = i + 1 - window;
-                // Verify the rest of the line is also a dump
-                let remaining = &words[start..];
-                let prose_in_remaining = remaining
-                    .iter()
-                    .filter(|w| is_prose_function_word(&w.to_lowercase()))
-                    .count();
-                let ratio = prose_in_remaining as f64 / remaining.len() as f64;
-                if ratio < 0.05 {
-                    return Some(start);
-                }
-            }
+            continue;
+        }
+        consecutive_non_prose += 1;
+        if consecutive_non_prose < window {
+            continue;
+        }
+        let start = i + 1 - window;
+        // A sentence anywhere in the tail means the tail is prose.
+        if last_sentence_end.is_some_and(|end| end >= start) {
+            continue;
+        }
+        let tail_evidence = evidence - evidence_before[start];
+        let ratio = tail_evidence as f64 / (words.len() - start) as f64;
+        if ratio < 0.05 {
+            return Some(start);
         }
     }
     None
+}
+
+/// Whether a token closes a sentence: it ends in `.`, `!`, `?`, `…` or their
+/// CJK forms (optionally followed by closing quotes/brackets), and is not an
+/// abbreviation, initial, ordinal or number (`J.`, `Dr.`, `17.`, `т.е.`).
+fn is_sentence_end(word: &str) -> bool {
+    const TERMINATORS: &[char] = &[
+        '.', '!', '?', '\u{2026}', '\u{3002}', '\u{FF01}', '\u{FF1F}',
+    ];
+    const CLOSERS: &[char] = &[')', ']', '"', '\'', '\u{BB}', '\u{201D}', '\u{2019}'];
+    let trimmed = word.trim_end_matches(CLOSERS);
+    if !trimmed.ends_with(TERMINATORS) {
+        return false;
+    }
+    let stem = trimmed.trim_end_matches(TERMINATORS);
+    if stem.is_empty() || stem.contains('.') {
+        return false;
+    }
+    let Some(last) = stem.chars().next_back() else {
+        return false;
+    };
+    if last.is_numeric() {
+        return false;
+    }
+    if !last.is_alphabetic() {
+        // `)` `%` `»` etc. directly before the full stop: a closed clause.
+        return true;
+    }
+    stem.chars().rev().take_while(|c| c.is_alphabetic()).count() >= 3
+}
+
+/// Language-agnostic stand-in for "function word": a short (at most three
+/// characters) token that starts with a non-uppercase letter. Prose in any
+/// alphabetic script is full of them (in, и, de, der, ve, la); name and
+/// identifier dumps are not. Caseless scripts count as lowercase.
+fn is_short_lowercase_word(word: &str) -> bool {
+    let core = word.trim_matches(|c: char| !c.is_alphanumeric());
+    let mut chars = core.chars();
+    match chars.next() {
+        Some(first) if first.is_alphabetic() && !first.is_uppercase() => core.chars().count() <= 3,
+        _ => false,
+    }
+}
+
+/// A token that counts as evidence of prose structure in the tail ratio.
+fn is_prose_evidence(word: &str) -> bool {
+    is_short_lowercase_word(word) || is_prose_function_word(&word.to_lowercase())
 }
 
 /// Common English function words that indicate prose structure.
@@ -1402,6 +1474,113 @@ mod tests {
         let input = format!("Some prefix text {line}");
         let result = collapse_word_lists(&input);
         assert!(result.contains("... and"), "should collapse: {result}");
+    }
+
+    // -- Non-English prose must survive; real dumps must still collapse --
+    //
+    // Prose fixtures are paragraphs of the Russian, German, Turkish and Chinese
+    // Wikipedia articles on photosynthesis; dump fixtures are the flattened
+    // link/name lists of the same sites (text CC BY-SA 4.0).
+
+    const PROSE_RU: &str = include_str!("testdata/prose_ru.txt");
+    const PROSE_RU_LONG: &str = include_str!("testdata/prose_ru_long.txt");
+    // Paragraphs whose last sentence has almost no short words: only the
+    // "a sentence anywhere in the tail means prose" guard keeps them intact.
+    const PROSE_RU_SPARSE: &str = include_str!("testdata/prose_ru_sparse.txt");
+    const PROSE_TR_SPARSE: &str = include_str!("testdata/prose_tr_sparse.txt");
+    const PROSE_DE: &str = include_str!("testdata/prose_de.txt");
+    const PROSE_TR: &str = include_str!("testdata/prose_tr.txt");
+    const PROSE_ZH: &str = include_str!("testdata/prose_zh.txt");
+    const DUMP_RU_NAMES: &str = include_str!("testdata/dump_ru_names.txt");
+    const DUMP_DE_LINKS: &str = include_str!("testdata/dump_de_links.txt");
+
+    fn assert_survives(name: &str, text: &str) {
+        let text = text.trim_end();
+        assert_eq!(
+            collapse_word_lists(text),
+            text,
+            "{name}: prose was rewritten by collapse_word_lists"
+        );
+    }
+
+    #[test]
+    fn russian_prose_not_collapsed() {
+        assert_survives("ru", PROSE_RU);
+        assert_survives("ru long", PROSE_RU_LONG);
+        assert_survives("ru sparse", PROSE_RU_SPARSE);
+    }
+
+    #[test]
+    fn german_prose_not_collapsed() {
+        assert_survives("de", PROSE_DE);
+    }
+
+    #[test]
+    fn turkish_prose_not_collapsed() {
+        assert_survives("tr", PROSE_TR);
+        assert_survives("tr sparse", PROSE_TR_SPARSE);
+    }
+
+    #[test]
+    fn chinese_prose_not_collapsed() {
+        assert_survives("zh", PROSE_ZH);
+    }
+
+    #[test]
+    fn non_english_prose_in_a_document_not_collapsed() {
+        let doc = format!(
+            "# Photosynthesis\n\n{}\n\n{}\n\n{}",
+            PROSE_RU.trim_end(),
+            PROSE_DE.trim_end(),
+            PROSE_TR.trim_end()
+        );
+        assert_eq!(collapse_word_lists(&doc), doc);
+    }
+
+    #[test]
+    fn russian_name_dump_still_collapsed() {
+        let input = format!("Contributors {}", DUMP_RU_NAMES.trim_end());
+        let result = collapse_word_lists(&input);
+        assert!(result.len() < input.len() / 2, "should collapse: {result}");
+    }
+
+    #[test]
+    fn russian_name_dump_alone_gets_stub() {
+        let result = collapse_word_lists(DUMP_RU_NAMES.trim_end());
+        assert!(result.contains("... and"), "should collapse: {result}");
+    }
+
+    #[test]
+    fn german_link_dump_still_collapsed() {
+        let result = collapse_word_lists(DUMP_DE_LINKS.trim_end());
+        assert!(result.contains("... and"), "should collapse: {result}");
+    }
+
+    #[test]
+    fn lowercase_keyword_dump_still_collapsed() {
+        // A flattened tag cloud: lowercase, no sentence punctuation.
+        let tags = "photosynthesis chlorophyll thylakoid stroma calvin rubisco carboxylation \
+            glucose starch cellulose stomata guard-cells xylem phloem transpiration \
+            nitrogen phosphorus potassium magnesium auxin gibberellin cytokinin ethylene \
+            abscisic phototropism gravitropism vernalization dormancy germination";
+        let result = collapse_word_lists(tags);
+        assert!(result.contains("... and"), "should collapse: {result}");
+    }
+
+    #[test]
+    fn sentence_end_detection() {
+        assert!(is_sentence_end("растений."));
+        assert!(is_sentence_end("Pflanzen.\u{201D}"));
+        assert!(is_sentence_end("(rang 94)."));
+        assert!(is_sentence_end("光合作用。"));
+        assert!(is_sentence_end("really?!"));
+        // Abbreviations, initials, ordinals, numbers and dotted forms are not.
+        assert!(!is_sentence_end("U."));
+        assert!(!is_sentence_end("Dr."));
+        assert!(!is_sentence_end("17."));
+        assert!(!is_sentence_end("т.е."));
+        assert!(!is_sentence_end("растений,"));
+        assert!(!is_sentence_end("WebSocket"));
     }
 
     #[test]
