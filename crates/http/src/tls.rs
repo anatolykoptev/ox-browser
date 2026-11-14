@@ -248,6 +248,40 @@ pub fn edge_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
     )
 }
 
+/// The Chromium major whose ClientHello and HTTP/2 settings `chrome_tls` /
+/// `chrome_h2` produce (verified live against the Chrome 148 reference).
+/// Request headers are built from the profile's User-Agent, so a UA newer
+/// than this would present a release the handshake is not: such profiles are
+/// refused by [`ensure_tls_matches_profile`], never silently paired.
+pub const CHROME_TLS_MAJOR: u32 = 148;
+
+/// Fails when a Chrome or Edge profile's Chromium major (the `Chrome/` token)
+/// is newer than [`CHROME_TLS_MAJOR`]. Called when a client is built and by
+/// `profile_to_emulation`, so every route from a profile to a handshake passes
+/// through it. Older majors are accepted (the built-in Edge 145 profiles ride
+/// the same builder; that pairing predates this check).
+pub fn ensure_tls_matches_profile(profile: &BrowserProfile) -> Result<(), String> {
+    if profile.browser != "chrome" && profile.browser != "edge" {
+        return Ok(());
+    }
+    let ua = profile.user_agent;
+    let Some(major) = ua.find("Chrome/").and_then(|i| {
+        let rest = &ua[i + 7..];
+        rest[..rest.find('.').unwrap_or(rest.len())]
+            .parse::<u32>()
+            .ok()
+    }) else {
+        return Ok(());
+    };
+    if major > CHROME_TLS_MAJOR {
+        return Err(format!(
+            "profile claims Chromium {major} but this build's TLS handshake is Chromium {CHROME_TLS_MAJOR}; \
+             refusing a User-Agent the handshake does not match"
+        ));
+    }
+    Ok(())
+}
+
 /// Build a wreq Emulation for Chrome from scratch (not using wreq-util
 /// presets). This gives us full control over TLS extensions — all 17 of
 /// Chrome's, including `trust_anchors` (0xca34 = 51764) via the patched wreq

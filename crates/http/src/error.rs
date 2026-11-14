@@ -54,6 +54,12 @@ pub enum HttpError {
         "onion_requires_tor: a .onion target can only be fetched through OX_TOR_PROXY by /fetch and /read; it is refused when OX_TOR_PROXY is not configured and by endpoints that would hand the URL to a third party"
     )]
     OnionRequiresTor,
+
+    /// The profile's User-Agent names a Chromium major newer than the TLS
+    /// handshake this build can produce. Refused when the client is built, so
+    /// the headers can never claim a release the ClientHello is not.
+    #[error("unsupported_profile: {0}")]
+    UnsupportedProfile(String),
 }
 
 impl HttpError {
@@ -79,7 +85,8 @@ impl HttpError {
             | Self::ProxyPool(_)
             | Self::BodyTooLarge { .. }
             | Self::BodyDecodeError(_)
-            | Self::OnionRequiresTor => false,
+            | Self::OnionRequiresTor
+            | Self::UnsupportedProfile(_) => false,
         }
     }
 }

@@ -19,6 +19,15 @@ use crate::ssrf_connect::{SsrfGuardedResolver, ssrf_redirect_policy, tor_redirec
 use crate::tor::TorProxy;
 use crate::{HttpConfig, HttpResponse, Result};
 
+/// The TLS/HTTP2 emulation for `profile`, or an error when the profile's
+/// User-Agent claims a Chromium newer than the handshake this build produces.
+/// Every client construction from a profile goes through here.
+fn checked_emulation(profile: &BrowserProfile) -> Result<Option<wreq::Emulation>> {
+    crate::tls::ensure_tls_matches_profile(profile)
+        .map_err(crate::HttpError::UnsupportedProfile)?;
+    Ok(profile_to_emulation(profile))
+}
+
 /// HTTP client that routes requests through a middleware chain.
 ///
 /// When no Phase 1.5 options are set, behavior is identical to v0.1.0:
@@ -57,7 +66,7 @@ impl HttpClient {
         // clients like the Twitter API client), `config.emulation` is used
         // as-is for TLS fingerprinting without browser identity headers.
         let emulation = if let Some(profile) = config.profile {
-            profile_to_emulation(profile)
+            checked_emulation(profile)?
         } else {
             config.emulation.clone()
         };
@@ -605,7 +614,7 @@ pub fn build_profiled_wreq_client(
     timeout: Duration,
     max_redirects: usize,
 ) -> Result<Client> {
-    let emulation = profile_to_emulation(profile);
+    let emulation = checked_emulation(profile)?;
     let proxy = if proxy_url.is_empty() {
         None
     } else {
