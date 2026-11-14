@@ -316,3 +316,54 @@ async fn ordinary_pages_embedding_vendor_tags_never_escalate() {
         }
     }
 }
+
+/// A small landing page (little text, under 16 KB) that embeds one vendor
+/// script with several recognised markers, plus that vendor's header, must not
+/// reach the solver at 200 or 202.
+#[tokio::test]
+async fn small_landing_page_with_one_vendor_script_never_escalates() {
+    let cases: [(&str, Vec<(&str, &str)>); 3] = [
+        (
+            "<script>var dd={'host':'geo.captcha-delivery.com'}</script><script src=\"https://ct.captcha-delivery.com/c.js\"></script>",
+            vec![("x-datadome", "protected"), ("x-dd-b", "1")],
+        ),
+        (
+            "<script>var pxCaptchaSrc='/a/captcha/captcha.js'</script><script src=\"https://captcha.px-cdn.net/a/captcha.js\"></script>",
+            vec![("x-px-blocked", "1")],
+        ),
+        (
+            "<script src=\"https://a.sdk.awswaf.com/a/challenge.js\"></script><script>AwsWafIntegration.saveReferrer()</script>",
+            vec![("x-amzn-waf-action", "challenge")],
+        ),
+    ];
+    for status in [200u16, 202] {
+        for (embed, headers) in &cases {
+            let solver_calls = Arc::new(AtomicUsize::new(0));
+            let body = format!("<html><body><p>Welcome.</p>{embed}</body></html>");
+            let handler = chain(
+                vec![
+                    solver_middleware_with_negcache(
+                        Arc::new(CountingProvider {
+                            calls: solver_calls.clone(),
+                            succeed: false,
+                        }),
+                        Arc::new(CookieCache::new(Duration::from_secs(60))),
+                        Arc::new(SolverNegCache::default()),
+                    ),
+                    quality_check_middleware(),
+                ],
+                Arc::new(Fixed {
+                    status,
+                    headers: headers.clone(),
+                    body: body.clone(),
+                }),
+            );
+            let resp = handler
+                .handle(get("https://example.test/a"))
+                .await
+                .unwrap_or_else(|e| panic!("{status} {embed}: escalated: {e:?}"));
+            assert_eq!(resp.body, body);
+            assert_eq!(solver_calls.load(Ordering::SeqCst), 0, "{status} {embed}");
+        }
+    }
+}

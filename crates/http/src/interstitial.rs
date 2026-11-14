@@ -150,6 +150,29 @@ impl Interstitial {
     }
 }
 
+/// Evidence for one vendor, by class. At most one signal per class counts.
+#[derive(Clone, Copy, Default)]
+struct Evidence {
+    /// A vendor response header.
+    header: bool,
+    /// A vendor cookie.
+    cookie: bool,
+    /// The challenge page's own structure: its iframe, form or container, or
+    /// the stock denial page. Not a script include or a config blob.
+    structure: bool,
+    /// A status only this vendor uses for its challenge (AWS WAF 202).
+    status: bool,
+}
+
+impl Evidence {
+    fn classes(self) -> usize {
+        usize::from(self.header)
+            + usize::from(self.cookie)
+            + usize::from(self.structure)
+            + usize::from(self.status)
+    }
+}
+
 /// Everything the vendor rules look at, computed once per response.
 struct Signals<'a> {
     status: u16,
@@ -227,17 +250,35 @@ impl<'a> Signals<'a> {
 
     /// Statuses a vendor uses for a refusal or challenge page.
     fn blocking_status(&self) -> bool {
-        matches!(self.status, 401 | 403 | 405 | 429 | 503)
+        matches!(self.status, 401 | 403 | 429 | 503)
     }
 
-    /// Whether `signals` independent pieces of evidence justify a verdict.
+    /// Whether the evidence justifies a verdict for a vendor.
     ///
-    /// With a blocking status the evidence only has to attribute the vendor.
-    /// Without one (200, 202) the page must ALSO have the shape of a stub and
-    /// carry at least two independent signals: a single marker or header on
-    /// an ordinary page only says the site embeds the vendor's tag.
-    fn gated(&self, signals: usize) -> bool {
-        self.blocking_status() || (self.stub && signals >= 2)
+    /// With a blocking status, attributing the vendor is enough. Without one
+    /// (200, 202) the page must have the shape of a stub AND the evidence must
+    /// span at least two distinct CLASSES, one of which is the challenge page's
+    /// own structure. Any number of markers that come from one script or config
+    /// blob are one body signal, and a script include or config is never the
+    /// structure: a landing page that embeds a vendor tag has both.
+    fn gated(&self, e: Evidence) -> bool {
+        self.blocking_status() || (self.stub && e.structure && e.classes() >= 2)
+    }
+
+    /// Whether `tag` (e.g. `<iframe`) appears with `needle` in its attributes.
+    fn tag_with(&self, tag: &str, needle: &str) -> bool {
+        self.small
+            && self.body.match_indices(tag).any(|(i, _)| {
+                let end = (i + 400).min(self.body.len());
+                let mut end = end;
+                while !self.body.is_char_boundary(end) {
+                    end -= 1;
+                }
+                self.body[i..end]
+                    .split('>')
+                    .next()
+                    .is_some_and(|t| t.contains(needle))
+            })
     }
 
     fn kind_for_status(&self, default: Kind) -> Kind {
@@ -376,9 +417,15 @@ fn classify_other(resp: &HttpResponse) -> Option<Interstitial> {
 
 fn datadome(s: &Signals) -> Option<Interstitial> {
     let header = s.has_header("x-datadome") || s.has_header("x-dd-b") || s.server == "datadome";
-    let host = s.small && s.body_has("captcha-delivery.com");
-    let config = s.small && s.body_has("var dd={");
-    if host && s.gated(1 + usize::from(config) + usize::from(header)) {
+    // Script include and config blob are two markers of ONE embedded script.
+    let marker = s.small && (s.body_has("captcha-delivery.com") || s.body_has("var dd={"));
+    let ev = Evidence {
+        header,
+        cookie: s.has_cookie("datadome"),
+        structure: s.tag_with("<iframe", "captcha-delivery.com"),
+        status: false,
+    };
+    if marker && s.gated(ev) {
         return Some(Interstitial::new(
             Vendor::DataDome,
             s.kind_for_status(Kind::Challenge),
@@ -399,16 +446,22 @@ fn datadome(s: &Signals) -> Option<Interstitial> {
 
 fn perimeterx(s: &Signals) -> Option<Interstitial> {
     let header = s.header_lower("x-px-blocked") == "1";
-    let markers = [
-        "px-captcha",
-        "pxcaptchasrc",
-        "captcha.px-cdn.net",
-        "captcha.px-cloud.net",
-    ]
-    .iter()
-    .filter(|m| s.small && s.body_has(m))
-    .count();
-    if (header || markers > 0) && s.gated(usize::from(header) + markers) {
+    let marker = s.small
+        && [
+            "px-captcha",
+            "pxcaptchasrc",
+            "captcha.px-cdn.net",
+            "captcha.px-cloud.net",
+        ]
+        .iter()
+        .any(|m| s.body_has(m));
+    let ev = Evidence {
+        header,
+        cookie: s.has_cookie("_px"),
+        structure: s.tag_with("<div", "px-captcha"),
+        status: false,
+    };
+    if (header || marker) && s.gated(ev) {
         return Some(Interstitial::new(
             Vendor::PerimeterX,
             s.kind_for_status(Kind::Challenge),
@@ -457,33 +510,35 @@ fn akamai(s: &Signals) -> Option<Interstitial> {
         s.server.contains("akamaighost") || s.server.contains("akamainetworkstorage");
     let error_host =
         s.small && (s.body_has("errors.edgesuite.net") || s.body_has("errors.akamai.com"));
+    // The stock denial page: title/heading plus the permission sentence. The
+    // reference link to the error host belongs to the same page.
     let denied_text =
         s.small && s.body_has("access denied") && s.body_has("don't have permission to access");
-    if error_host && s.gated(1 + usize::from(denied_text) + usize::from(akamai_server)) {
+    let ev = Evidence {
+        header: akamai_server,
+        cookie: s.has_cookie("ak_bmsc") || s.has_cookie("bm_sz"),
+        structure: denied_text,
+        status: false,
+    };
+    if (error_host || denied_text) && s.gated(ev) {
         return Some(Interstitial::new(
             Vendor::Akamai,
             s.kind_for_status(Kind::Block),
             Confidence::High,
-            "error_reference",
+            if denied_text {
+                "access_denied_page"
+            } else {
+                "error_reference"
+            },
         ));
     }
-    // The stock denial page is served by an Akamai edge even at HTTP 200.
-    if akamai_server && denied_text && s.gated(3) {
-        return Some(Interstitial::new(
-            Vendor::Akamai,
-            s.kind_for_status(Kind::Block),
-            Confidence::High,
-            "access_denied_page",
-        ));
-    }
-    // Bot-manager interstitial script endpoints.
-    let sensor = ["/_sec/cp_challenge/", "/_sec/verify?provider=", "bm-verify"]
-        .iter()
-        .filter(|m| s.small && s.body_has(m))
-        .count();
-    if sensor > 0
-        && s.gated(sensor + usize::from(akamai_server) + usize::from(s.has_cookie("ak_bmsc")))
-    {
+    // Bot-manager interstitial script endpoints: a script include is not a
+    // page structure, so these attribute the vendor under a blocking status only.
+    let sensor = s.small
+        && ["/_sec/cp_challenge/", "/_sec/verify?provider=", "bm-verify"]
+            .iter()
+            .any(|m| s.body_has(m));
+    if sensor && s.blocking_status() {
         return Some(Interstitial::new(
             Vendor::Akamai,
             Kind::Challenge,
@@ -503,15 +558,19 @@ fn akamai(s: &Signals) -> Option<Interstitial> {
 }
 
 fn imperva(s: &Signals) -> Option<Interstitial> {
-    let edge = s.header_lower("x-cdn") == "imperva"
-        || s.has_header("x-iinfo")
-        || s.has_cookie("incap_ses_")
-        || s.has_cookie("visid_incap_");
+    let header = s.header_lower("x-cdn") == "imperva" || s.has_header("x-iinfo");
+    let cookie = s.has_cookie("incap_ses_") || s.has_cookie("visid_incap_");
     let incident = s.small && s.body_has("incapsula incident id");
     // The resource endpoint is also embedded in ordinary protected pages, so
     // it only counts when the whole body is a stub.
     let resource = s.resp.body.len() <= 2048 && s.body_has("_incapsula_resource");
-    if incident && s.gated(1 + usize::from(resource) + usize::from(edge)) {
+    let ev = Evidence {
+        header,
+        cookie,
+        structure: s.tag_with("<iframe", "_incapsula_resource"),
+        status: false,
+    };
+    if incident && s.gated(ev) {
         return Some(Interstitial::new(
             Vendor::Imperva,
             s.kind_for_status(Kind::Block),
@@ -519,7 +578,7 @@ fn imperva(s: &Signals) -> Option<Interstitial> {
             "incident_id",
         ));
     }
-    if resource && s.gated(1 + usize::from(edge)) {
+    if resource && s.gated(ev) {
         return Some(Interstitial::new(
             Vendor::Imperva,
             s.kind_for_status(Kind::Challenge),
@@ -527,7 +586,7 @@ fn imperva(s: &Signals) -> Option<Interstitial> {
             "resource_stub",
         ));
     }
-    if edge && matches!(s.status, 403 | 429) {
+    if (header || cookie) && matches!(s.status, 403 | 429) {
         return Some(Interstitial::new(
             Vendor::Imperva,
             s.kind_for_status(Kind::Block),
@@ -542,13 +601,20 @@ fn aws_waf(s: &Signals) -> Option<Interstitial> {
     let action = s.header_lower("x-amzn-waf-action");
     let header = action == "challenge" || action == "captcha";
     // The SDK script is embedded in ordinary pages that use the captcha
-    // integration; it only counts on a stub.
-    let integration = s.small && s.body_has("awswafintegration");
-    let script = s.small && s.body_has("challenge.js");
-    // 202 is the vendor's challenge status, so it is not a blocking one for
-    // `gated`; it still has to be a stub with two signals.
-    let signals = usize::from(header) + usize::from(integration) + usize::from(script);
-    if (header || integration) && s.gated(signals) {
+    // integration. The challenge stub is the page whose inline script waits for
+    // the token and reloads.
+    let sdk = s.small && (s.body_has("awswafintegration") || s.body_has("challenge.js"));
+    let structure = s.small
+        && s.body_has("awswafintegration")
+        && (s.body_has("gettoken") || s.body_has("hastoken"))
+        && s.body_has("reload");
+    let ev = Evidence {
+        header,
+        cookie: s.has_cookie("aws-waf-token"),
+        structure,
+        status: s.status == 202,
+    };
+    if (header || sdk) && s.gated(ev) {
         return Some(Interstitial::new(
             Vendor::AwsWaf,
             s.kind_for_status(Kind::Challenge),
@@ -666,19 +732,22 @@ mod tests {
 
     #[test]
     fn datadome_captcha_host_at_200() {
-        // stub shape + captcha host + config object: two signals
-        let stub = "<script>var dd={'host':'geo.captcha-delivery.com'}</script><script src=\"https://ct.captcha-delivery.com/c.js\"></script>";
-        let v = classify(&resp(200, stub, &[])).unwrap();
+        // challenge iframe (structure) + vendor header: two classes on a stub
+        let stub = "<iframe src=\"https://geo.captcha-delivery.com/captcha/?x=1\"></iframe>";
+        let h = [("x-datadome", "protected")];
+        let v = classify(&resp(200, stub, &h)).unwrap();
         assert_eq!(
             (v.vendor, v.confidence),
             (Vendor::DataDome, Confidence::High)
         );
-        // the same single marker on a 200 is not enough
-        let one = "<script src=\"https://ct.captcha-delivery.com/c.js\"></script>";
-        assert!(classify(&resp(200, one, &[])).is_none());
+        // structure alone is one class
+        assert!(classify(&resp(200, stub, &[])).is_none());
+        // script + config from one embed are ONE body signal, even with a header
+        let script = "<script>var dd={'host':'geo.captcha-delivery.com'}</script><script src=\"https://ct.captcha-delivery.com/c.js\"></script>";
+        assert!(classify(&resp(200, script, &h)).is_none());
         // at a blocking status one marker attributes the vendor
         assert_eq!(
-            classify(&resp(403, one, &[])).unwrap().vendor,
+            classify(&resp(403, script, &[])).unwrap().vendor,
             Vendor::DataDome
         );
     }
@@ -715,12 +784,15 @@ mod tests {
             (v.vendor, v.confidence),
             (Vendor::PerimeterX, Confidence::High)
         );
-        // at 200: header + captcha marker on a stub, not either alone
-        let stub = "<meta name=\"description\" content=\"px-captcha\">";
+        // at 200: the challenge container plus the header or cookie
+        let stub = "<div id=\"px-captcha\"></div>";
         assert!(classify(&resp(200, stub, &[])).is_none());
         assert!(classify(&resp(200, "x", &[("x-px-blocked", "1")])).is_none());
         let v = classify(&resp(200, stub, &[("x-px-blocked", "1")])).unwrap();
         assert_eq!(v.vendor, Vendor::PerimeterX);
+        // the captcha script + config are one body signal
+        let embed = "<script>var pxCaptchaSrc='/a/captcha/captcha.js'</script><script src=\"https://captcha.px-cdn.net/a/captcha.js\"></script>";
+        assert!(classify(&resp(200, embed, &[("x-px-blocked", "1")])).is_none());
         let v = classify(&resp(403, "x", &[("set-cookie", "_pxhd=abc; Path=/")])).unwrap();
         assert_eq!(
             (v.vendor, v.confidence),
@@ -763,25 +835,17 @@ mod tests {
     #[test]
     fn imperva_incident_stub_and_embedded_resource() {
         let stub = "<iframe src=\"/_Incapsula_Resource?CWUDNSAI=24\">Request unsuccessful. Incapsula incident ID: 1-2</iframe>";
-        let v = classify(&resp(200, stub, &[])).unwrap();
+        let v = classify(&resp(200, stub, &[("x-iinfo", "1-2")])).unwrap();
         assert_eq!(
             (v.vendor, v.confidence),
             (Vendor::Imperva, Confidence::High)
         );
-        // the incident line alone, or the resource alone, on a 200 is not enough
-        assert!(
-            classify(&resp(
-                200,
-                "Request unsuccessful. Incapsula incident ID: 1-2",
-                &[]
-            ))
-            .is_none()
-        );
-        let res = "<iframe src=\"/_Incapsula_Resource?CWUDNSAI=24\"></iframe>";
-        assert!(classify(&resp(200, res, &[])).is_none());
-        // resource stub plus the vendor edge header: medium
-        let v = classify(&resp(200, res, &[("x-iinfo", "1-2")])).unwrap();
-        assert_eq!(v.confidence, Confidence::Medium);
+        // iframe alone is one class; the incident line without the iframe has no structure
+        assert!(classify(&resp(200, stub, &[])).is_none());
+        let line = "Request unsuccessful. Incapsula incident ID: 1-2";
+        assert!(classify(&resp(200, line, &[("x-iinfo", "1-2")])).is_none());
+        let res = "<script src=\"/_Incapsula_Resource?CWUDNSAI=24\"></script>";
+        assert!(classify(&resp(200, res, &[("x-iinfo", "1-2")])).is_none());
         // the same endpoint inside a big page is just the vendor's sensor tag
         let page = format!(
             "<script src=\"/_Incapsula_Resource?SWJIYLWA=1\"></script>{}",
@@ -792,22 +856,22 @@ mod tests {
 
     #[test]
     fn aws_waf_header_and_stub() {
-        let stub = "<script src=\"https://abc.edge.sdk.awswaf.com/abc/challenge.js\"></script><script>AwsWafIntegration.saveReferrer()</script>";
+        // the token-wait stub: structure + the vendor's 202 status
+        let stub = "<script src=\"https://abc.edge.sdk.awswaf.com/abc/challenge.js\"></script><script>AwsWafIntegration.getToken().then(() => location.reload())</script>";
         let v = classify(&resp(202, stub, &[])).unwrap();
         assert_eq!((v.vendor, v.confidence), (Vendor::AwsWaf, Confidence::High));
-        // header on a stub with one more signal
-        let v = classify(&resp(
-            202,
-            "<script>AwsWafIntegration.x()</script>",
-            &[("x-amzn-waf-action", "challenge")],
-        ))
-        .unwrap();
+        // the same stub at 200 needs another class
+        assert!(classify(&resp(200, stub, &[])).is_none());
+        let v = classify(&resp(200, stub, &[("x-amzn-waf-action", "challenge")])).unwrap();
         assert_eq!(v.vendor, Vendor::AwsWaf);
-        // a lone header, or a lone SDK reference, on a 200/202 is not enough
+        // SDK include + config, even with the header: one body signal, no structure
+        let include = "<script src=\"https://a.sdk.awswaf.com/a/challenge.js\"></script><script>AwsWafIntegration.x()</script>";
         let h = [("x-amzn-waf-action", "challenge")];
+        assert!(classify(&resp(200, include, &h)).is_none());
+        assert!(classify(&resp(202, include, &h)).is_none());
+        // a lone header on a plain page is not enough
         assert!(classify(&resp(200, "<html>fine</html>", &h)).is_none());
         assert!(classify(&resp(202, "x", &h)).is_none());
-        assert!(classify(&resp(200, "<script>AwsWafIntegration.x()</script>", &[])).is_none());
         // at a blocking status the header attributes the vendor
         assert_eq!(
             classify(&resp(403, "x", &h)).unwrap().vendor,
@@ -815,9 +879,63 @@ mod tests {
         );
     }
 
-    /// A healthy page that merely embeds a vendor's tag must stay unclassified,
-    /// whatever markers its markup carries: it is too big and too full of text
-    /// to be a stub, so no combination of signals can turn it into a verdict.
+    /// A small landing page (little text, under 16 KB) that embeds ONE vendor
+    /// script carrying several recognised markers, plus that vendor's cookie or
+    /// header, is not a challenge: markers from one script are one body signal
+    /// and a script include is not a challenge structure.
+    #[test]
+    fn small_landing_page_embedding_one_vendor_script_is_unclassified() {
+        let landing = |embed: &str| {
+            format!(
+                "<html><head><title>Hi</title></head><body><p>Welcome.</p>{embed}</body></html>"
+            )
+        };
+        let cases: [(&str, &[(&str, &str)]); 5] = [
+            (
+                "<script>var dd={'host':'geo.captcha-delivery.com'}</script><script src=\"https://ct.captcha-delivery.com/c.js\"></script>",
+                &[
+                    ("x-datadome", "protected"),
+                    ("set-cookie", "datadome=x; Path=/"),
+                ],
+            ),
+            (
+                "<script>var pxCaptchaSrc='/a/captcha/captcha.js';window._pxAppId='a'</script><script src=\"https://captcha.px-cdn.net/a/captcha.js\"></script>",
+                &[("x-px-blocked", "1"), ("set-cookie", "_pxhd=x; Path=/")],
+            ),
+            (
+                "<script src=\"/_sec/cp_challenge/ak.js\"></script><a href=\"https://errors.edgesuite.net/x\">help</a>",
+                &[
+                    ("server", "AkamaiGHost"),
+                    ("set-cookie", "ak_bmsc=x; Path=/"),
+                ],
+            ),
+            (
+                "<script src=\"/_Incapsula_Resource?SWJIYLWA=1\"></script>",
+                &[
+                    ("x-iinfo", "1-2"),
+                    ("set-cookie", "visid_incap_1=x; Path=/"),
+                ],
+            ),
+            (
+                "<script src=\"https://a.sdk.awswaf.com/a/challenge.js\"></script><script>AwsWafIntegration.saveReferrer()</script>",
+                &[
+                    ("x-amzn-waf-action", "challenge"),
+                    ("set-cookie", "aws-waf-token=x; Path=/"),
+                ],
+            ),
+        ];
+        for (embed, headers) in cases {
+            for status in [200, 202] {
+                let r = resp(status, &landing(embed), headers);
+                assert!(
+                    classify(&r).is_none(),
+                    "{status} {embed}: {:?}",
+                    classify(&r)
+                );
+            }
+        }
+    }
+
     #[test]
     fn large_page_embedding_each_vendor_tag_is_unclassified() {
         let article = "<p>The committee reviewed the annual report and discussed the budget.</p>\n"
@@ -873,6 +991,14 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(v.vendor, Vendor::DataDome);
+    }
+
+    /// No captured vendor challenge was served with 405, so it is not a
+    /// blocking status: one header on a 405 attributes nothing.
+    #[test]
+    fn status_405_is_not_a_blocking_status() {
+        let h = [("x-amzn-waf-action", "challenge")];
+        assert!(classify(&resp(405, "x", &h)).is_none());
     }
 
     #[test]

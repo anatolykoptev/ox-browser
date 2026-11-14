@@ -571,7 +571,17 @@ fn form_weight(form: &str) -> usize {
 }
 
 fn password_form_dominates(html: &str) -> bool {
-    let main = CHROME.replace_all(clip(html, SCAN_BYTES), " ");
+    let all = clip(html, SCAN_BYTES);
+    let stripped = CHROME.replace_all(all, " ");
+    let stripped_words = effective_words(&visible_text(&stripped, FALLBACK_TEXT_CHARS * 4));
+    // A site that wraps its content in <header> or <nav> would lose the page;
+    // when stripping removes over 40% of the text, judge the unstripped markup.
+    let all_words = effective_words(&visible_text(all, FALLBACK_TEXT_CHARS * 4));
+    let main: std::borrow::Cow<'_, str> = if stripped_words * 5 < all_words * 3 {
+        std::borrow::Cow::Borrowed(all)
+    } else {
+        stripped
+    };
     let main_words = effective_words(&visible_text(&main, FALLBACK_TEXT_CHARS * 4)).max(1);
     FORM.find_iter(&main)
         .filter(|f| PASSWORD_INPUT.is_match(f.as_str()))
@@ -741,6 +751,15 @@ mod tests {
         let h = page(
             "Welcome",
             "<main><form action=/login><input name=u><input type=password name=p><button>Go</button></form></main>",
+        );
+        assert_eq!(
+            judge(&h, "Username Password Go").verdict,
+            Verdict::LoginRequired
+        );
+        // content wrapped in <header> is still judged: the form is the page
+        let h = page(
+            "Welcome",
+            "<header><form action=/login><input name=u><input type=password name=p><button>Go</button></form></header>",
         );
         assert_eq!(
             judge(&h, "Username Password Go").verdict,
