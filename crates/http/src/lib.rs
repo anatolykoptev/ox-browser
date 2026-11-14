@@ -4,6 +4,7 @@ pub mod cloudflare;
 mod config;
 pub mod content;
 pub mod content_detect;
+pub mod content_quality;
 pub mod cookie_cache;
 pub mod cookie_provider;
 #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
@@ -13,6 +14,7 @@ mod error;
 pub mod extractor;
 pub mod fingerprint;
 pub mod handler_reqwest;
+pub mod interstitial;
 #[cfg(all(feature = "quickjs", not(target_arch = "wasm32")))]
 pub mod js_eval;
 pub mod json_ld;

@@ -1,0 +1,114 @@
+HTTP 200
+server: guce
+content-type: text/html;charset=UTF-8
+
+<!DOCTYPE html>
+<html dir="ltr" class="ltr  yahoo-page height100">
+<head>
+    <title>Your privacy choices</title>
+
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" >
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+    <link rel="stylesheet" href="https://s.yimg.com/oa/build/css/site-ltr-a4d8e1e9.css">
+    <link rel="icon" type="image/png" href="https://s.yimg.com/wm/mbr/images/yahoo-yep-favicon-32-v1.png">
+    <style nonce="REDACTED">/* Static brand header that replaces ybar-api-service (PRI-918). These are the rules ybar 3.10.114
+   applied to the logo, renamed from its hashed classes. Selectors keep ybar's specificity (classes
+   only, no ids), so the page stylesheets' "#ybar div" overrides keep winning as they did before. */
+#ybar{display:block;box-sizing:border-box;text-align:start;z-index:1000;-webkit-font-smoothing:antialiased}
+#ybar-inner-wrap{display:flex;flex-direction:column}
+.ybar-row{display:flex;justify-content:center}
+.ybar-bar{display:flex;justify-content:flex-start;align-items:center;width:100%;min-width:0;max-width:1920px;box-sizing:border-box;height:84px;padding:0}
+.ybar-property-guce .ybar-bar{padding-inline-start:50px;padding-inline-end:64px;background:#6302de}
+.ybar-property-gdpr .ybar-bar{padding-inline-start:54px;padding-inline-end:64px}
+/* ybar's gdpr header ended with an empty account-menu slot that took the free space, which kept the logo at
+   the start; build and ryot had no such slot */
+.ybar-property-gdpr .ybar-bar::after{content:"";flex:none;width:32px;margin-inline-start:auto}
+.ybar-property-gdpr.ybar-variant-build .ybar-bar::after,
+.ybar-property-gdpr.ybar-variant-ryot .ybar-bar::after{content:none}
+.ybar-property-guce.ybar-variant-aol .ybar-bar,
+.ybar-property-guce.ybar-variant-makers .ybar-bar,
+.ybar-property-guce.ybar-variant-polyvore .ybar-bar{background:#000}
+.ybar-property-guce.ybar-variant-autoblog .ybar-bar{background:#2b2c2f}
+.ybar-property-guce.ybar-variant-build .ybar-bar{background:#333}
+.ybar-property-guce.ybar-variant-engadget .ybar-bar{background:#2b2d32}
+.ybar-property-guce.ybar-variant-intheknow .ybar-bar{background:0 0}
+.ybar-property-guce.ybar-variant-ryot .ybar-bar{background:#0a0a0a}
+.ybar-property-guce.ybar-variant-talktalk .ybar-bar{background:#1e4e9d}
+.ybar-logo-box{display:flex;width:142px;min-width:142px}
+.ybar-logo-link{display:flex;align-items:stretch;font-size:0;height:100%}
+.ybar-logo-link:focus{outline-offset:2px}
+.ybar-logo-img{align-self:flex-start;max-height:100%;max-width:100%}
+.ybar-logo-light{display:block}
+.ybar-logo-dark{display:none}
+/* The theme class comes from the header root (guce) or, on edit consent, from the page's
+   <div class="ybar-{{ybarGdprTheme}}"> wrapper, which is why the gdpr header root carries no theme class. */
+.ybar-dark .ybar-logo-light{display:none}
+.ybar-dark .ybar-logo-dark{display:block}
+.ybar-light .ybar-logo-dark{display:none}
+#ybar :focus{outline:solid #0f69ff 2px}
+#ybar :focus:not(:focus-visible){outline:0}
+@media screen and (min-width:768px){.ybar-logo-img{max-height:40px}}
+@media screen and (max-width:768px){
+.ybar-property-guce .ybar-bar{height:50px;padding:0;justify-content:center;position:relative}
+.ybar-property-gdpr .ybar-bar{height:54px;padding-inline-start:20px;padding-inline-end:24px;justify-content:center;position:relative}
+.ybar-property-gdpr .ybar-bar::after{width:24px}
+.ybar-logo-box{width:auto;min-width:auto}
+.ybar-logo-link .ybar-logo-img{height:100%;max-height:32px}
+.ybar-variant-aol .ybar-logo-box{height:18px}
+.ybar-variant-engadget .ybar-logo-box{height:24px}
+.ybar-variant-intheknow .ybar-logo-box{height:25px;width:64px}
+.ybar-property-guce.ybar-variant-talktalk .ybar-logo-box{height:20px}
+}
+</style>
+    <style nonce="REDACTED">#consent-page #ybar div{background: #fff;padding-left: 0}.btn {padding: 15px;font-size:20px;min-width: 30%;}.btn.primary{background-color: #0f69ff;color: #fff;cursor: pointer;}#consent-text a:not(.btn){text-decoration:underline;}</style>
+</head>
+<body  id="tcf2-layer1" class="no-js no-touch blur-preview-tpl wizard tcf-2 yahoo eu-localized home en-GB  ">
+<script nonce="REDACTED">
+    if ('classList' in document.body) {
+        document.body.classList.add('js');
+        document.body.classList.remove('no-js');
+    }
+
+</script>
+
+<div id="consent-page" class="theme-2 v4 brandtype-yahoo ">
+    <div class="consent-overlay">
+        <div class="container con-container is-reject-all-enabled" role="dialog" aria-modal="true" aria-labelledby="consent-title" aria-describedby="consent-text">
+            <div class="con-wizard">
+                <form method="post" class="consent-form" action="">
+                <div class="wizard-header"><div class="consent-brand-logo" role="heading" aria-level="1"><div id="ybar" role="banner" dir="ltr" class="ybar-property-guce ybar-variant-yahoo ybar-light"><div id="ybar-inner-wrap"><div class="ybar-overlay"></div><div class="ybar-row"><div class="ybar-bar"><div class="ybar-logo-box"><a id="ybar-logo" class="ybar-logo-link" href="https://uk.example.test/" target="_self" data-ylk="slk:guce;elm:logo;sec:ybar;subsec:logo;itc:0;"><img class="ybar-logo-img ybar-logo-light" src="https://s.yimg.com/rz/p/yahoo_frontpage_en-US_s_f_p_bestfit_frontpage.png" srcset="https://s.yimg.com/rz/p/yahoo_frontpage_en-US_s_f_p_bestfit_frontpage.png 1x, https://s.yimg.com/rz/p/yahoo_frontpage_en-US_s_f_p_bestfit_frontpage_2x.png 2x" alt="Yahoo"><img class="ybar-logo-img ybar-logo-dark" src="https://s.yimg.com/rz/p/yahoo_frontpage_en-US_s_f_w_bestfit_frontpage.png" srcset="https://s.yimg.com/rz/p/yahoo_frontpage_en-US_s_f_w_bestfit_frontpage.png 1x, https://s.yimg.com/rz/p/yahoo_frontpage_en-US_s_f_w_bestfit_frontpage_2x.png 2x" alt="Yahoo"></a></div></div></div></div></div></div></div>
+                <div class="wizard-body">
+                    <div class="consent-text" id="consent-text">
+                            <div class="content-section first">
+                                <p class="content-intro-title">    Your privacy is important to us
+</p>
+                                <p>    At <a href="/redirect?to=https%3A%2F%2Flegal.example.test%2Fie%2Fen%2Fyahoo%2Fprivacy%2Fyahoo-group%2Findex.html&brandDomain=&brandId=yahoo&tos=eu&step=&sessionId=2_cc-session_REDACTED-UUID&userType=NON_REG" target="_blank" tabindex="0">Yahoo</a>, we use <span tabindex="0" role="button" aria-label="Cookies" class="info hover" data-tooltip="Cookies (including similar technologies such as web storage) allow the operators of websites and apps to store and read information from your device. Learn more in our <a href='/redirect?to=https%3A%2F%2Flegal.example.test%2Fie%2Fen%2Fyahoo%2Fprivacy%2Fcookies%2Findex.html&brandDomain=&brandId=yahoo&tos=eu&step=&sessionId=2_cc-session_REDACTED-UUID&userType=NON_REG' target='_blank' tabindex='0'  data-ylk='slk:cookie-link;elm:corp;sec:general_consent;subsec:guce;itc:0;outcm:consent-layer1_click' >cookie policy</a>."><span class="info-popup" role="dialog" aria-labelledby="cookie-tooltip-heading" aria-describedby="consent-cookie-tooltip" tabindex="-1"><span class="info-popup-content"><span id="cookie-tooltip-heading" class="info-popup-heading" role="heading" aria-level="2">Cookies</span><span id="consent-cookie-tooltip" class="info-popup-description">Cookies (including similar technologies such as web storage) allow the operators of websites and apps to store and read information from your device. Learn more in our <a href='/redirect?to=https%3A%2F%2Flegal.example.test%2Fie%2Fen%2Fyahoo%2Fprivacy%2Fcookies%2Findex.html&brandDomain=&brandId=yahoo&tos=eu&step=&sessionId=2_cc-session_REDACTED-UUID&userType=NON_REG' target='_blank' tabindex='0'  data-ylk='slk:cookie-link;elm:corp;sec:general_consent;subsec:guce;itc:0;outcm:consent-layer1_click' >cookie policy</a>.</span><span role="button" tabindex="0" aria-label="Close" class="info-popup-close-btn"><img src="../static/images/close-white.svg" alt="" aria-hidden="true"></span></span></span>cookies</span> to:
+</p>
+                                <ul class="content-list">
+                                    <li class="list-item">provide our sites and apps to you</li>
+                                    <li class="list-item">authenticate users, apply security measures, and prevent spam and abuse, and</li>
+                                    <li class="list-item">    <span tabindex="0" role="button" aria-label="Measurement" class="info hover" data-tooltip="We count the number of visitors to our pages, the type of device they use (iOS or Android), the browser they use and the duration of their visit to our websites and apps. This data is collected in aggregate and is not tied to specific users."><span class="info-popup" role="dialog" aria-labelledby="measure-tooltip-heading" aria-describedby="consent-measure-tooltip" tabindex="-1"><span class="info-popup-content"><span id="measure-tooltip-heading" class="info-popup-heading" role="heading" aria-level="2">Measurement</span><span id="consent-measure-tooltip" class="info-popup-description">We count the number of visitors to our pages, the type of device they use (iOS or Android), the browser they use and the duration of their visit to our websites and apps. This data is collected in aggregate and is not tied to specific users.</span><span role="button" tabindex="0" aria-label="Close" class="info-popup-close-btn"><img src="../static/images/close-white.svg" alt="" aria-hidden="true"></span></span></span>measure</span> your use of our sites and apps
+</li>
+                                </ul>
+                            </div>
+                        <div class="content-section">
+                        <div class="content-section-title" id="consent-title">Your privacy choices</div>
+                            <div>    If you click '<strong>Accept all</strong>', we and <a href="/v2/partners-list?sessionId=2_cc-session_REDACTED-UUID" target="_blank" tabindex="0"  data-ylk="slk:partner-link;elm:corp;sec:general_consent;subsec:guce;itc:0;outcm:consent-layer1_click" >our partners</a>, including 253 who are part of the IAB Transparency & Consent Framework, will also store and / or access information on a device (in other words, use cookies) and use precise geolocation data and other personal data such as <span tabindex="0" role="button" aria-label="Technical identifiers" class="info hover" data-tooltip="Technical identifiers are system-generated strings of letters and numbers that can identify your device or you as a user. They include browser cookies, device IDs and your IP address. They may be derived from hashed and / or encrypted email addresses or the statistical matching of other identifiers."><span class="info-popup" role="dialog" aria-labelledby="technical-tooltip-heading" aria-describedby="technical-identifiers-tooltip" tabindex="-1"><span class="info-popup-content"><span id="technical-tooltip-heading" class="info-popup-heading" role="heading" aria-level="2">Technical identifiers</span><span id="technical-identifiers-tooltip" class="info-popup-description">Technical identifiers are system-generated strings of letters and numbers that can identify your device or you as a user. They include browser cookies, device IDs and your IP address. They may be derived from hashed and / or encrypted email addresses or the statistical matching of other identifiers.</span><span role="button" tabindex="0" aria-label="Close" class="info-popup-close-btn"><img src="../static/images/close-white.svg" alt="" aria-hidden="true"></span></span></span>technical identifiers</span> and browsing and search data, for analytics, personalised advertising and content, advertising and content measurement, and audience research and services development.
+</div>
+                                <p class="section-reject-info">    If you do not want us and our partners to use cookies and personal data for these additional purposes, click '<strong>Reject all</strong>'.
+</p>
+                            <p class="section-manage-settings-info">    If you would like to customise your choices, click '<strong>Manage privacy settings</strong>'.
+</p>
+                                <p class="section-privacy-policy-info">    You can withdraw your consent or change your choices at any time by clicking on the 'Privacy and Cookie settings' or 'Privacy dashboard' links on our sites and apps. Find out more about how we use your personal data in our <a href="/redirect?to=https%3A%2F%2Flegal.example.test%2Fie%2Fen%2Fyahoo%2Fprivacy%2Findex.html&brandDomain=&brandId=yahoo&tos=eu&step=&sessionId=2_cc-session_REDACTED-UUID&userType=NON_REG" target="_blank" tabindex="0"  data-ylk="slk:privacy-link;elm:corp;sec:general_consent;subsec:guce;itc:0;outcm:consent-layer1_click" >Privacy Policy</a> and <a href='/redirect?to=https%3A%2F%2Flegal.example.test%2Fie%2Fen%2Fyahoo%2Fprivacy%2Fcookies%2Findex.html&brandDomain=&brandId=yahoo&tos=eu&step=&sessionId=2_cc-session_REDACTED-UUID&userType=NON_REG' target='_blank' tabindex='0'  data-ylk='slk:cookie-link;elm:corp;sec:general_consent;subsec:guce;itc:0;outcm:consent-layer1_click' >Cookie Policy</a>.
+</p>
+                                <p class="section-scope-info">If you are signed in, the choices you make here will also apply on other devices where you sign in to the same Yahoo account.</p>
+                        </div>
+                    </div>
+                    <div class="actions couple">
+    <input type="hidden" name="csrfToken" value="6hwd6UhJf2Wew69vCgQJ4stuYoMjpkCw">
+    <input type="hidden" name="sessionId" value="2_cc-session_REDACTED-UUID">
+    <input type="hidden" name="originalDoneUrl" value="https://example.test?guccounter&#x3D;1">
+    <input type="hidden" name="namespace" value="yahoo">
+    <button type="submit" tabindex="0" data-beacon="/beacon?tag=TCF2&step=Layer1-AcceptAll&brandDomain=example.test&brandBid=&userType=nonreg&sdk=false&tos=en-GB&country=US&x=&sessionId=2_cc-session_REDACTED-UUID" class="btn secondary accept-all " name="agree" value="agree"  data-ylk="slk:accept-all;elm:consent;sec:general_consent;subsec:guce;itc:1;outcm:consent-layer1_click" >Accept all</button>
+        <button type="submit" tabindex="0" data-beacon="/beacon?tag=TCF2&step=Layer1-RejectAll&brandDomain=example.test&brandBid=&userType=nonreg&sdk=false&tos=en-GB&country=US&x=&sessionId=2_cc-session_REDACTED-UUID" class="btn secondary reject-all" name="reject" value="reject"  data-ylk="slk:reject-all;elm:consent;sec:general_consent;subsec:guce;itc:1;outcm:consent-layer1_click" >Reject all</button>
+    <a href="/v2/partners?sessionId=2_cc-session_REDACTED-UUID" tabindex="0" class="btn secondary mng-btn manage-s

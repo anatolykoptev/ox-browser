@@ -93,6 +93,12 @@ pub struct ReadOutput {
     /// `oxbrowser_read_extraction_rejected_total`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extraction_note: Option<String>,
+    /// Content-quality verdict (`ok`, `empty`, `login_required`,
+    /// `access_denied`, `consent_wall`, `soft_404`, `challenge`) for pages
+    /// fetched over HTTP or the render fallback. Report-only: `content` is
+    /// never altered by it. Absent on site-handler results and error outputs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<crate::content_quality::ContentQuality>,
 }
 
 /// Article metadata extracted from HTML meta tags and JSON-LD.

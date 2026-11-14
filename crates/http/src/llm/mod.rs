@@ -197,6 +197,7 @@ mod tests {
             language: "en".into(),
             error: None,
             extraction_note: None,
+            quality: None,
         }
     }
 
@@ -327,6 +328,7 @@ mod tests {
             language: String::new(),
             error: None,
             extraction_note: None,
+            quality: None,
         };
 
         let out = to_llm_text(&result);

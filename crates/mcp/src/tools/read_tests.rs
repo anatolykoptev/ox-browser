@@ -34,6 +34,7 @@ fn read_output_skips_none_error() {
         language: String::new(),
         error: None,
         extraction_note: None,
+        quality: None,
     };
     let json = serde_json::to_value(&out).unwrap();
     assert!(!json.as_object().unwrap().contains_key("error"));
@@ -62,6 +63,7 @@ fn read_output_includes_error() {
         language: String::new(),
         error: Some("fail".into()),
         extraction_note: None,
+        quality: None,
     };
     let json = serde_json::to_value(&out).unwrap();
     assert_eq!(json["error"], "fail");

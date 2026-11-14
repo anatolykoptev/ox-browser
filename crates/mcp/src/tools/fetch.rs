@@ -75,6 +75,9 @@ struct FetchResult {
     elapsed_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Content-quality verdict for HTML responses (report-only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quality: Option<ox_http::content_quality::ContentQuality>,
 }
 
 #[derive(Serialize)]
@@ -133,6 +136,7 @@ impl OxMcpServer {
                 cf_type: None,
                 elapsed_ms: elapsed(),
                 error: Some("body is not allowed with method GET".into()),
+                quality: None,
             };
             let json =
                 serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
@@ -180,6 +184,7 @@ impl OxMcpServer {
         match outcome {
             CallOutcome::Ok(Ok(resp)) => {
                 let cf = detect_cloudflare(&resp);
+                let quality = ox_http::content_quality::assess_response(&resp);
                 let headers: HashMap<String, String> = resp
                     .headers
                     .iter()
@@ -193,6 +198,7 @@ impl OxMcpServer {
                     cf_type: cf.map(|c| c.challenge_type.to_string()),
                     elapsed_ms: elapsed(),
                     error: None,
+                    quality,
                 };
                 let json = serde_json::to_string(&result)
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
@@ -207,6 +213,7 @@ impl OxMcpServer {
                     cf_type: None,
                     elapsed_ms: elapsed(),
                     error: Some(e.to_string()),
+                    quality: None,
                 };
                 let json = serde_json::to_string(&result)
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
@@ -223,6 +230,7 @@ impl OxMcpServer {
                     cf_type: None,
                     elapsed_ms: elapsed(),
                     error: Some(format!("deadline exceeded ({secs}s per-call bound)")),
+                    quality: None,
                 };
                 let json = serde_json::to_string(&result)
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));

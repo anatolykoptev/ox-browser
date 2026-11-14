@@ -1,0 +1,2177 @@
+HTTP 200
+content-type: text/html; charset=utf-8
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="Content-type" content="text/html; charset=utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+        <meta property="og:title" content="HSBC Group corporate website | HSBC Holdings plc" />
+    <meta property="og:description" content="HSBC, one of the largest banking and financial services institutions in the world, serves millions of customers through its four global businesses." />
+    <meta property="og:url" content="https://example.test/" />
+    <meta property="og:image" content="https://example.test/-/files/hsbc/investors/hsbc-results/2026/3q/images/261027-home-banner-560x315.jpg?as=0&amp;dmc=0&amp;iar=0&amp;thn=0&amp;udi=0&amp;sc_lang=en-gb&amp;hash=EA48A2DBED04AF36ECE640D7876270B2" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="HSBC" />
+    <meta name="twitter:site" content="@HSBC" />
+<meta name="twitter:card" content="summary_large_image" />
+    <meta name="facebook-domain-verification" content="rw6u2qsf90sclb2x6by9qg0l3o6out" />
+
+    
+
+
+
+<title>HSBC Group corporate website | HSBC Holdings plc</title>
+<meta name="description" content="HSBC, one of the largest banking and financial services institutions in the world, serves millions of customers through its four global businesses." />
+<meta name="keywords" content="hsbc holdings, hsbc group, investor relations, hsbc strategy, careers, global banking" />
+<link rel="canonical" href="https://example.test/" />
+<link rel="icon" href="/assets/basekit.features/favicon/images/favicon.ico" type="image/x-icon" />
+<link rel="shortcut icon" href="/assets/basekit.features/favicon/images/favicon.ico" type="image/x-icon" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="apple-touch-icon-precomposed" href="/apple-touch-icon-precomposed.png">
+
+
+    <meta name="robots" content="index, follow" />
+
+    <link href="/styles/hsbc.css?v=0.0.0.0.0" rel="stylesheet" />
+    
+    <link href="/styles/hsbc.print.css?v=0.0.0.0.0" rel="stylesheet" media="print" />
+    <script src="/scripts/hsbc.common.transpiled.js?v=0.0.0.0.0"></script>
+    <script src="/scripts/hsbc.head.transpiled.js?v=0.0.0.0.0"></script>
+    
+    <script id="tealium-sync" src="//tags.tiqcdn.com/utag/hsbc/global-common-dotcom/prod/utag.sync.js"></script>
+
+<script>
+    (function () {
+        var script = document.createElement('script');
+        script.async = true;
+        script.id = 'tealium-async';
+        document.head.insertAdjacentElement('beforeend', script);
+        script.onload = function () {
+            document.dispatchEvent(new CustomEvent('TEALIUM_LOADED'));
+        };
+        script.src = '//tags.tiqcdn.com/utag/hsbc/global-common-dotcom/prod/utag.js';
+    })();
+</script>
+
+
+
+
+<style id="antiClickjack">
+    body {
+        display: none !important;
+    }
+</style>
+<script type="text/javascript">
+    var allowedURIs = []
+
+    if (self === top || allowedURIs.indexOf(document.referrer) > -1) {
+        var antiClickjack = document.getElementById("antiClickjack");
+        antiClickjack.parentNode.removeChild(antiClickjack);
+    } else {
+        top.location = self.location;
+    }
+</script>
+
+
+</head>
+<body class="" data-cookie-name="CONSENTMGR_GLOBAL-COMMON-DOTCOM-CG1">
+    <!--crawler: off-->
+    <script>
+    var utag_data = {  };
+    utag_data["page_url"] = "/";
+    utag_data["page_name"] = "Home";
+    utag_data["page_language"] = "en-GB";
+    utag_data["page_type"] = "";
+    utag_data["page_category"] = [""];
+    utag_data["page_subcategory"] = [""];
+    utag_data["page_customer_group"] = [];
+    utag_data["page_product_line"] = [];
+            </script>
+
+    
+    <div class="skip-links" data-component="SkipLinks">
+    <div class="skip-links__content">
+        
+        <div class="skip-links__content__label">Skip to:</div>
+        <ul>
+            <li><a href="#goToNavigation"><span class="sr-only">Skip to</span>Primary navigation</a></li>
+            <li><a href="#goToMainContent"><span class="sr-only">Skip to</span>Main content</a></li>
+            <li><a href="#goToFooter"><span class="sr-only">Skip to</span>Footer</a></li>
+        </ul>
+    </div>
+</div>
+
+    <header class="header" role="banner">
+        <div class="header__content">
+    
+<a href="/" class="logo empty" aria-label="Go to HSBC home page" title="Home" ><img src="/-/files/hsbc/header/hsbc-logo-200x25.svg?la=en-GB&amp;h=25&amp;hash=FCDFB4DC1991B6B5EE0AB98E7208CB82" alt="HSBC logo" /></a>
+    
+
+<button type="button" class="nav__button" aria-expanded="false" aria-controls="nav__wrapper">
+    <span class="hsbc-menu" aria-hidden="true"></span>
+    <span class="sr-only">Menu</span>
+</button>
+<nav role="navigation" aria-label="Main Navigation" class="nav__wrapper" data-nav="wrapper" id="nav__wrapper">
+    <ul class="nav font-size-smaller" data-nav="nav" itemscope itemtype="http://www.schema.org/SiteNavigationElement">
+
+            <li class="nav__item " itemprop="name" content="Who we are">
+						<button class="nav__link" itemprop="url" aria-expanded="false"
+							>
+                            <span>Who we are</span>
+                            <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                        </button>
+                                    <div class="nav-group">
+                        <div class="nav-group__inner">
+                                <a class="skip-link--navigation" href="#goToNextNav">Skip to Investors</a>
+
+                                <div class="highlight">
+<a href="/who-we-are" class="" >                                        <h2 class="highlight__heading">Who we are</h2>
+                                        <p class="highlight__text">Founded in 1865, HSBC is one of the world’s largest banking and financial services organisations.
+</p>
+                                        <span class="highlight__link">
+                                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+Go to this section                                        </span>
+</a>                                </div>
+                            <ul id="submenu-REDACTED-UUID" class="nav__submenu" aria-label="Who we are">
+                                <li class="nav__item nav__back">
+                                    <a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                        <span>Main menu</span>
+                                    </a>
+                                </li>
+                                <li class="nav__item nav__current">
+                                        <a href="/who-we-are" class="nav__link">
+                                            <span>Who we are</span>
+                                        </a>
+                                </li>
+                                    <li class="nav__item">
+                                                    <a href="/who-we-are/hsbc-at-a-glance" class="nav__link"
+														>
+                                                        <span>HSBC at a glance</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Our strategy and values</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Our strategy and values">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Who we are">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Who we are</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/who-we-are/our-strategy-and-values" class="nav__link">
+                                                            <span>Our strategy and values</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/who-we-are/our-strategy-and-values" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/our-strategy-and-values/what-sets-us-apart" class="nav__link"
+																	>
+                                                                    <span>What sets us apart</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/our-strategy-and-values/our-strategy" class="nav__link"
+																	>
+                                                                    <span>Our strategy</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/our-strategy-and-values/our-values" class="nav__link"
+																	>
+                                                                    <span>Our values</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/our-strategy-and-values/our-history" class="nav__link"
+																	>
+                                                                    <span>Our history</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/our-strategy-and-values/our-conduct" class="nav__link"
+																	>
+                                                                    <span>Our conduct</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/our-strategy-and-values/our-culture" class="nav__link"
+																	>
+                                                                    <span>Our culture</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Our people</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Our people">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Who we are">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Who we are</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/who-we-are/our-people" class="nav__link">
+                                                            <span>Our people</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/who-we-are/our-people" class="nav__link"
+													>
+                                                        <span>
+Introduction                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/our-people/board-of-directors" class="nav__link"
+																	>
+                                                                    <span>Board of directors</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/our-people/senior-management" class="nav__link"
+																	>
+                                                                    <span>Senior management</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/our-people/inclusion-at-hsbc" class="nav__link"
+																	>
+                                                                    <span>Inclusion at HSBC</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <a href="/who-we-are/our-customers" class="nav__link"
+														>
+                                                        <span>Our customers</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/who-we-are/our-markets" class="nav__link"
+														>
+                                                        <span>Our markets</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>HSBC and Digital</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="HSBC and Digital">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Who we are">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Who we are</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/who-we-are/hsbc-and-digital" class="nav__link">
+                                                            <span>HSBC and Digital</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/who-we-are/hsbc-and-digital" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/hsbc-and-digital/hsbc-and-ai" class="nav__link"
+																	>
+                                                                    <span>HSBC and AI</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/hsbc-and-digital/hsbc-and-digital-accessibility" class="nav__link"
+																	>
+                                                                    <span>HSBC and Digital Accessibility</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/hsbc-and-digital/hsbc-and-quantum" class="nav__link"
+																	>
+                                                                    <span>HSBC and Quantum</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/hsbc-and-digital/hsbc-patents-and-research-papers" class="nav__link"
+																	>
+                                                                    <span>HSBC Patents and Research Papers</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/hsbc-and-digital/hsbc-and-engineering" class="nav__link"
+																	>
+                                                                    <span>HSBC and Engineering</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <a href="/who-we-are/hsbc-and-trade" class="nav__link"
+														>
+                                                        <span>HSBC and Trade</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/who-we-are/hsbc-and-wealth" class="nav__link"
+														>
+                                                        <span>HSBC and Wealth</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>HSBC and Sustainability</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="HSBC and Sustainability">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Who we are">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Who we are</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/who-we-are/hsbc-and-sustainability" class="nav__link">
+                                                            <span>HSBC and Sustainability</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/who-we-are/hsbc-and-sustainability" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/hsbc-and-sustainability/our-net-zero-transition-plan" class="nav__link"
+																	>
+                                                                    <span>Our Net Zero Transition Plan</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/hsbc-and-sustainability/supporting-our-customers" class="nav__link"
+																	>
+                                                                    <span>Supporting our customers</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/hsbc-and-sustainability/climate-solutions-partnership" class="nav__link"
+																	>
+                                                                    <span>Climate Solutions Partnership</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+<a href="/who-we-are/hsbc-and-sustainability/sustainability-faqs" class="nav__link empty" >Sustainability FAQs</a>                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>ESG and responsible business</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="ESG and responsible business">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Who we are">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Who we are</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/who-we-are/esg-and-responsible-business" class="nav__link">
+                                                            <span>ESG and responsible business</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/who-we-are/esg-and-responsible-business" class="nav__link"
+													>
+                                                        <span>
+Introduction                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/esg-and-responsible-business/esg-reporting-centre" class="nav__link"
+																	>
+                                                                    <span>ESG reporting centre</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/esg-and-responsible-business/governance" class="nav__link"
+																	>
+                                                                    <span>Governance</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/esg-and-responsible-business/tax-transparency" class="nav__link"
+																	>
+                                                                    <span>Tax transparency</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/esg-and-responsible-business/fighting-financial-crime" class="nav__link"
+																	>
+                                                                    <span>Fighting financial crime</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/esg-and-responsible-business/health-and-safety" class="nav__link"
+																	>
+                                                                    <span>Health and safety</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/esg-and-responsible-business/managing-risk" class="nav__link"
+																	>
+                                                                    <span>Managing risk</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/esg-and-responsible-business/working-with-suppliers" class="nav__link"
+																	>
+                                                                    <span>Working with suppliers</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/who-we-are/esg-and-responsible-business/modern-slavery-act" class="nav__link"
+																	>
+                                                                    <span>Modern Slavery Act</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                            </ul>
+                                <div class="promo">
+<a href="/who-we-are/our-strategy-and-values" class="promo-anchor empty" >                                        <div class="promo__image-wrapper">
+                                            <img src="/-/files/hsbc/header/navigation-promo-boxes/260505-who-we-are-370x208.jpg?sc_lang=en-gb&amp;la=en-GB&amp;h=208&amp;w=370&amp;hash=3037B5FAA68E6DF6039B0FC55E6D8DF7" class="promo__image" alt="" />
+                                        </div>
+                                        <span class="promo__kicker">OUR STRATEGY AND VALUES</span>
+                                        <span class="promo__heading">
+                                            Opening up a world of opportunity
+                                        </span>
+</a>                                </div>
+                            <button class="nav__close"><span class="hsbc-close-circle"></span><span class="sr-only">Close Navigation</span></button>
+                        </div>
+                    </div>
+            </li>
+            <li class="nav__item " itemprop="name" content="Investors">
+						<button class="nav__link" itemprop="url" aria-expanded="false"
+							>
+                            <span>Investors</span>
+                            <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                        </button>
+                                    <div class="nav-group">
+                        <div class="nav-group__inner">
+                                <a class="skip-link--navigation" href="#goToNextNav">Skip to News and views</a>
+
+                                <div class="highlight">
+<a href="/investors" class="" >                                        <h2 class="highlight__heading">Investors</h2>
+                                        <p class="highlight__text">Find information about our performance, dividends, <br/>and investor events.</p>
+                                        <span class="highlight__link">
+                                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+Go to this section                                        </span>
+</a>                                </div>
+                            <ul id="submenu-REDACTED-UUID" class="nav__submenu" aria-label="Investors">
+                                <li class="nav__item nav__back">
+                                    <a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                        <span>Main menu</span>
+                                    </a>
+                                </li>
+                                <li class="nav__item nav__current">
+                                        <a href="/investors" class="nav__link">
+                                            <span>Investors</span>
+                                        </a>
+                                </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Investing in HSBC</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Investing in HSBC">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Investors">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Investors</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/investors/investing-in-hsbc" class="nav__link">
+                                                            <span>Investing in HSBC</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/investors/investing-in-hsbc" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/investing-in-hsbc/our-investment-case" class="nav__link"
+																	>
+                                                                    <span>Our investment case</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/investing-in-hsbc/group-structure" class="nav__link"
+																	>
+                                                                    <span>Group structure</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/investing-in-hsbc/consensus-buyback-updates-and-analyst-coverage" class="nav__link"
+																	>
+                                                                    <span>Consensus, buyback updates, and analyst coverage</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/investing-in-hsbc/financial-calendar" class="nav__link"
+																	>
+                                                                    <span>Financial calendar</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/investing-in-hsbc/hsbc-shareholder-updates" class="nav__link"
+																	>
+                                                                    <span>HSBC shareholder updates</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Results and announcements</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Results and announcements">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Investors">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Investors</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/investors/results-and-announcements" class="nav__link">
+                                                            <span>Results and announcements</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/investors/results-and-announcements" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+<a href="/investors/results-and-announcements/all-reporting/group" class="nav__link empty" >All reporting</a>                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/results-and-announcements/stock-exchange-announcements" class="nav__link"
+																	>
+                                                                    <span>Stock exchange announcements</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/results-and-announcements/annual-report" class="nav__link"
+																	>
+                                                                    <span>Annual Report</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/results-and-announcements/investor-events-and-presentations" class="nav__link"
+																	>
+                                                                    <span>Investor events and presentations</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Shareholder and dividend information</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Shareholder and dividend information">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Investors">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Investors</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/investors/shareholder-and-dividend-information" class="nav__link">
+                                                            <span>Shareholder and dividend information</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/investors/shareholder-and-dividend-information" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/shareholder-and-dividend-information/manage-your-shareholding" class="nav__link"
+																	>
+                                                                    <span>Manage your shareholding</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/shareholder-and-dividend-information/dividend-information-and-timetable" class="nav__link"
+																	>
+                                                                    <span>Dividend information and timetable</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/shareholder-and-dividend-information/dividend-calculator" class="nav__link"
+																	>
+                                                                    <span>Dividend calculator</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/shareholder-and-dividend-information/scrip-dividend" class="nav__link"
+																	>
+                                                                    <span>Scrip dividend</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/shareholder-and-dividend-information/agm-and-shareholder-meetings" class="nav__link"
+																	>
+                                                                    <span>AGM and shareholder meetings </span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/shareholder-and-dividend-information/share-analytics" class="nav__link"
+																	>
+                                                                    <span>Share analytics</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/shareholder-and-dividend-information/total-share-return" class="nav__link"
+																	>
+                                                                    <span>Total share return</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/shareholder-and-dividend-information/investor-faqs" class="nav__link"
+																	>
+                                                                    <span>Investor FAQs</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <a href="/investors/hsbc-proposal-to-privatise-hang-seng-bank" class="nav__link"
+														>
+                                                        <span>HSBC completes privatisation of Hang Seng Bank</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/investors/hsbc-proposal-to-privatise-hang-seng-bank-hk" class="nav__link"
+														>
+                                                        <span>滙豐完成恒生銀行私有化</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Fixed income investors</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Fixed income investors">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Investors">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Investors</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/investors/fixed-income-investors" class="nav__link">
+                                                            <span>Fixed income investors</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/investors/fixed-income-investors" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+<a href="/investors/fixed-income-investors/final-terms-and-supplements/hsbc-holdings-plc" class="nav__link empty" >Final terms and supplements</a>                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/fixed-income-investors/issuance-programmes" class="nav__link"
+																	>
+                                                                    <span>Issuance programmes</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/fixed-income-investors/covered-bonds" class="nav__link"
+																	>
+                                                                    <span>Covered bonds</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/fixed-income-investors/green-financing-framework" class="nav__link"
+																	>
+                                                                    <span>Green Financing Framework</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/fixed-income-investors/regulatory-debt-main-features" class="nav__link"
+																	>
+                                                                    <span>Regulatory debt main features</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/investors/fixed-income-investors/credit-ratings" class="nav__link"
+																	>
+                                                                    <span>Credit ratings</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <a href="/investors/investor-alerts" class="nav__link"
+														>
+                                                        <span>Investor alerts</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/investors/investor-contacts" class="nav__link"
+														>
+                                                        <span>Investor contacts</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+<a href="https://www.about.example.test.hk/zh-hk/investor-relations" class="nav__link hsbc-external-link" target="_blank" rel="noopener noreferrer" >                                                <span>
+                                                    Investor information in Chinese - <span lang="zh">投資者中文資訊</span>
+                                                    <span class="sr-only"> (opens in new window)</span><span class="hsbc-external-link" aria-hidden="true"></span>
+                                                </span>
+</a>                                                                            </li>
+                            </ul>
+                                <div class="promo">
+<a href="/investors/results-and-announcements" class="promo-anchor empty" aria-label="Read more about Results and announcements" >                                        <div class="promo__image-wrapper">
+                                            <img src="/-/files/hsbc/investors/hsbc-results/2026/3q/images/261027-rna-banner-370x208.jpg?sc_lang=en-gb&amp;la=en-GB&amp;h=208&amp;w=370&amp;hash=37EB5432598F3265A875812FA3AD9FA1" class="promo__image" alt="" />
+                                        </div>
+                                        <span class="promo__kicker">3Q 2026 EARNINGS RELEASE</span>
+                                        <span class="promo__heading">
+                                            Get the documents and Zoom meeting details
+                                        </span>
+</a>                                </div>
+                            <button class="nav__close"><span class="hsbc-close-circle"></span><span class="sr-only">Close Navigation</span></button>
+                        </div>
+                    </div>
+            </li>
+            <li class="nav__item " itemprop="name" content="News and views">
+						<button class="nav__link" itemprop="url" aria-expanded="false"
+							>
+                            <span>News and views</span>
+                            <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                        </button>
+                                    <div class="nav-group">
+                        <div class="nav-group__inner">
+                                <a class="skip-link--navigation" href="#goToNextNav">Skip to Careers</a>
+
+                                <div class="highlight">
+<a href="/news-and-views" class="" >                                        <h2 class="highlight__heading">News and views</h2>
+                                        <p class="highlight__text">Find the latest news, media releases, opinions, reports, images and videos from HSBC.</p>
+                                        <span class="highlight__link">
+                                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+Go to this section                                        </span>
+</a>                                </div>
+                            <ul id="submenu-REDACTED-UUID" class="nav__submenu" aria-label="News and views">
+                                <li class="nav__item nav__back">
+                                    <a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                        <span>Main menu</span>
+                                    </a>
+                                </li>
+                                <li class="nav__item nav__current">
+                                        <a href="/news-and-views" class="nav__link">
+                                            <span>News and views</span>
+                                        </a>
+                                </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>News</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="News">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to News and views">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>News and views</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/news-and-views/news" class="nav__link">
+                                                            <span>News</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/news-and-views/news" class="nav__link"
+													>
+                                                        <span>
+Latest news                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/news-and-views/news/media-releases" class="nav__link"
+																	>
+                                                                    <span>Media releases</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/news-and-views/news/hsbc-news-archive" class="nav__link"
+																	>
+                                                                    <span>HSBC news archive</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Views</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Views">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to News and views">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>News and views</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/news-and-views/views" class="nav__link">
+                                                            <span>Views</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/news-and-views/views" class="nav__link"
+													>
+                                                        <span>
+Latest views                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/news-and-views/views/hsbc-views" class="nav__link"
+																	>
+                                                                    <span>All topics</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <a href="/news-and-views/stories" class="nav__link"
+														>
+                                                        <span>Stories</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+<a href="/news-and-views/trends" class="nav__link empty" >                                                    <span>Trends</span>
+</a>                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/news-and-views/media-contacts" class="nav__link"
+														>
+                                                        <span>Media contacts</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/news-and-views/image-library" class="nav__link"
+														>
+                                                        <span>Image library</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Our brand in action</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Our brand in action">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to News and views">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>News and views</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/news-and-views/our-brand-in-action" class="nav__link">
+                                                            <span>Our brand in action</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/news-and-views/our-brand-in-action" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/news-and-views/our-brand-in-action/sports-and-arts-partnerships" class="nav__link"
+																	>
+                                                                    <span>Sports and arts partnerships</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/news-and-views/our-brand-in-action/were-there" class="nav__link"
+																	>
+                                                                    <span>We’re there</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/news-and-views/our-brand-in-action/thinking-capital" class="nav__link"
+																	>
+                                                                    <span>Thinking Capital</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/news-and-views/our-brand-in-action/pivot" class="nav__link"
+																	>
+                                                                    <span>Pivot</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/news-and-views/our-brand-in-action/turning-point" class="nav__link"
+																	>
+                                                                    <span>Turning Point</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/news-and-views/our-brand-in-action/exchange" class="nav__link"
+																	>
+                                                                    <span>Exchange</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                            </ul>
+                                <div class="promo">
+<a href="/news-and-views/media-contacts" class="promo-anchor" >                                        <div class="promo__image-wrapper">
+                                            <img src="/-/files/hsbc/news-and-insight/2023/thumbnail-images/190723-media-contacts-370x208.jpg?la=en-GB&amp;h=208&amp;w=370&amp;hash=04C0CCCBE844E51DF2F0830D40176382" class="promo__image" alt="" />
+                                        </div>
+                                        <span class="promo__kicker">MEDIA CONTACTS </span>
+                                        <span class="promo__heading">
+                                            How journalists can get in touch
+                                        </span>
+</a>                                </div>
+                            <button class="nav__close"><span class="hsbc-close-circle"></span><span class="sr-only">Close Navigation</span></button>
+                        </div>
+                    </div>
+            </li>
+            <li class="nav__item " itemprop="name" content="Careers">
+						<button class="nav__link" itemprop="url" aria-expanded="false"
+							>
+                            <span>Careers</span>
+                            <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                        </button>
+                                    <div class="nav-group">
+                        <div class="nav-group__inner">
+                                <a class="skip-link--navigation" href="#goToNextNav">Skip to Online banking</a>
+
+                                <div class="highlight">
+<a href="/careers" class="" >                                        <h2 class="highlight__heading">Careers</h2>
+                                        <p class="highlight__text">Endless possibilities, diverse outlooks. Build your <br/>career at HSBC.</p>
+                                        <span class="highlight__link">
+                                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+Go to this section                                        </span>
+</a>                                </div>
+                            <ul id="submenu-REDACTED-UUID" class="nav__submenu" aria-label="Careers">
+                                <li class="nav__item nav__back">
+                                    <a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                        <span>Main menu</span>
+                                    </a>
+                                </li>
+                                <li class="nav__item nav__current">
+                                        <a href="/careers" class="nav__link">
+                                            <span>Careers</span>
+                                        </a>
+                                </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Students and graduates</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Students and graduates">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Careers">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Careers</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/careers/students-and-graduates" class="nav__link">
+                                                            <span>Students and graduates</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/careers/students-and-graduates" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/students-and-graduates/university-students-and-graduates" class="nav__link"
+																	>
+                                                                    <span> University students and graduates</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/students-and-graduates/schools-and-apprenticeships" class="nav__link"
+																	>
+                                                                    <span>Schools and apprenticeships</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/students-and-graduates/events" class="nav__link"
+																	>
+                                                                    <span>Events</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/students-and-graduates/application-guide" class="nav__link"
+																	>
+                                                                    <span>Application guide</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/students-and-graduates/faqs" class="nav__link"
+																	>
+                                                                    <span>FAQs</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/students-and-graduates/find-a-programme" class="nav__link"
+																	>
+                                                                    <span>Find a programme</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Life at HSBC</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Life at HSBC">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Careers">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Careers</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/careers/life-at-hsbc" class="nav__link">
+                                                            <span>Life at HSBC</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/careers/life-at-hsbc" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/life-at-hsbc/meet-our-people" class="nav__link"
+																	>
+                                                                    <span>Meet our people</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/life-at-hsbc/career-development" class="nav__link"
+																	>
+                                                                    <span>Career development</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/life-at-hsbc/welcoming-diversity" class="nav__link"
+																	>
+                                                                    <span>Welcoming diversity</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/life-at-hsbc/rewards-and-benefits" class="nav__link"
+																	>
+                                                                    <span>Rewards and benefits</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/life-at-hsbc/alumni" class="nav__link"
+																	>
+                                                                    <span>Alumni</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <button class="nav__link" aria-expanded="false" aria-haspopup="true" aria-controls="submenu-REDACTED-UUID"
+														>
+                                                        <span>Our business areas and teams</span>
+                                                        <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                                    </button>
+                                                                                    <ul class="nav__submenu" id="submenu-REDACTED-UUID" aria-label="Our business areas and teams">
+												<li class="nav__item nav__back">
+													<a href="#main-menu" class="nav__link" aria-label="Go back to Main menu">
+														<span class="hsbc-left-chevron" aria-hidden="true"></span>
+														<span>Main menu</span>
+													</a>
+												</li>
+                                                <li class="nav__item nav__back">
+                                                    <a href="#back" class="nav__link" aria-label="Go back to Careers">
+                                                        <span class="hsbc-left-chevron" aria-hidden="true"></span>
+                                                        <span>Careers</span>
+                                                    </a>
+                                                </li>
+                                                <li class="nav__item nav__current">
+                                                        <a href="/careers/our-business-areas-and-teams" class="nav__link">
+                                                            <span>Our business areas and teams</span>
+                                                        </a>
+                                                </li>
+                                                <li class="nav__item nav__item--overview">
+                                                    <a href="/careers/our-business-areas-and-teams" class="nav__link"
+													>
+                                                        <span>
+Overview                                                        </span>
+                                                    </a>
+                                                </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/our-business-areas-and-teams/corporate-and-institutional-banking" class="nav__link"
+																	>
+                                                                    <span>Corporate and Institutional Banking</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/our-business-areas-and-teams/international-wealth-and-premier-banking" class="nav__link"
+																	>
+                                                                    <span>International Wealth and Premier Banking</span>
+                                                                </a>
+                                                    </li>
+                                                    <li class="nav__item">
+                                                                <a href="/careers/our-business-areas-and-teams/group-infrastructure" class="nav__link"
+																	>
+                                                                    <span>Group Infrastructure</span>
+                                                                </a>
+                                                    </li>
+                                            </ul>
+                                    </li>
+                                    <li class="nav__item">
+                                                    <a href="/careers/find-a-job" class="nav__link"
+														>
+                                                        <span>Find a job</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/careers/where-we-hire" class="nav__link"
+														>
+                                                        <span>Where we hire</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/careers/application-guide" class="nav__link"
+														>
+                                                        <span>Application guide</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/careers/careers-contacts" class="nav__link"
+														>
+                                                        <span>Careers contacts</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+                                                    <a href="/careers/careers-faqs" class="nav__link"
+														>
+                                                        <span>Careers FAQs</span>
+                                                    </a>
+                                                                            </li>
+                                    <li class="nav__item">
+<a href="https://portal.careers.example.test/careers?location=any&amp;pid=563774612287498&amp;domain=example.test&amp;sort_by=relevance&amp;triggerGoButton=false&amp;triggerGoButton=true" class="nav__link" >                                                <span>
+                                                    Search jobs
+                                                    <span class="sr-only"> (opens in new window)</span><span class="hsbc-external-link" aria-hidden="true"></span>
+                                                </span>
+</a>                                                                            </li>
+                            </ul>
+                                <div class="promo">
+<a href="/careers/students-and-graduates" class="promo-anchor empty" aria-label="Read more about Students and graduates" >                                        <div class="promo__image-wrapper">
+                                            <img src="/-/files/hsbc/news-and-insight/2025/thumbnail-images/250703-students-and-graduates-programmes-370x208.jpg?la=en-GB&amp;h=208&amp;w=370&amp;hash=DE8C930BD9F387A038016D109055B7FC" class="promo__image" alt="" />
+                                        </div>
+                                        <span class="promo__kicker">STUDENTS AND GRADUATES</span>
+                                        <span class="promo__heading">
+                                            Launch your career, shape your future
+                                        </span>
+</a>                                </div>
+                            <button class="nav__close"><span class="hsbc-close-circle"></span><span class="sr-only">Close Navigation</span></button>
+                        </div>
+                    </div>
+            </li>
+                <li class="nav__item submenu__link">
+            <a href="#" class="nav__link online-banking-link">Online banking</a>
+        </li>
+            <li class="nav__item submenu__link">
+<a href="/contact-us" class="nav__link" >Contact</a>            </li>
+    </ul>
+</nav>
+
+    
+<div class="utility-nav">
+    <div class="submenu">
+
+        <a href="#online-banking" class="submenu__link online-banking-link">Online banking</a>
+
+<a href="/contact-us" class="submenu__link" >Contact</a>    </div>
+
+    <div class="header-search">
+        <button class="header-search__button">
+        <span class="hsbc-search" aria-hidden="true"></span>
+        <span class="sr-only">Search</span>
+        </button>
+    </div>
+</div>
+
+<div class="online-banking" data-component="OnlineBanking">
+    <div class="online-banking-wrapper">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-sm-12 col-md-8 col-md-offset-2">
+                    <h2 class="h4">Online banking</h2>
+                </div>
+            </div>
+        </div>
+
+        
+
+    <div class="banking-route"
+         data-storage-postfix=""
+         >
+
+        <div class="location-selector" data-text-popular="Most popular" data-text-all="All countries and territories" >
+            <div class="container-fluid">
+                <div class="row">
+                    <div class="col-sm-12 col-md-8 col-md-offset-2">
+                            <div class="location-selector__menu dropdown banking-options">
+                                <p class="location-selector__menu-title">Banking type</p>
+                                
+                                <input class="dropdown-toggle" type="text" placeholder="Select banking type" data-toggle="dropdown" aria-hidden="true" readonly="readonly" tabindex="-1"><button class="location-selector__chevron hsbc-panel-open" data-toggle="dropdown" aria-expanded="false" data-message-not-selected="Select banking type" data-message-selected="Select banking type. {type} selected." aria-label=" "></button>
+                                <hr aria-hidden="true">
+                                <span class="quick-results__aria sr-only" aria-live="polite" data-message="{count} results are available" data-message-singular="{count} result is available"></span>
+                                <ul class="location-selector__choices dropdown-menu"></ul>
+                            </div>
+
+                        <div class="location-selector__menu dropdown location-options">
+                            <p class="location-selector__menu-title"></p>
+                            <input class="dropdown-toggle" type="text" placeholder="Select or type location" data-toggle="dropdown" aria-label=""><button class="location-selector__chevron" data-toggle="dropdown" aria-expanded="false"><span class="hsbc-panel-open"><span class="sr-only">Toggle  dropdown</span></span></button>
+                            <hr aria-hidden="true">
+                            <span class="quick-results__aria sr-only" aria-hidden="true" aria-live="polite" data-message="{count} results are available" data-message-singular="{count} result is available"></span>
+                            <ul class="location-selector__choices dropdown-menu"></ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="container-fluid">
+            <div class="row">
+                <div class="banking-route__go col-sm-12 text-center invisible">
+
+                    <button aria-describedby="internet-banking-disclaimer" class="banking-route__go-button mobile"  data-show-popup="False">Go<span class="hsbc-external-link"></span></button>
+                        <div class="form-item form-item--checkbox remember-me">
+                            <input type="checkbox" id="rememberMe" name="rememberMe" value="Remember me">
+                            <label for="rememberMe">
+                                Remember me
+                            </label>
+                            <span class="hsbc-tick" aria-hidden="true"></span>
+                        </div>
+
+                        <button aria-describedby="internet-banking-disclaimer" class="banking-route__go-button default" data-show-popup="False">Go<span class="hsbc-external-link"></span></button>
+                        <p id="internet-banking-disclaimer" class="banking-route__disclaimer">You are leaving example.test. Please be aware that the external site policies, or those of another HSBC Group website, may differ from our website terms and conditions and privacy policy. The next site will open in a new browser window. Note: HSBC is not responsible for any content on third party sites, nor does a link suggest endorsement of those sites and/or their content.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        onThemeReady(function (view) {
+            bankingRoute = new BankingRoute([{"id":"REDACTED-UUID","title":"Personal banking","countries":[{"id":"AU","title":"Australia","action":"https://example.test.au/","filterBy":""},{"id":"BH","title":"Bahrain","action":"https://example.test.bh/","filterBy":""},{"id":"BD","title":"Bangladesh","action":"https://example.test.bd/1/2/","filterBy":""},{"id":"BM","title":"Bermuda","action":"https://www.hsbc.bm/","filterBy":""},{"id":"EG","title":"Egypt","action":"https://example.test.eg/1/2/eg/personal","filterBy":""},{"id":"FR","title":"France","action":"https://example.test/en-fr/","filterBy":""},{"id":"GG","title":"Guernsey","action":"https://ciiom.example.test/","filterBy":""},{"id":"HK","title":"Hong Kong","action":"https://example.test.hk/","filterBy":""},{"id":"HSEX","title":"HSBC Expat","action":"https://www.expat.example.test/1/2/","filterBy":""},{"id":"IN","title":"India","action":"https://www.hsbc.co.in/","filterBy":""},{"id":"ID","title":"Indonesia","action":"https://www.hsbc.co.id/1/2/home_en_US","filterBy":""},{"id":"IM","title":"Isle of Man","action":" https://ciiom.example.test/","filterBy":""},{"id":"JE","title":"Jersey","action":"https://ciiom.example.test/","filterBy":""},{"id":"MO","title":"Macau","action":"https://example.test.mo/","filterBy":""},{"id":"CN","title":"Mainland China","action":"https://example.test.cn/en-cn/","filterBy":""},{"id":"MY","title":"Malaysia","action":"https://example.test.my/ ","filterBy":""},{"id":"MT","title":"Malta","action":"https://example.test.mt/","filterBy":""},{"id":"MU","title":"Mauritius","action":"https://www.hsbc.co.mu/","filterBy":""},{"id":"MX","title":"Mexico","action":"https://example.test.mx/","filterBy":""},{"id":"NZ","title":"New Zealand","action":" https://www.hsbc.co.nz/","filterBy":""},{"id":"OM","title":"Oman","action":"https://www.oman.example.test/","filterBy":""},{"id":"PH","title":"Philippines","action":"https://example.test.ph/ ","filterBy":""},{"id":"QA","title":"Qatar","action":"https://example.test.qa/","filterBy":""},{"id":"SA","title":"Saudi Arabia","action":"https://www.sab.com/en/","filterBy":""},{"id":"SG","title":"Singapore","action":" https://example.test.sg/","filterBy":""},{"id":"LK","title":"Sri Lanka","action":"https://www.hsbc.lk/","filterBy":""},{"id":"TW","title":"Taiwan","action":"https://example.test.tw/en-tw/","filterBy":""},{"id":"TR","title":"Türkiye","action":"https://example.test.tr/en/ ","filterBy":"turkey"},{"id":"AE","title":"UAE","action":"https://www.hsbc.ae/ ","filterBy":""},{"id":"GB","title":"UK","action":"https://example.test/","filterBy":""},{"id":"UKF","title":"UK - first direct","action":"https://www1.firstdirect.com/ ","filterBy":""},{"id":"UY","title":"Uruguay","action":"https://example.test.uy/ ","filterBy":""},{"id":"US","title":"USA","action":"https://www.us.example.test/","filterBy":""},{"id":"VN","title":"Vietnam","action":" https://example.test.vn/en-vn/","filterBy":""}],"popular":["HK","GB","US"],"action":null},{"id":"REDACTED-UUID","title":"Business banking","countries":[{"id":"AU","title":"Australia","action":"https://www.business.example.test.au/en-au","filterBy":""},{"id":"FR","title":"France","action":"http://www.business.example.test/fr-fr","filterBy":""},{"id":"DE","title":"Germany","action":"https://www.firmenkunden.example.test/en-gb","filterBy":""},{"id":"GG","title":"Guernsey","action":"https://www.business.ciiom.example.test/","filterBy":""},{"id":"HK","title":"Hong Kong","action":"https://www.business.example.test.hk/en-gb","filterBy":""},{"id":"HKHS","title":"Hong Kong - Hang Seng","action":"https://www.business.example.test.hk/","filterBy":""},{"id":"IN","title":"India","action":"https://www.business.hsbc.co.in/en-gb","filterBy":""},{"id":"IM","title":"Isle of Man","action":"https://www.business.ciiom.example.test/","filterBy":""},{"id":"JE","title":"Jersey","action":"https://www.business.ciiom.example.test/","filterBy":""},{"id":"CN","title":"Mainland China","action":"https://www.business.example.test.cn/en-gb","filterBy":""},{"id":"MY","title":"Malaysia","action":"https://www.business.example.test.my/en-gb","filterBy":""},{"id":"MT","title":"Malta","action":"https://www.business.example.test.mt/","filterBy":""},{"id":"OM","title":"Oman","action":"https://www.business.hsbc.co.om/en-gb","filterBy":""},{"id":"PH","title":"Philippines","action":"https://example.test.ph/","filterBy":""},{"id":"QA","title":"Qatar","action":"https://www.business.example.test.qa/en-gb","filterBy":""},{"id":"SG","title":"Singapore","action":"https://www.business.example.test.sg/","filterBy":""},{"id":"TR","title":"Türkiye","action":"https://www.business.example.test.tr/en-gb","filterBy":"turkey"},{"id":"AE","title":"UAE","action":"https://www.business.hsbc.ae/en-gb","filterBy":""},{"id":"GB","title":"UK","action":"https://www.business.hsbc.uk/en-gb","filterBy":""},{"id":"US","title":"USA","action":"https://www.business.us.example.test/en","filterBy":""},{"id":"VN","title":"Vietnam","action":"https://www.business.example.test.vn/en-gb","filterBy":""}],"popular":["HK","GB","US"],"action":null},{"id":"REDACTED-UUID","title":"Corporate and institutional banking","countries":[],"popular":[],"action":"http://www.hsbcnet.com/"},{"id":"REDACTED-UUID","title":"Private banking","countries":[],"popular":[],"action":"https://www.privatebanking.example.test/"}], "REDACTED-UUID");
+            bankingRoute.activate(view);
+        });
+    </script>
+
+
+            <div class="container-fluid">
+                <div class="row">
+                    <div class="col-sm-12 col-md-8 col-md-offset-2">
+<a href="/online-security" class="link-with-right-chevron" aria-label="Learn about online security" >                            <span>
+                                <span class="hsbc-right-chevron" aria-hidden="true"></span>Learn about online security
+                            </span>
+</a>                    </div>
+                </div>
+            </div>
+    </div>
+
+    <button class="online-banking__button">
+        <span class="online-banking__close">Close</span>
+        <span class="hsbc-close" aria-hidden="true"></span>
+        <span class="sr-only">Close online banking panel</span>
+    </button>
+</div>
+
+</div>
+
+<div class="search-panel" role="dialog" aria-modal="true" aria-label="Search">
+    <div class="search-panel-wrapper">
+        <div class="search-panel-content">
+            <form action="/search-results" class="search-bar" data-site="Whole site">
+                <div role="group" class="search-bar__group">
+                    <label for="search" class="sr-only">
+                        Search (auto-suggestions will appear below field)
+                    </label>
+                    <input type="search" class="search-bar__input" id="search" name="q" placeholder="Search example.test" maxlength="500">
+                    <button class="search-bar__clear" type="reset" data-on-cleared-message="Text cleared"><span class="hsbc-close-circle"><span class="sr-only">Clear text</span></span></button>
+                    <button class="search-bar__submit" type="submit"><span class="hsbc-large-search"><span class="sr-only">Submit search</span></span></button>
+                </div>
+            </form>
+            <span class="quick-results-aria sr-only--live" role="status" aria-live="polite"
+                data-message="First {count} results are displayed. To view all results, tab to and activate the &#39;See all results&#39; link."
+                data-message-singular="{count} result is available"></span>
+            <div class="quick-results">
+                <ul class="quick-results__list">
+                    <!-- Results -->
+                </ul>
+                <div class="quick-results__see-all">
+                    <a href="javascript:void(0)" class="link-with-right-chevron">
+                        <span>
+                            <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                            <span>See all results</span>
+                        </span>
+                    </a>
+                </div>
+                <div class="quick-results__no-results">
+                    <strong aria-hidden="true">No results found. Please try a different search term.</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="search-panel__button">
+        <span class="search-panel__close" aria-hidden="true">Close</span>
+        <span class="hsbc-close" aria-hidden="true"></span>
+        <span class="sr-only">Close search panel</span>
+    </button>
+</div>
+
+    </header>
+    
+    <!--crawler: on-->
+
+    <main role="main">
+        
+
+
+    <div class="sublayout     full-bleed-sublayout" >
+        
+
+
+<div class="hero-banner" data-component="HeroBanner">
+    <div class="hero-banner__inner-container hero-banner--size-large hero-banner--dark-block-opacity-30">
+            <div class="sr-only">
+                <h1>HSBC Group corporate website | HSBC Holdings plc</h1>
+            </div>
+        <div class="hero-banner__media-container ">
+
+<div class="image-with-links">
+    <div class="image-with-links__image-container">
+        <picture>
+<source media="(max-width:768px)" srcset="/-/files/hsbc/investors/hsbc-results/2026/3q/images/261027-home-banner-768x576.jpg?sc_lang=en-gb">
+<source srcset="/-/files/hsbc/investors/hsbc-results/2026/3q/images/261027-home-banner-1600x900.jpg?sc_lang=en-gb">
+<img src="/-/files/hsbc/investors/hsbc-results/2026/3q/images/261027-home-banner-1600x900.jpg?sc_lang=en-gb&amp;la=en-GB&amp;h=900&amp;w=1600&amp;hash=21D0CDB3EE53C46CCBC4BE02993C2C94" class="image-with-links__image image-with-links__image--without-media-info" alt="" /></picture>
+
+    </div>
+</div>
+        </div>
+            <div class="">
+                <div class="hero-banner-fluid">
+                    <div class="container-fluid">
+                        <div class="hero-banner__body">
+                            <div class="row">
+                                <div class="hero-banner__responsive-body">
+                                    <div class="hero-banner__content-container">
+                                        <div class="hero-banner__content">     
+                                                                                        <h1 class="hero-banner__title h1">Our performance in 3Q 2026</h1>                                                                                                                                        <div class="hero-banner__call-to-action">
+<a href="/investors/results-and-announcements/all-reporting/3q-2026-quick-read" class="btn btn-large hero-banner-button" aria-label="Read more about 3Q 2026 Earnings Release" >View quick read</a>                                                </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+    </div>
+</div>
+
+    </div>
+
+
+
+
+<section class="sublayout sublayout--sl3      "  
+         data-index="">
+    <div class="container-fluid">
+        
+    <div class="row">
+        <div class="col-sm-12">
+            <header class="sublayout--header ">
+<h2 class="sublayout--heading h2">Highlights</h2>                                            </header>
+        </div>
+    </div>
+
+        <div class="row ">
+            <div class="col-sm-12">
+                <div class="row  ">
+
+<div class="col-sm-4 sublayout--content">
+<div class="simple-fact" data-component="SimpleFactbox">
+
+        <div class="sr-only">
+             
+        </div>
+        <div class="simple-fact__numeric " aria-hidden="true">
+            $10.0bn
+        </div>
+
+        <div class="sr-only">
+             
+        </div>
+        <div class="simple-fact__data" aria-hidden="true">
+            US DOLLARS
+        </div>
+
+        <div class="sr-only">
+            Fact: Our profit before tax for the quarter ended 30 September 2026 was 10.0 billion US dollars, excluding notable items
+        </div>
+        <div class="simple-fact__description" aria-hidden="true">
+            <p>Profit before tax, excluding notable items</p>
+        </div>
+
+    
+
+</div>
+
+</div><div class="col-sm-4 sublayout--content">
+<div class="simple-fact" data-component="SimpleFactbox">
+
+        <div class="sr-only">
+             
+        </div>
+        <div class="simple-fact__numeric " aria-hidden="true">
+            $18.7bn
+        </div>
+
+        <div class="sr-only">
+             
+        </div>
+        <div class="simple-fact__data" aria-hidden="true">
+            US DOLLARS
+        </div>
+
+        <div class="sr-only">
+            Fact: Our revenue for the quarter ended 30 September 2026 was 18.7 billion US dollars, excluding notable items
+        </div>
+        <div class="simple-fact__description" aria-hidden="true">
+            <p>Revenue, excluding notable items</p>
+        </div>
+
+    
+
+</div>
+
+</div><div class="col-sm-4 sublayout--content">
+<div class="simple-fact" data-component="SimpleFactbox">
+
+        <div class="sr-only">
+             
+        </div>
+        <div class="simple-fact__numeric " aria-hidden="true">
+            $0.10
+        </div>
+
+        <div class="sr-only">
+             
+        </div>
+        <div class="simple-fact__data" aria-hidden="true">
+            US DOLLARS
+        </div>
+
+        <div class="sr-only">
+            Fact: Our dividend for the third quarter of 2026 was 10 US cents per share
+        </div>
+        <div class="simple-fact__description" aria-hidden="true">
+            <p>Dividend per share for 3Q26</p>
+        </div>
+
+    
+
+</div>
+
+</div>                </div>
+            </div>
+        </div>
+        
+    <div class="row">
+        <div class="col-sm-12">
+            <footer class="sublayout--footer">
+                <a href="/investors/results-and-announcements" class="btn btn-default" aria-label="View our results and announcements page" role="button" > Full 3Q coverage</a>
+                
+            </footer>
+        </div>
+    </div>
+
+    </div>
+</section>
+
+
+
+<section class="sublayout sublayout--sl3      "  
+         data-index="">
+    <div class="container-fluid">
+        
+    <div class="row">
+        <div class="col-sm-12">
+            <header class="sublayout--header ">
+<h2 class="sublayout--heading h2">Latest news, views and stories</h2>                                            </header>
+        </div>
+    </div>
+
+        <div class="row ">
+            <div class="col-sm-12">
+                <div class="row  ">
+
+<div class="col-sm-4 sublayout--content">    <div class="promobox" data-component="PromoBox">
+
+        <div class="promobox__container background-light-gray promobox__has-background   "
+					>
+                <div class="promobox__media">
+<picture>
+<source media="(max-width:768px)" srcset="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261109-businesses-building-resilience-and-optimistic-about-international-growth-768x576.jpg?sc_lang=en-gb">
+<source srcset="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261109-businesses-building-resilience-and-optimistic-about-international-growth-768x576.jpg?sc_lang=en-gb">
+<img src="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261109-businesses-building-resilience-and-optimistic-about-international-growth-768x576.jpg?sc_lang=en-gb&amp;la=en-GB&amp;h=576&amp;w=768&amp;hash=3B073AEDE77EDBE96AA92C2BB123804A" alt="" /></picture>
+                </div>
+            
+            <div class="promobox__content "
+							>
+<h2 class="h3">Businesses resilient amid energy pressures, HSBC survey finds</h2><p>Energy has emerged as the leading cost pressure facing global firms, but the majority remain confident in their ability to grow international trade over the next two years, according to our Global Trade Pulse Survey 2026.</p>                <div class="in-page-link ">
+<a href="/news-and-views/news/hsbc-news-archive/businesses-resilient-amid-energy-pressures-hsbc-survey-finds" class="link-with-right-chevron" aria-label="Read more about Businesses building resilience and optimistic about international growth" >                            <span>
+                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                <span>Read more</span>
+                                    <span class="empty" aria-hidden="true"></span>
+                            </span>
+</a>                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+</div><div class="col-sm-4 sublayout--content">    <div class="promobox" data-component="PromoBox">
+
+        <div class="promobox__container background-light-gray promobox__has-background   "
+					>
+                <div class="promobox__media">
+<div class="inline-video">
+
+
+<div
+    class="video-player video-player--brightcove   video-player--has-theatre-mode   "
+    data-component="VideoPlayer"
+    data-video-title="From fossil fuels to renewables – a transition story"
+    data-item-id="{07B73FA4-6BEB-4847-BE13-0EDAE28D9CF7}"
+    data-video-id="6407942066112"
+    data-video-account="1386823061001"
+    data-video-player="default"
+    data-video-type="BRIGHTCOVE"
+    data-related-enabled="true"
+>
+    <video
+        id="VID-6407942066112"
+        controls
+        data-video-id="6407942066112"
+        data-account="1386823061001"
+        data-player="default"
+        data-embed="default"
+poster="/-/files/hsbc/who-we-are/hsbc-and-sustainability/from-coal-producer-to-renewables-champion/260506-from-coal-producer-to-renewables-champion-768x576.jpg"
+                class="video-js content-with-aspect-ratio"
+    >
+    </video>
+        <button class="video-player__play-button" aria-label="Play video about From fossil fuels to renewables – a transition story ">
+            <span class="hsbc-video-play" aria-hidden="true"></span>
+        </button>
+
+</div>
+    	</div>
+
+                </div>
+            
+            <div class="promobox__content "
+							>
+<h2 class="h3">From fossil fuels to renewables – a transition story</h2><p>Learn how ACEN, an energy company and our client, went from being a fossil fuel plant operator to a renewables champion in less than a decade.</p>                <div class="in-page-link ">
+<a href="/who-we-are/hsbc-and-sustainability/supporting-our-customers/from-coal-producer-to-renewables-champion" class="link-with-right-chevron" aria-label="Read more about From fossil fuels to renewables – a transition story" >                            <span>
+                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                <span>Read more</span>
+                                    <span class="empty" aria-hidden="true"></span>
+                            </span>
+</a>                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+</div><div class="col-sm-4 sublayout--content">    <div class="promobox" data-component="PromoBox">
+
+        <div class="promobox__container background-light-gray promobox__has-background   "
+					>
+                <div class="promobox__media">
+<div class="inline-video">
+
+
+<div
+    class="video-player video-player--brightcove   video-player--has-theatre-mode  video-player--has-mobile-poster video-player--mobile-poster-4-3"
+    data-component="VideoPlayer"
+    data-video-title="Mastermind: Digital Assets and Currencies"
+    data-item-id="{E383DAF1-1D08-4DAF-9094-FC2029A05580}"
+    data-video-id="6407653959112"
+    data-video-account="1386823061001"
+    data-video-player="default"
+    data-video-type="BRIGHTCOVE"
+    data-related-enabled="true"
+>
+    <video
+        id="VID-6407653959112"
+        controls
+        data-video-id="6407653959112"
+        data-account="1386823061001"
+        data-player="default"
+        data-embed="default"
+poster="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261030-mastermind-digital-assets-and-currencies-768x576.jpg?sc_lang=en-gb"
+                    data-poster-mobile="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261030-mastermind-digital-assets-and-currencies-768x576.jpg?sc_lang=en-gb"
+        class="video-js content-with-aspect-ratio"
+    >
+    </video>
+        <button class="video-player__play-button" aria-label="Play video about Mastermind: Digital Assets and Currencies ">
+            <span class="hsbc-video-play" aria-hidden="true"></span>
+        </button>
+
+</div>
+    	</div>
+
+                </div>
+            
+            <div class="promobox__content "
+							>
+<h2 class="h3">Mastermind: Digital assets and currencies</h2><p>Daragh Maher, Head of Digital Asset Research at HSBC, explores the future of finance and money &ndash; and explains why trust remains a vital currency.</p>                <div class="in-page-link ">
+<a href="/news-and-views/stories" class="link-with-right-chevron" aria-label="Discover more stories from HSBC" >                            <span>
+                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                <span>Discover more stories from HSBC</span>
+                                    <span class="empty" aria-hidden="true"></span>
+                            </span>
+</a>                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+</div>                </div>
+            </div>
+        </div>
+        
+
+    </div>
+</section>
+
+
+
+<section class="sublayout sublayout--sl3      "  
+         data-index="">
+    <div class="container-fluid">
+        
+
+        <div class="row ">
+            <div class="col-sm-12">
+                <div class="row  ">
+
+<div class="col-sm-4 sublayout--content">    <div class="promobox" data-component="PromoBox">
+
+        <div class="promobox__container background-light-gray promobox__has-background   "
+					>
+                <div class="promobox__media">
+<picture>
+<source media="(max-width:768px)" srcset="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261104-hsbc-named-as-the-worlds-best-transaction-bank-in-euromoney-awards-768x576.jpg?sc_lang=en-gb">
+<source srcset="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261104-hsbc-named-as-the-worlds-best-transaction-bank-in-euromoney-awards-768x576.jpg?sc_lang=en-gb">
+<img src="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261104-hsbc-named-as-the-worlds-best-transaction-bank-in-euromoney-awards-768x576.jpg?sc_lang=en-gb&amp;la=en-GB&amp;h=576&amp;w=768&amp;hash=9958486BB481DF74109DFEA8A4975A9C" alt="Man works behind counter of small business " /></picture>
+                </div>
+            
+            <div class="promobox__content "
+							>
+<h2 class="h3">We’re the ‘World’s Best Transaction Bank’</h2>                            <p>The recognition in Euromoney’s Transaction Banking Awards 2026 demonstrates our progress in building a more connected, client-led and internationally differentiated transaction bank.</p>
+                <div class="in-page-link ">
+<a href="/news-and-views/news/hsbc-news-archive/hsbc-named-as-the-worlds-best-transaction-bank-in-euromoney-awards" class="link-with-right-chevron" aria-label="Read more about We’re the ‘World’s Best Transaction Bank’" >                            <span>
+                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                <span>Read more</span>
+                            </span>
+</a>                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+</div><div class="col-sm-4 sublayout--content">    <div class="promobox" data-component="PromoBox">
+
+        <div class="promobox__container background-light-gray promobox__has-background   "
+					>
+                <div class="promobox__media">
+<picture>
+<source media="(max-width:768px)" srcset="/-/files/hsbc/home-page/other/2026/260922-the-right-wave-768x576.jpg?sc_lang=en-gb">
+<source srcset="/-/files/hsbc/home-page/other/2026/260922-the-right-wave-768x576.jpg?sc_lang=en-gb">
+<img src="/-/files/hsbc/home-page/other/2026/260922-the-right-wave-768x576.jpg?sc_lang=en-gb&amp;la=en-GB&amp;h=576&amp;w=768&amp;hash=5B0ABF966B2CAD1D3820FD6D79D56EBF" alt="" /></picture>
+                </div>
+            
+            <div class="promobox__content "
+							>
+<h2 class="h3">The Right Wave</h2><p>Watch our new brand film – and find out how the concept behind it progressed from drawing board to surfboard.</p>                <div class="in-page-link ">
+<a href="/news-and-views/our-brand-in-action/were-there?#the-right-wave" class="link-with-right-chevron" >                            <span>
+                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                <span>Find out more</span>
+                                    <span class="empty" aria-hidden="true"></span>
+                            </span>
+</a>                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+</div><div class="col-sm-4 sublayout--content">    <div class="promobox" data-component="PromoBox">
+
+        <div class="promobox__container background-light-gray promobox__has-background   "
+					>
+                <div class="promobox__media">
+<picture>
+<source media="(max-width:768px)" srcset="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261020-retirement-targets-jump-20-as-life-stages-overlap-768x576.jpg?sc_lang=en-gb">
+<source srcset="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261020-retirement-targets-jump-20-as-life-stages-overlap-768x576.jpg?sc_lang=en-gb">
+<img src="/-/files/hsbc/news-and-insight/2026/thumbnail-images/261020-retirement-targets-jump-20-as-life-stages-overlap-768x576.jpg?sc_lang=en-gb&amp;la=en-GB&amp;h=576&amp;w=766&amp;hash=AC4074265AC346F149270555710F5D1D" alt="" /></picture>
+                </div>
+            
+            <div class="promobox__content "
+							>
+<h2 class="h3">Retirement targets jump 20% as life stages overlap, HSBC survey finds</h2><p>Affluent individuals believe they need 20% more money to retire than they did a year ago.</p>                <div class="in-page-link ">
+<a href="/news-and-views/news/hsbc-news-archive/retirement-targets-jump-20-as-life-stages-overlap-hsbc-survey-finds" class="link-with-right-chevron" aria-label="Read more about Retirement targets jump 20% as life stages overlap, HSBC survey finds" >                            <span>
+                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                <span>Read more</span>
+                                    <span class="empty" aria-hidden="true"></span>
+                            </span>
+</a>                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+</div>                </div>
+            </div>
+        </div>
+        
+
+    </div>
+</section>
+
+
+
+<section class="sublayout sublayout--sl2     "  
+         data-index="">
+    <div class="container-fluid">
+        
+    <div class="row">
+        <div class="col-sm-12">
+            <header class="sublayout--header ">
+<h2 class="sublayout--heading h2">More from HSBC</h2>                                            </header>
+        </div>
+    </div>
+
+        <div class="row ">
+            <div class="col-sm-12">
+                <div class="row  ">
+
+<div class="col-sm-6 sublayout--content">    <div class="promobox" data-component="PromoBox">
+
+        <div class="promobox__container background-light-gray promobox__has-background   "
+					>
+                <div class="promobox__media">
+<picture>
+<source media="(max-width:768px)" srcset="/-/files/hsbc/careers/v2/thumbnail-images/260930-careers-768x576.jpg?sc_lang=en-gb">
+<source srcset="/-/files/hsbc/careers/v2/thumbnail-images/260930-careers-768x576.jpg?sc_lang=en-gb">
+<img src="/-/files/hsbc/careers/v2/thumbnail-images/260930-careers-768x576.jpg?sc_lang=en-gb&amp;la=en-GB&amp;h=576&amp;w=768&amp;hash=D0286A425178D74F1354E1FE0563D346" alt="" /></picture>
+                </div>
+            
+            <div class="promobox__content "
+							>
+<h2 class="h3">Your ambition belongs here</h2><p>Starting out, stepping up, or switching paths, at HSBC you can build a career with purpose. We&rsquo;re proud to be people-first, impact-driven, always learning and constantly innovating.</p>                <div class="in-page-link ">
+<a href="/careers" class="link-with-right-chevron" aria-label="Read more about Careers" >                            <span>
+                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                <span>Find out more</span>
+                                    <span class="empty" aria-hidden="true"></span>
+                            </span>
+</a>                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+</div><div class="col-sm-6 sublayout--content">    <div class="promobox" data-component="PromoBox">
+
+        <div class="promobox__container background-light-gray promobox__has-background   "
+					>
+                <div class="promobox__media">
+<picture>
+<source media="(max-width:768px)" srcset="/-/files/hsbc/who-we-are/serving-customers/thumbnail-images/260701-serving-customers-768x576.jpg?sc_lang=en-gb">
+<source srcset="/-/files/hsbc/who-we-are/serving-customers/thumbnail-images/260701-serving-customers-768x576.jpg?sc_lang=en-gb">
+<img src="/-/files/hsbc/who-we-are/serving-customers/thumbnail-images/260701-serving-customers-768x576.jpg?sc_lang=en-gb&amp;la=en-GB&amp;h=576&amp;w=768&amp;hash=33322E0EF62C2C5E8BF1136500BBF917" alt="" /></picture>
+                </div>
+            
+            <div class="promobox__content "
+							>
+<h2 class="h3">Our customers</h2><p>Customers the world over know us and trust us, often over generations. They value our deep international network, expertise, and focus on their future needs.</p>                <div class="in-page-link ">
+<a href="/who-we-are/our-customers" class="link-with-right-chevron" aria-label="Read more about our ambition to be the most trusted bank globally, putting customers at the heart of everything we do." >                            <span>
+                                <span class="hsbc-right-chevron" aria-hidden="true"></span>
+                                <span>Find out more</span>
+                                    <span class="empty" aria-hidden="true"></span>
+                            </span>
+</a>                </div>
+
+            </div>
+        </div>
+    </div>
+
+
+</div>                </div>
+            </div>
+        </div>
+        
+
+    </div>
+</section>
+
+
+       <!-- SINGLE COLUMN - EMPTY -->
+
+       <!-- SINGLE COLUMN - EMPTY -->
+
+    </main>
+
+    <!--crawler: off-->
+    <div class="download-basket is-hidden" style="display:none"
+     data-component="DownloadBasket"
+     data-props-documents-label="documents|document"
+     data-props-download-text="Download"
+     data-props-remove-text="Remove {title}"
+     data-props-add-announcement="Document has been added to the download basket. Download basket contains {total} {documentname}. Total size is {totalsize}"
+     data-props-remove-announcement="Document has been removed from the download basket. Download basket contains {total} {documentname}. Total size is {totalsize}"
+     data-props-remove-all-announcement="All documents have been removed from the download basket"
+     data-props-intro-title="Download multiple files"
+     data-props-intro-description="Use the checkboxes to add files to your download basket."
+     data-props-intro-dont-show="Don&#39;t show this again"
+     data-props-intro-cta-positive-label="Okay, got it"
+     data-props-limit-size="52428800"
+     data-props-limit-count="50"
+     data-props-limit-title="Limit exceeded"
+     data-props-limit-description="Sorry, you have exceeded the download basket&#39;s capacity. You can download up to 50 files with a total maximum file size of 50MB. ">
+
+    <div class="download-basket__header-wrapper">
+        <div class="download-basket__notification">
+            <span class="hsbc-download-added" aria-hidden="true"></span>
+        </div>
+
+        <div class="download-basket__header container-fluid">
+            <span class="download-basket__header__icon" aria-hidden="true">
+                <span class="download-basket__header__icon__icon hsbc-download-basket" aria-hidden="true"></span>
+                <span class="download-basket__header__icon__count"></span>
+            </span>
+            <button class="download-basket__header__expand-basket" aria-expanded="false" style="display:none">
+                <span class="sr-only"> Expand download basket</span>
+            </button>
+            <h2 class="download-basket__header__title" tabindex="-1">
+                Download basket
+                <span class="download-basket__header__title__count"></span>
+                <span class="download-basket__header__title__size"></span>
+            </h2>
+            <div class="download-basket__header__buttons">
+                <button class="btn btn-primary download-basket__header__buttons__download">
+                    Download all
+                </button>
+                <button class="btn btn-default download-basket__header__buttons__open" aria-expanded="false">
+                    <span class="btn__text--mobile">Open</span>
+                    <span class="btn__text">Open basket</span>
+                </button>
+                <button class="btn btn-default download-basket__header__buttons__close" aria-expanded="true" style="display:none">
+                    <span class="btn__text--mobile">Close</span>
+                    <span class="btn__text">Close basket</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="download-basket__body container-fluid">
+        <ul class="download-basket-docs"></ul>
+    </div>
+
+    <div class="download-basket__footer container-fluid">
+        <form class="download-basket__footer__download-form" action="/api/tables/archive">
+
+            <input type="hidden" class="download-basket__footer__download-form__documents" name="documents" value="">
+            <button class="btn btn-primary download-basket__footer__download-form__download">
+                Download all
+            </button>
+        </form>
+        <button class="btn btn-default download-basket__footer__remove">
+            Remove all
+        </button>
+    </div>
+</div>
+
+    <footer class="footer" data-component="Footer">
+        
+
+<ul class="footer-nav font-size-smaller">
+            <li class="footer-nav__item">
+<a href="/who-we-are" class="footer-nav__link" data-pid-action="click" data-pid="HGHQ:re:IN:XX:PWS:1904:001:Footer" >Who we are</a>            </li>
+            <li class="footer-nav__item">
+<a href="/investors" class="footer-nav__link" >Investors</a>            </li>
+            <li class="footer-nav__item">
+<a href="/news-and-views" class="footer-nav__link" >News and views</a>            </li>
+            <li class="footer-nav__item">
+<a href="/careers" class="footer-nav__link" >Careers</a>            </li>
+</ul>
+
+
+<ul class="footer-social">
+                <li class="footer-social__item">
+<a href="https://example.test/company/hsbc" class="footer-social__link" target="_blank" rel="noopener noreferrer" >                                <span class="hsbc-linkedin" aria-hidden="true"></span>
+                            <span class="sr-only">Visit Linkedin  (opens in new window)</span>
+</a>                </li>
+                <li class="footer-social__item">
+<a href="https://example.test/hsbc/" class="footer-social__link" target="_blank" rel="noopener noreferrer" >                                <span class="hsbc-instagram" aria-hidden="true"></span>
+                            <span class="sr-only">Visit Instagram  (opens in new window)</span>
+</a>                </li>
+                <li class="footer-social__item">
+<a href="https://www.facebook.com/HSBC/" class="footer-social__link" target="_blank" rel="noopener noreferrer" >                                <span class="hsbc-facebook" aria-hidden="true"></span>
+                            <span class="sr-only">Visit Facebook  (opens in new window)</span>
+</a>                </li>
+                <li class="footer-social__item">
+<a href="https://example.test/HSBC" class="footer-social__link" target="_blank" rel="noopener noreferrer" >                                <span class="hsbc-youtube" aria-hidden="true"></span>
+                            <span class="sr-only">Visit Youtube  (opens in new window)</span>
+</a>                </li>
+</ul>
+<ul class="footer-legal">
+    <li class="footer-legal__item">
+            <span class="footer-legal__copyright">© HSBC Group 2026</span>
+    </li>
+    
+        <li class="footer-legal__item">
+<a href="/terms-and-conditions" class="footer-legal__link" >Terms and conditions</a>        </li>
+        <li class="footer-legal__item">
+<a href="/privacy-notice" class="footer-legal__link" >Privacy notice</a>        </li>
+        <li class="footer-legal__item">
+<a href="/cookie-notice" class="footer-legal__link" >Cookie notice</a>        </li>
+        <li class="footer-legal__item">
+<a href="/website-accessibility" class="footer-legal__link" >Website accessibility</a>        </li>
+        <li class="footer-legal__item">
+<a href="/online-security" class="footer-legal__link" >Online security</a>        </li>
+        <li class="footer-legal__item">
+<a href="/sitemap" class="footer-legal__link" >Sitemap</a>        </li>
+        <li class="footer-legal__item">
+<a href="/who-we-are/esg-and-responsible-business/modern-slavery-act" class="footer-legal__link empty" >Stopping modern slavery</a>        </li>
+
+
+    <li class="footer-legal__item__icp" data-icp data-component="IcpLinks">
+<a href="https://beian.miit.gov.cn/" class="footer-legal__link empty" >ICP 15029387-2 (Chinese only)</a><a href="http://wap.scjgj.sh.gov.cn/businessCheck/verifKey.do?showType=extShow&amp;serial=9031000020170821174538000002010036-SAIC_SHOW_310000-20171101111325737110&amp;signData=MEUCIQCHH0AE1EpV+6swwZ5EXSTVqcbF2K1KRJFO6oJAyzvMuAIgDaPz3iuhsqJKwkFNGAtxSG/0T/hnc7FIV273241+8b0=" class="footer-legal__link empty" >Shanghai Administration for Industry &amp; Commerce</a><a href="http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=31011502400282" class="footer-legal__link" ><img src="/-/files/hsbc/footer/icp-license-icon.png?la=en-GB&amp;h=20&amp;w=20&amp;hash=33F35F0B51258796319BD67ABD5C8CFF" class="image-icp" alt="" />Shanghai Municipal Public Security record No. 31011502400282</a>    </li>
+
+
+
+</ul>
+
+    </footer>
+    <div id="pop-ups" class="popups" aria-hidden="true">
+        <div class="popups__overlay"></div>
+    </div>
+    <!--crawler: on-->
+
+        <script>
+        window.HSBC_EXTERNAL_LINK_CONFIG = {"catchTargetBlank":false,"catchSameOrigin":true,"rules":[{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(eproxyappointment\\.com)","negate":false},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(twitter.com/HSBC)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(twitter.com/expatexplorer)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(twitter.com/firstdirect)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(twitter.com/MandSBank)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(twitter.com/sabb_ecare)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(twitter.com/SABBBank)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(example.test/company/hsbc)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(example.test/)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\-\\.\\d]*(facebook.com/HSBC)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(facebook.com/SABB)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(facebook.com/firstdirect)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\-\\.\\d]*(facebook.com/MandSBank)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(example.test/HSBC)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(example.test/channel/UCDY8TiCewpeV5CCNqsjfuRA)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(example.test/channel/UCCBhMKAxI-Vk7thGdo0W39Q)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(example.test/channel/UC3aS_WrypGWlxebaqQm6Q0g)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(example.test/user/Firstdirectuk)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(twitter.com/)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(example.test/)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(facebook.com/)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(t.co)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(payment\\-fraud\\.safeguard\\.hsbc\\.com)","negate":true},{"pattern":"^(https?:\\/\\/)?[\\w\\.\\d]*(sciencedirect)","negate":false}],"popup":{"closeLabel":"Close notification","actionInNewWindow":false,"negativeActionInNewWindow":false,"negativeActionOnClose":false,"disableClickOutsideAndClose":false,"stickyControls":false}};
+    </script>
+
+
+		<script type="application/ld+json" id="schema-global">{
+  "@context": "http://schema.org",
+  "@graph": [
+    {
+      "@type": "VideoObject",
+      "@id": "https://example.test/#/schema/video/REDACTED-UUID",
+      "name": "Mastermind: Digital Assets and Currencies",
+      "thumbnailUrl": "https://example.test/-/files/hsbc/news-and-insight/2026/thumbnail-images/261030-mastermind-digital-assets-and-currencies-768x576.jpg?sc_lang=en-gb",
+      "uploadDate": "2026-10-30T14:08:21"
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://example.test/#/schema/website",
+      "name": "HSBC Group corporate website | HSBC Holdings plc",
+      "inLanguage": "en-GB",
+      "description": "HSBC, one of the largest banking and financial services institutions in the world, serves millions of customers through its four global businesses.",
+      "url": "https://example.test"
+    },
+    {
+      "@type": "VideoObject",
+      "@id": "https://example.test/#/schema/video/REDACTED-UUID",
+      "name": "From fossil fuels to renewables – a transition story",
+      "thumbnailUrl": "https://example.test/-/files/hsbc/who-we-are/hsbc-and-sustainability/from-coal-producer-to-renewables-champion/260506-from-coal-producer-to-renewables-champion-768x576.jpg",
+      "uploadDate": "2026-11-09T03:25:14",
+      "description": "Learn how ACEN, an energy company and our client, went from being a fossil fuel plant operator to a renewables champion in less than a decade."
+    }
+  ]
+}</script>
+
+    <script>
+        window.HSBC_DICTIONARY = {
+            'opens-in-new-window': ' (opens in new window)',
+            'minute-shortcode-and-aria': 'm|minute|minutes',
+            'hour-shortcode-and-aria': 'h|hour|hours',
+            'day-shortcode-and-aria': 'd|day|days',
+            'week-shortcode-and-aria': 'w|week|weeks',
+            'month-shortcode-and-aria': 'mo|month|months',
+            'year-shortcode-and-aria': 'y|year|years',
+            'view-transcript': 'View transcript'
+        };
+    </script>
+    <script src="/scripts/hsbc.body.transpiled.js?v=0.0.0.0.0"></script>
+</body>
+</html>

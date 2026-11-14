@@ -85,6 +85,24 @@ impl Handler for QualityCheckHandler {
             ));
         }
 
+        // A recognised non-Cloudflare interstitial (another edge or WAF
+        // vendor) escalates exactly like an inferred challenge: same error
+        // variant, so the solver, its negative cache and cooldown, and the
+        // read pipeline's render fallback all apply. Unlike the status check
+        // below this also catches vendor pages served with HTTP 200 / 202.
+        if let Some(v) = crate::interstitial::classify_non_cloudflare(&resp)
+            && v.should_escalate()
+        {
+            tracing::info!(
+                url = %resp.url,
+                status = resp.status,
+                interstitial = %v.label(),
+                signal = v.signal,
+                "quality: vendor interstitial (inferred), triggering solver"
+            );
+            return Err(HttpError::CloudflareInferred(resp.status, Box::new(resp)));
+        }
+
         // Non-200 fallback-worthy status → inferred challenge. The origin
         // MAY have processed the request — carry the response so a gate that
         // declines to re-send a non-idempotent method can return it intact.

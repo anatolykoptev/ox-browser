@@ -258,7 +258,39 @@ async fn read_page_inner(
 
     crate::metrics::record_fetch_success();
     let extracted = content::extract_content(&resp.body, &params.url, format);
-    build_output(extracted, params, "direct", elapsed(start))
+    let quality = quality_of(
+        resp.status,
+        &resp.url,
+        &resp.body,
+        &extracted,
+        format,
+        crate::interstitial::classify(&resp).as_ref(),
+    );
+    let mut output = build_output(extracted, params, "direct", elapsed(start));
+    output.quality = Some(quality);
+    output
+}
+
+/// Content-quality verdict for one extracted page. Reads the extraction
+/// BEFORE `build_output` truncates or reformats it, so `max_length` and the
+/// llm format cannot change the verdict. Report-only.
+fn quality_of(
+    status: u16,
+    url: &str,
+    html: &str,
+    extracted: &content::ExtractedContent,
+    format: ContentFormat,
+    interstitial: Option<&crate::interstitial::Interstitial>,
+) -> crate::content_quality::ContentQuality {
+    crate::content_quality::assess(&crate::content_quality::Input {
+        status,
+        url,
+        html,
+        title: &extracted.title,
+        text: &extracted.content,
+        text_is_html: format == ContentFormat::Html,
+        interstitial,
+    })
 }
 
 /// Call go-wowa chrome/interact to fetch a JS-rendered page.
@@ -328,7 +360,10 @@ async fn chrome_fallback(
     }
 
     let extracted = content::extract_content(html, &params.url, format);
-    Some(build_output(extracted, params, "chrome", elapsed(start)))
+    let quality = quality_of(200, &params.url, html, &extracted, format, None);
+    let mut output = build_output(extracted, params, "chrome", elapsed(start));
+    output.quality = Some(quality);
+    Some(output)
 }
 
 /// Extract the hostname from a URL (delegates to [`crate::url_util::extract_domain`]).
@@ -369,6 +404,7 @@ pub fn build_output(
             language: ext.meta.language.clone(),
             error: None,
             extraction_note: ext.extraction_note.clone(),
+            quality: None,
         };
         c = crate::llm::to_llm_text(&raw_output);
     }
@@ -397,6 +433,7 @@ pub fn build_output(
         language: ext.meta.language,
         error: None,
         extraction_note: ext.extraction_note,
+        quality: None,
     }
 }
 
@@ -421,6 +458,7 @@ pub fn build_error_output(params: &ReadParams, method: &str, ms: u64, msg: &str)
         language: String::new(),
         error: Some(msg.into()),
         extraction_note: None,
+        quality: None,
     }
 }
 
