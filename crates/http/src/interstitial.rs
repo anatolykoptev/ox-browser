@@ -29,6 +29,9 @@ use crate::cloudflare::{ChallengeType, detect_cloudflare};
 /// markers alone: challenge and block pages are small, real pages are not.
 const MAX_MARKER_BODY: usize = 128 * 1024;
 
+/// Signal name of the AWS WAF token-wait stub, the one 202 shape that escalates.
+const SIGNAL_TOKEN_WAIT: &str = "token_wait_stub";
+
 /// An interstitial served with a non-blocking status (200, 202) is a stub:
 /// at most this many bytes of markup and this many visible characters.
 const STUB_MAX_BYTES: usize = 16 * 1024;
@@ -131,12 +134,21 @@ impl Interstitial {
         }
     }
 
-    /// Whether the middleware chain should escalate this response to the
-    /// solver tier instead of returning it as content. Low-confidence generic
-    /// verdicts are reported but are not themselves an escalation reason —
-    /// the existing status-based inference already handles bare 401/403/429/503.
-    pub fn should_escalate(&self) -> bool {
+    /// Whether this verdict is strong enough to label a page in the
+    /// content-quality report. Low-confidence generic verdicts are not.
+    pub fn reportable(&self) -> bool {
         self.confidence >= Confidence::Medium
+    }
+
+    /// Whether the middleware chain escalates this response to the solver tier
+    /// beyond what the blocking-status inference already does.
+    ///
+    /// Only one non-blocking case escalates: the AWS WAF token-wait stub, a
+    /// narrowly defined shape (HTTP 202, tiny body, inline script that waits
+    /// for the token and reloads). Every other vendor verdict on a 200/202 page
+    /// is report-only: a false positive costs a label, never a solver call.
+    pub fn escalates_at(&self, status: u16) -> bool {
+        self.vendor == Vendor::AwsWaf && status == 202 && self.signal == SIGNAL_TOKEN_WAIT
     }
 
     /// Compact `vendor:kind:confidence` form for logs and quality reasons.
@@ -512,8 +524,10 @@ fn akamai(s: &Signals) -> Option<Interstitial> {
         s.small && (s.body_has("errors.edgesuite.net") || s.body_has("errors.akamai.com"));
     // The stock denial page: title/heading plus the permission sentence. The
     // reference link to the error host belongs to the same page.
-    let denied_text =
-        s.small && s.body_has("access denied") && s.body_has("don't have permission to access");
+    let denied_text = s.small
+        && s.body_has("<title>access denied</title>")
+        && s.body_has("<h1>access denied</h1>")
+        && s.body_has("you don't have permission to access \"");
     let ev = Evidence {
         header: akamai_server,
         cookie: s.has_cookie("ak_bmsc") || s.has_cookie("bm_sz"),
@@ -619,7 +633,9 @@ fn aws_waf(s: &Signals) -> Option<Interstitial> {
             Vendor::AwsWaf,
             s.kind_for_status(Kind::Challenge),
             Confidence::High,
-            if header {
+            if structure && s.status == 202 {
+                SIGNAL_TOKEN_WAIT
+            } else if header {
                 "waf_action_header"
             } else {
                 "sdk_stub"
@@ -727,7 +743,7 @@ mod tests {
         );
         let v = classify(&resp(429, "slow down", &[])).unwrap();
         assert_eq!((v.vendor, v.kind), (Vendor::Generic, Kind::RateLimit));
-        assert!(!v.should_escalate());
+        assert!(!v.reportable());
     }
 
     #[test]
@@ -815,7 +831,7 @@ mod tests {
 
     #[test]
     fn akamai_denial_page_even_at_200() {
-        let body = "<html><title>Access Denied</title><h1>Access Denied</h1>You don't have permission to access \"/\" on this server.</html>";
+        let body = "<html><head><title>Access Denied</title></head><body><h1>Access Denied</h1>You don't have permission to access \"/\" on this server.</body></html>";
         let v = classify(&resp(200, body, &[("server", "AkamaiGHost")])).unwrap();
         assert_eq!(
             (v.vendor, v.kind, v.confidence),
@@ -823,6 +839,18 @@ mod tests {
         );
         // the same text from an unknown server is not attributed to Akamai
         assert!(classify(&resp(200, body, &[("server", "nginx")])).is_none());
+        // each part of the stock shape is required: change one at a time
+        let ak = [("server", "AkamaiGHost")];
+        for variant in [
+            body.replace("<title>Access Denied</title>", "<title>Help</title>"),
+            body.replace("<h1>Access Denied</h1>", "<h1>Help</h1>"),
+            body.replace("access \"/\"", "access the page"),
+        ] {
+            assert!(classify(&resp(200, &variant, &ak)).is_none(), "{variant}");
+        }
+        // a help page that merely uses both phrases is not the stock page
+        let help = "<html><head><title>Help center</title></head><body><h1>Troubleshooting</h1><p>If you see Access Denied, you don't have permission to access the page; contact support.</p></body></html>";
+        assert!(classify(&resp(200, help, &[("server", "AkamaiGHost")])).is_none());
     }
 
     #[test]

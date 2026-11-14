@@ -27,7 +27,7 @@ use regex::Regex;
 use serde::Serialize;
 
 use crate::HttpResponse;
-use crate::interstitial::{self, Interstitial};
+use crate::interstitial::{self, Interstitial, Kind};
 
 /// Pages with at least this many effective words are never judged by marker
 /// phrases alone (login / denied / consent / not-found walls are short).
@@ -322,9 +322,13 @@ const CONSENT_HOST_PREFIXES: &[&str] = &["consent.", "guce."];
 pub fn assess(input: &Input<'_>) -> ContentQuality {
     // 1. interstitial vendor verdict
     if let Some(v) = input.interstitial
-        && v.should_escalate()
+        && v.reportable()
     {
-        return ContentQuality::new(Verdict::Challenge, format!("interstitial:{}", v.label()));
+        let verdict = match v.kind {
+            Kind::Challenge => Verdict::Challenge,
+            Kind::Block | Kind::RateLimit => Verdict::AccessDenied,
+        };
+        return ContentQuality::new(verdict, format!("interstitial:{}", v.vendor.as_str()));
     }
 
     let html = clip(input.html, SCAN_BYTES);
@@ -828,7 +832,12 @@ mod tests {
         };
         let medium = mk(Confidence::Medium);
         input.interstitial = Some(&medium);
-        assert_eq!(assess(&input).verdict, Verdict::Challenge);
+        // Akamai Block maps to access_denied, reason names the vendor
+        let q = assess(&input);
+        assert_eq!(
+            (q.verdict, q.reason.as_str()),
+            (Verdict::AccessDenied, "interstitial:akamai")
+        );
         let low = mk(Confidence::Low);
         input.interstitial = Some(&low);
         assert_eq!(assess(&input).verdict, Verdict::Ok);

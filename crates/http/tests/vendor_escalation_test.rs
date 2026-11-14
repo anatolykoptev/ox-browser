@@ -16,12 +16,15 @@ use ox_http::{
     SolvedChallenge, chain, quality_check_middleware, solver_middleware_with_negcache,
 };
 
-/// Real captured page: an Akamai-served "Access Denied" stub with HTTP 200.
-fn akamai_denied_200() -> (HeaderMap, String) {
+/// A captured fixture: status, headers, body.
+fn fixture(name: &str) -> (u16, HeaderMap, String) {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/interstitial/akamai_denied_200.http");
+        .join(format!("tests/fixtures/interstitial/{name}.http"));
     let raw = std::fs::read_to_string(path).unwrap();
     let (head, body) = raw.split_once("\n\n").unwrap();
+    let status = head.lines().next().unwrap()["HTTP ".len()..]
+        .parse()
+        .unwrap();
     let mut headers = HeaderMap::new();
     for l in head.lines().skip(1) {
         let (k, v) = l.split_once(':').unwrap();
@@ -30,7 +33,7 @@ fn akamai_denied_200() -> (HeaderMap, String) {
             HeaderValue::from_str(v.trim()).unwrap(),
         );
     }
-    (headers, body.to_owned())
+    (status, headers, body.to_owned())
 }
 
 /// Real captured ordinary page (24 KB, plenty of visible text).
@@ -71,6 +74,7 @@ impl Handler for Fixed {
 struct StubThenContent {
     calls: Arc<AtomicUsize>,
     always_stub: bool,
+    fixture: String,
 }
 
 #[async_trait]
@@ -89,9 +93,9 @@ impl Handler for StubThenContent {
                 body: "<html><body>real article</body></html>".into(),
             });
         }
-        let (headers, body) = akamai_denied_200();
+        let (status, headers, body) = fixture(&self.fixture);
         Ok(HttpResponse {
-            status: 200,
+            status,
             url: req.url,
             headers,
             body,
@@ -138,7 +142,7 @@ fn get(url: &str) -> Request {
 }
 
 #[tokio::test]
-async fn non_cloudflare_interstitial_at_200_reaches_the_solver() {
+async fn aws_waf_token_wait_stub_at_202_reaches_the_solver() {
     let origin_calls = Arc::new(AtomicUsize::new(0));
     let solver_calls = Arc::new(AtomicUsize::new(0));
     let handler = chain(
@@ -156,13 +160,14 @@ async fn non_cloudflare_interstitial_at_200_reaches_the_solver() {
         Arc::new(StubThenContent {
             calls: origin_calls.clone(),
             always_stub: false,
+            fixture: "aws_waf_202".into(),
         }),
     );
     let resp = handler.handle(get("https://example.test/a")).await.unwrap();
     assert_eq!(
         solver_calls.load(Ordering::SeqCst),
         1,
-        "a vendor interstitial served with HTTP 200 must reach the solver"
+        "the AWS WAF 202 token-wait stub must reach the solver"
     );
     assert!(resp.body.contains("real article"), "got: {}", resp.body);
     assert_eq!(origin_calls.load(Ordering::SeqCst), 2, "stub, then resend");
@@ -192,6 +197,7 @@ async fn failing_solves_on_a_vendor_interstitial_trip_the_negative_cache() {
         Arc::new(StubThenContent {
             calls: origin_calls.clone(),
             always_stub: true,
+            fixture: "aws_waf_202".into(),
         }),
     );
     for _ in 0..5 {
@@ -366,4 +372,104 @@ async fn small_landing_page_with_one_vendor_script_never_escalates() {
             assert_eq!(solver_calls.load(Ordering::SeqCst), 0, "{status} {embed}");
         }
     }
+}
+
+/// Run one 200/202 response through quality -> solver and assert it passes
+/// through untouched with no solver call and no negative-cache entry.
+async fn assert_never_escalates(
+    what: &str,
+    status: u16,
+    headers: Vec<(&'static str, &'static str)>,
+    body: String,
+) {
+    let solver_calls = Arc::new(AtomicUsize::new(0));
+    let negcache = Arc::new(SolverNegCache::new(
+        1,
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+    ));
+    let handler = chain(
+        vec![
+            solver_middleware_with_negcache(
+                Arc::new(CountingProvider {
+                    calls: solver_calls.clone(),
+                    succeed: false,
+                }),
+                Arc::new(CookieCache::new(Duration::from_secs(60))),
+                negcache.clone(),
+            ),
+            quality_check_middleware(),
+        ],
+        Arc::new(Fixed {
+            status,
+            headers,
+            body: body.clone(),
+        }),
+    );
+    let resp = handler
+        .handle(get("https://example.test/a"))
+        .await
+        .unwrap_or_else(|e| panic!("{what} at {status}: escalated: {e:?}"));
+    assert_eq!(resp.body, body, "{what}: body must pass through");
+    assert_eq!(solver_calls.load(Ordering::SeqCst), 0, "{what} at {status}");
+    assert!(
+        !negcache.is_blocked("example.test", false),
+        "{what} at {status}"
+    );
+}
+
+/// Review counterexamples: pages that look like a vendor challenge on a
+/// non-blocking status are only labelled, never escalated. The real captured
+/// Akamai "Access Denied" stub served with 200 is one of them.
+#[tokio::test]
+async fn vendor_look_alikes_at_200_never_reach_the_solver() {
+    let (_, h, body) = fixture("akamai_denied_200");
+    let headers: Vec<(&str, &str)> = h
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.to_str().unwrap()))
+        .collect();
+    // leak the borrowed strs into 'static for the helper: test-only
+    let headers: Vec<(&'static str, &'static str)> = headers
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                &*Box::leak(k.to_owned().into_boxed_str()),
+                &*Box::leak(v.to_owned().into_boxed_str()),
+            )
+        })
+        .collect();
+    assert_never_escalates("captured Akamai denial stub", 200, headers, body).await;
+
+    let login = "<html><head><title>Sign in</title></head><body><h1>Sign in</h1><form action=\"/login\"><input name=u><input type=\"password\" name=p></form><iframe src=\"https://geo.captcha-delivery.com/captcha/?x=1\"></iframe></body></html>";
+    assert_never_escalates(
+        "login page with an embedded DataDome iframe",
+        200,
+        vec![
+            ("x-datadome", "protected"),
+            ("set-cookie", "datadome=x; Path=/"),
+        ],
+        login.into(),
+    )
+    .await;
+
+    let px = "<html><head><title>Contact</title></head><body><h1>Contact us</h1><form><input name=q></form><div id=\"px-captcha\"></div></body></html>";
+    assert_never_escalates(
+        "contact page with a px-captcha widget",
+        200,
+        vec![("x-px-blocked", "1"), ("set-cookie", "_pxhd=x; Path=/")],
+        px.into(),
+    )
+    .await;
+
+    let help = "<html><head><title>Access Denied</title></head><body><h1>Access Denied</h1><p>If you see this message you don't have permission to access the page \"/account\". Contact support.</p></body></html>";
+    assert_never_escalates(
+        "help page with both Akamai phrases",
+        200,
+        vec![
+            ("server", "AkamaiGHost"),
+            ("set-cookie", "ak_bmsc=x; Path=/"),
+        ],
+        help.into(),
+    )
+    .await;
 }

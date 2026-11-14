@@ -117,7 +117,7 @@ fn unattributed_blocks_fall_back_to_generic_low() {
         let v = classify(&load(name)).unwrap_or_else(|| panic!("{name}: not classified"));
         assert_eq!(v.vendor, Vendor::Generic, "{name}: {v:?}");
         assert_eq!(v.confidence, Confidence::Low, "{name}");
-        assert!(!v.should_escalate(), "{name}");
+        assert!(!v.reportable(), "{name}");
     }
 }
 
@@ -158,10 +158,10 @@ fn quality_verdicts_on_real_pages() {
         ("cloudflare_managed_200", Verdict::Challenge),
         ("empty_airline_shell", Verdict::Empty),
         ("empty_video_shell", Verdict::Empty),
-        ("akamai_denied_200", Verdict::Challenge),
+        ("akamai_denied_200", Verdict::AccessDenied),
         ("datadome_captcha_403", Verdict::Challenge),
         ("aws_waf_202", Verdict::Challenge),
-        ("imperva_incident_200", Verdict::Challenge),
+        ("imperva_incident_200", Verdict::AccessDenied),
     ];
     for (name, want) in table {
         assert_eq!(quality(name), want, "{name}");

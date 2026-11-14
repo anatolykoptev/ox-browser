@@ -85,13 +85,15 @@ impl Handler for QualityCheckHandler {
             ));
         }
 
-        // A recognised non-Cloudflare interstitial (another edge or WAF
-        // vendor) escalates exactly like an inferred challenge: same error
-        // variant, so the solver, its negative cache and cooldown, and the
-        // read pipeline's render fallback all apply. Unlike the status check
-        // below this also catches vendor pages served with HTTP 200 / 202.
+        // Escalation stays status-driven: a 401/403/429/503 is handled by the
+        // inference below, as before. The one non-blocking exception is the
+        // AWS WAF token-wait stub (202 + inline token/reload script), which
+        // escalates exactly like an inferred challenge: same error variant, so
+        // the solver, its negative cache and cooldown, and the read pipeline's
+        // render fallback apply. Every other vendor page served with 200/202
+        // is only labelled in the `quality` report, never sent to the solver.
         if let Some(v) = crate::interstitial::classify_non_cloudflare(&resp)
-            && v.should_escalate()
+            && v.escalates_at(resp.status)
         {
             tracing::info!(
                 url = %resp.url,
