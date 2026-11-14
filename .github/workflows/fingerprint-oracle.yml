@@ -44,6 +44,11 @@ jobs:
     permissions:
       contents: read
       issues: write
+    env:
+      # This job has no checkout, so there is no local git repo for `gh` to
+      # infer the repository from. Without GH_REPO every `gh release|issue|label`
+      # call below fails with "not a git repository".
+      GH_REPO: ${{ github.repository }}
     steps:
       # ── Download the RELEASED binary ───────────────────────────────────
       #
