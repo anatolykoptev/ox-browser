@@ -621,7 +621,7 @@ fn aws_waf(s: &Signals) -> Option<Interstitial> {
     let structure = s.small
         && s.body_has("awswafintegration")
         && (s.body_has("gettoken") || s.body_has("hastoken"))
-        && s.body_has("reload");
+        && (s.body_has("location.reload") || s.body_has(".reload("));
     let ev = Evidence {
         header,
         cookie: s.has_cookie("aws-waf-token"),
@@ -1019,6 +1019,25 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(v.vendor, Vendor::DataDome);
+    }
+
+    /// The token-wait stub is classified (report-only) at 200, but only the
+    /// 202 form escalates: the verdict itself must not carry the escalation.
+    #[test]
+    fn aws_token_wait_stub_escalates_at_202_only() {
+        let stub = "<script src=\"https://a.sdk.awswaf.com/a/challenge.js\"></script><script>AwsWafIntegration.getToken().then(() => location.reload())</script>";
+        let v202 = classify(&resp(202, stub, &[])).unwrap();
+        assert!(v202.escalates_at(202));
+        // the same stub at 200 with the vendor's token cookie: two classes, so
+        // it is still labelled, but it never escalates
+        let cookie = [("set-cookie", "aws-waf-token=x; Path=/")];
+        let v200 = classify(&resp(200, stub, &cookie)).unwrap();
+        assert_eq!(v200.vendor, Vendor::AwsWaf);
+        assert!(!v200.escalates_at(200));
+        assert!(!v202.escalates_at(200));
+        // a reload word that is not the stub's own call does not make the structure
+        let prose = stub.replace("location.reload()", "console.log('reloading')");
+        assert!(classify(&resp(202, &prose, &[])).is_none());
     }
 
     /// No captured vendor challenge was served with 405, so it is not a

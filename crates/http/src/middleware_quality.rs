@@ -92,7 +92,8 @@ impl Handler for QualityCheckHandler {
         // the solver, its negative cache and cooldown, and the read pipeline's
         // render fallback apply. Every other vendor page served with 200/202
         // is only labelled in the `quality` report, never sent to the solver.
-        if let Some(v) = crate::interstitial::classify_non_cloudflare(&resp)
+        if resp.status == 202
+            && let Some(v) = crate::interstitial::classify_non_cloudflare(&resp)
             && v.escalates_at(resp.status)
         {
             tracing::info!(

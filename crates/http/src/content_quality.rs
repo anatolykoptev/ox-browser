@@ -9,18 +9,21 @@
 //! Deterministic heuristics, applied in this order (first match wins):
 //!
 //! 1. an interstitial verdict from [`crate::interstitial`] at medium or higher
-//!    confidence, or a generic "verify you are human" title;
-//! 2. a password form that dominates a short page, or a sign-in title/heading;
-//! 3. an access-denied title/heading;
-//! 4. a cookie-consent title/heading on a short page;
-//! 5. a not-found title/heading on a short page;
-//! 6. too little extracted text, absolutely or relative to the markup.
+//!    confidence (report-only: it never causes a re-fetch);
+//! 2. a generic "verify you are human" title on an almost empty page;
+//! 3. a password form that dominates a short page, or a sign-in title/heading
+//!    with a form or an almost empty page behind it;
+//! 4. an access-denied title/heading on an almost empty page;
+//! 5. a cookie-consent title/heading with a form or an almost empty page;
+//! 6. a not-found title/heading on a short page;
+//! 7. too little extracted text, absolutely or relative to the markup.
 //!
-//! Marker phrases are only read from the places a page announces what it is —
-//! the title, the first headings and the opening of the text — and only on
-//! short pages, so an article that merely mentions "access denied" or "log in"
-//! in prose stays `ok`. Phrases exist for English, Russian, German, French and
-//! Spanish.
+//! Marker phrases are read ONLY from the title and the first `<h1>`s, matched
+//! on word boundaries, and a marker alone never labels a page: the page must
+//! also have the structure of the thing it announces (a form that dominates it,
+//! or a body with almost no text and no article-like paragraph). An article
+//! that mentions "access denied" or "sign in" in its title or prose stays `ok`.
+//! Phrases exist for English, Russian, German, French and Spanish.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -29,21 +32,28 @@ use serde::Serialize;
 use crate::HttpResponse;
 use crate::interstitial::{self, Interstitial, Kind};
 
-/// Pages with at least this many effective words are never judged by marker
-/// phrases alone (login / denied / consent / not-found walls are short).
-const SHORT_PAGE_WORDS: usize = 150;
+/// A page with fewer effective words than this is "almost empty" for the
+/// purposes of an announcement title (denied, challenge, consent).
+const SPARSE_WORDS: usize = 80;
+/// A sign-in title needs an even emptier page when no form backs it up.
+const LOGIN_SPARSE_WORDS: usize = 40;
+/// A login page is shorter than this when its title says so.
+const LOGIN_PAGE_WORDS: usize = 150;
+/// A `<p>` with at least this many words is article-like.
+const ARTICLE_PARA_WORDS: usize = 25;
 /// A password form dominates a page below this many words.
 const FORM_PAGE_WORDS: usize = 250;
 /// Consent screens are mostly legal copy; when the title or a heading says so
 /// they may be this long.
 const CONSENT_TITLED_WORDS: usize = 700;
-/// Not-found pages carry site navigation, so they get more room.
-const NOT_FOUND_WORDS: usize = 200;
-/// A title that names the page itself as missing may sit on a page with a
-/// large navigation/footer.
-const NOT_FOUND_TITLED_WORDS: usize = 600;
+/// A not-found title may sit on a page with a large navigation/footer.
+const NOT_FOUND_WORDS: usize = 600;
+/// Bare not-found words count only in a title this short.
+const NOT_FOUND_BARE_TITLE_WORDS: usize = 6;
 /// Minimum share of the main-content words that sit inside the password form.
 const FORM_SHARE: f64 = 0.25;
+/// A consent screen's form has at least this many visible controls.
+const MAIN_FORM_CONTROLS: usize = 2;
 /// Each visible form control counts as this many words of form content.
 const CONTROL_WORDS: usize = 3;
 /// Below this many effective words a page is empty.
@@ -54,8 +64,6 @@ const SHELL_TEXT_RATIO: f64 = 0.005;
 const SHELL_MAX_WORDS: usize = 30;
 /// HTML scanned for headings, password inputs and visible text.
 const SCAN_BYTES: usize = 512 * 1024;
-/// Characters of text read as "the opening of the page".
-const LEAD_CHARS: usize = 300;
 /// Visible-text characters kept when the extractor returned nothing.
 const FALLBACK_TEXT_CHARS: usize = 4000;
 
@@ -122,8 +130,10 @@ pub struct Input<'a> {
 static PASSWORD_INPUT: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?i)<input\b[^>]*\btype\s*=\s*["']?password\b"#).expect("static regex")
 });
-static HEADING: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?is)<(h1|h2)\b[^>]*>(.*?)</(?:h1|h2)>").expect("static regex"));
+static H1: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)<h1\b[^>]*>(.*?)</h1>").expect("static regex"));
+static PARAGRAPH: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)<p\b[^>]*>(.*?)</p>").expect("static regex"));
 static HTML_TITLE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?is)<title\b[^>]*>(.*?)</title>").expect("static regex"));
 static NON_TEXT: Lazy<Regex> = Lazy::new(|| {
@@ -142,178 +152,110 @@ static FORM_CONTROL: Lazy<Regex> =
 static HIDDEN_INPUT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)<input\b[^>]*\btype\s*=\s*["']?hidden"#).expect("static regex"));
 static FORM: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?is)<form\b[^>]*>.*?</form>").expect("static regex"));
+    Lazy::new(|| Regex::new(r"(?is)<form\b[^>]*>.*?(?:</form>|\z)").expect("static regex"));
 static TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)<[^>]*>").expect("static regex"));
 
-// --- marker phrases (matched against normalised, lowercased text) ---------
+// --- marker phrases ---------------------------------------------------------
+//
+// Page-announcement phrasing only, matched in the title or an <h1> on word
+// boundaries. Topical phrases ("forgot password", "unusual traffic",
+// "403 forbidden") are deliberately absent: they head articles too.
 
-const CHALLENGE_MARKERS: &[&str] = &[
-    "just a moment",
-    "checking your browser",
+const CHALLENGE_TITLES: &[&str] = &[
     "are you a robot",
     "are you human",
     "verify you are human",
     "verify you are a human",
-    "security verification",
-    "i'm not a robot",
+    "checking your browser",
+    "making sure you're not a bot",
+    "client challenge",
     "ich bin kein roboter",
-    "bist du ein roboter",
-    "sind sie ein roboter",
     "êtes-vous un robot",
-    "etes-vous un robot",
-    "vérification de sécurité",
     "¿eres un robot",
-    "eres un robot",
     "вы не робот",
     "подтвердите, что вы не робот",
-    "проверка безопасности",
-    "please enable js and disable any ad blocker",
 ];
 
-const LOGIN_MARKERS: &[&str] = &[
-    "sign in to",
-    "log in to",
-    "login to",
-    "please log in",
-    "please sign in",
-    "please login",
-    "login required",
-    "sign in required",
-    "you must be logged in",
-    "you must log in",
-    "log in or sign up",
-    "login or sign up",
-    "sign in or sign up",
-    "log in to continue",
-    "sign in to continue",
-    "bitte melden sie sich an",
-    "bitte loggen sie sich ein",
-    "melden sie sich an",
-    "anmelden oder registrieren",
-    "veuillez vous connecter",
-    "connectez-vous",
-    "identifiez-vous",
-    "inicia sesión",
-    "iniciar sesión",
-    "debes iniciar sesión",
-    "войдите",
-    "для просмотра необходимо войти",
-    "необходимо авторизоваться",
-    "авторизуйтесь",
-    "don't have an account",
-    "forgot your password",
-    "forgot password",
-    "continue with google",
-    "passwort vergessen",
-    "mot de passe oublié",
-    "olvidaste tu contraseña",
-    "забыли пароль",
-];
+/// Whole titles that announce a challenge.
+const CHALLENGE_EXACT_TITLES: &[&str] = &["just a moment...", "just a moment"];
 
-/// Titles that ARE a login page when they start with these words.
-const LOGIN_TITLE_PREFIX: &[&str] = &[
-    "login",
+/// Sign-in announcements: the title or <h1> BEGINS with one of these.
+const LOGIN_TITLE_STARTS: &[&str] = &[
     "log in",
+    "login",
     "sign in",
     "signin",
     "anmelden",
-    "einloggen",
     "anmeldung",
+    "einloggen",
     "connexion",
     "se connecter",
     "iniciar sesión",
-    "acceso",
-    "вход",
+    "inicia sesión",
     "войти",
+    "вход",
     "авторизация",
+    "welcome back",
 ];
 
-const DENIED_MARKERS: &[&str] = &[
+const DENIED_TITLES: &[&str] = &[
     "access denied",
     "access to this page has been denied",
     "access forbidden",
-    "403 forbidden",
-    "error 403",
-    "you don't have permission to access",
-    "you do not have permission to access",
     "request blocked",
-    "your request has been blocked",
-    "unusual traffic",
     "zugriff verweigert",
     "zugang verweigert",
-    "zugriff nicht gestattet",
     "accès refusé",
-    "acces refuse",
-    "accès interdit",
     "acceso denegado",
-    "acceso prohibido",
-    "доступ запрещ",
-    "доступ ограничен",
+    "доступ запрещен",
+    "доступ запрещён",
     "в доступе отказано",
-    "доступ закрыт",
 ];
 
-const CONSENT_MARKERS: &[&str] = &[
-    "we use cookies",
-    "this site uses cookies",
-    "this website uses cookies",
-    "accept all cookies",
-    "accept cookies",
+const CONSENT_TITLES: &[&str] = &[
+    "before you continue to",
+    "your privacy choices",
+    "privacy choices",
     "cookie settings",
     "cookie consent",
     "cookie preferences",
-    "your privacy choices",
-    "privacy choices",
-    "manage consent",
-    "before you continue",
+    "we use cookies",
+    "this website uses cookies",
+    "this site uses cookies",
     "wir verwenden cookies",
     "diese website verwendet cookies",
-    "cookies akzeptieren",
-    "datenschutzeinstellungen",
     "nous utilisons des cookies",
     "ce site utilise des cookies",
-    "accepter les cookies",
-    "gérer les cookies",
-    "avant de continuer",
     "utilizamos cookies",
     "usamos cookies",
     "este sitio utiliza cookies",
-    "aceptar cookies",
-    "antes de ir a",
     "мы используем файлы cookie",
     "мы используем cookie",
     "этот сайт использует файлы cookie",
-    "принять все cookie",
-    "принять cookie",
-    "согласие на использование",
 ];
 
-/// Bare not-found words: trusted in a title or heading only, never in prose.
-const NOT_FOUND_TITLE_ONLY: &[&str] = &["not found", "nicht gefunden", "introuvable", "не найдена"];
-
-const NOT_FOUND_MARKERS: &[&str] = &[
+const NOT_FOUND_TITLES: &[&str] = &[
     "page not found",
     "page cannot be found",
-    "can't be found",
-    "can't find that page",
     "page can't be found",
     "page could not be found",
     "page doesn't exist",
     "page does not exist",
     "this page isn't available",
     "this page is no longer available",
-    "no longer available",
+    "can't find that page",
     "seite nicht gefunden",
     "seite wurde nicht gefunden",
     "page introuvable",
     "page non trouvée",
-    "page non trouvee",
     "página no encontrada",
-    "pagina no encontrada",
     "no se encontró la página",
     "страница не найдена",
     "страница не существует",
 ];
+
+/// Bare not-found words: trusted only in a very short title or heading.
+const NOT_FOUND_BARE: &[&str] = &["not found", "nicht gefunden", "introuvable", "не найдена"];
 
 /// Hosts that exist only to serve consent screens.
 const CONSENT_HOST_PREFIXES: &[&str] = &["consent.", "guce."];
@@ -345,11 +287,9 @@ pub fn assess(input: &Input<'_>) -> ContentQuality {
         text
     };
     let words = effective_words(&body_text);
-    let titles = title_text(input, html);
-    let lead = format!(
-        "{titles} {}",
-        body_text.chars().take(LEAD_CHARS).collect::<String>()
-    );
+    let fields = title_fields(input, html);
+    let article = article_like(html);
+    let sparse = !article && words < SPARSE_WORDS;
 
     // Statuses that carry a verdict of their own.
     match input.status {
@@ -360,37 +300,47 @@ pub fn assess(input: &Input<'_>) -> ContentQuality {
         _ => {}
     }
 
-    if words < SHORT_PAGE_WORDS && any_marker(&lead, CHALLENGE_MARKERS) {
-        return ContentQuality::new(Verdict::Challenge, "challenge_marker");
+    if sparse
+        && (any_field(&fields, |f| contains_phrase(f, CHALLENGE_TITLES))
+            || any_field(&fields, |f| CHALLENGE_EXACT_TITLES.contains(&f.trim())))
+    {
+        return ContentQuality::new(Verdict::Challenge, "challenge_title");
     }
 
-    if words < FORM_PAGE_WORDS && password_form_dominates(html) {
+    if words < FORM_PAGE_WORDS && form_dominates(html, true) {
         return ContentQuality::new(Verdict::LoginRequired, "password_form_dominates");
     }
-    if words < SHORT_PAGE_WORDS
-        && (any_marker(&lead, LOGIN_MARKERS) || title_starts_with(input, html, LOGIN_TITLE_PREFIX))
+    if words < LOGIN_PAGE_WORDS
+        && !article
+        && any_field(&fields, |f| starts_phrase(f, LOGIN_TITLE_STARTS))
+        && (words < LOGIN_SPARSE_WORDS || form_dominates(html, false))
     {
-        return ContentQuality::new(Verdict::LoginRequired, "login_marker");
+        return ContentQuality::new(Verdict::LoginRequired, "login_title");
     }
 
-    if words < SHORT_PAGE_WORDS && any_marker(&lead, DENIED_MARKERS) {
-        return ContentQuality::new(Verdict::AccessDenied, "denied_marker");
+    if sparse && any_field(&fields, |f| contains_phrase(f, DENIED_TITLES)) {
+        return ContentQuality::new(Verdict::AccessDenied, "denied_title");
     }
 
     if is_consent_host(input.url) && words < FORM_PAGE_WORDS {
         return ContentQuality::new(Verdict::ConsentWall, "consent_host");
     }
-    if (words < FORM_PAGE_WORDS && any_marker(&lead, CONSENT_MARKERS))
-        || (words < CONSENT_TITLED_WORDS && any_marker(&titles, CONSENT_MARKERS))
+    if words < CONSENT_TITLED_WORDS
+        && any_field(&fields, |f| contains_phrase(f, CONSENT_TITLES))
+        && (sparse || has_main_form(html))
     {
-        return ContentQuality::new(Verdict::ConsentWall, "consent_marker");
+        return ContentQuality::new(Verdict::ConsentWall, "consent_title");
     }
 
-    if (words < NOT_FOUND_WORDS && any_marker(&lead, NOT_FOUND_MARKERS))
-        || (words < NOT_FOUND_WORDS && any_marker(&titles, NOT_FOUND_TITLE_ONLY))
-        || (words < NOT_FOUND_TITLED_WORDS && titled_not_found(&titles))
+    if words < NOT_FOUND_WORDS
+        && any_field(&fields, |f| {
+            contains_phrase(f, NOT_FOUND_TITLES)
+                || (!article
+                    && f.split_whitespace().count() <= NOT_FOUND_BARE_TITLE_WORDS
+                    && contains_phrase(f, NOT_FOUND_BARE))
+        })
     {
-        return ContentQuality::new(Verdict::Soft404, "not_found_marker");
+        return ContentQuality::new(Verdict::Soft404, "not_found_title");
     }
 
     if words < EMPTY_WORDS {
@@ -440,6 +390,36 @@ pub fn assess_response(resp: &HttpResponse) -> Option<ContentQuality> {
         text_is_html: false,
         interstitial: verdict.as_ref(),
     }))
+}
+
+/// [`assess_response`] on the blocking pool: extraction of a large body must
+/// not stall an async worker. Returns the response untouched alongside the
+/// verdict.
+pub async fn assess_response_blocking(
+    resp: HttpResponse,
+) -> (HttpResponse, Option<ContentQuality>) {
+    let shared = std::sync::Arc::new(resp);
+    let job = std::sync::Arc::clone(&shared);
+    let quality = tokio::task::spawn_blocking(move || assess_response(&job))
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "quality assessment task failed");
+            None
+        });
+    match std::sync::Arc::try_unwrap(shared) {
+        Ok(resp) => (resp, quality),
+        // The job has finished, so this is the only owner; copy defensively
+        // rather than panic if that ever stops being true.
+        Err(shared) => (
+            HttpResponse {
+                status: shared.status,
+                url: shared.url.clone(),
+                headers: shared.headers.clone(),
+                body: shared.body.clone(),
+            },
+            quality,
+        ),
+    }
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -511,11 +491,10 @@ fn effective_words(text: &str) -> usize {
     words + cjk / 2
 }
 
-fn heading_texts(html: &str) -> Vec<String> {
-    HEADING
-        .captures_iter(html)
-        .take(4)
-        .map(|c| visible_text(c.get(2).map_or("", |m| m.as_str()), 200))
+fn h1_texts(html: &str) -> Vec<String> {
+    H1.captures_iter(html)
+        .take(3)
+        .map(|c| visible_text(c.get(1).map_or("", |m| m.as_str()), 200))
         .collect()
 }
 
@@ -527,37 +506,56 @@ fn html_title(html: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Title(s) + first headings: where a page says what it is.
-fn title_text(input: &Input<'_>, html: &str) -> String {
-    let mut t = normalise(&decode_entities(input.title));
-    t.push(' ');
-    t.push_str(&html_title(html));
-    for h in heading_texts(html) {
-        t.push(' ');
-        t.push_str(&h);
-    }
-    t
+/// The places a page announces what it is: the extractor's title, the
+/// `<title>` and the first `<h1>`s, each normalised and kept separate so a
+/// phrase can never be assembled across two of them.
+fn title_fields(input: &Input<'_>, html: &str) -> Vec<String> {
+    let mut f = vec![normalise(&decode_entities(input.title)), html_title(html)];
+    f.extend(h1_texts(html));
+    f.retain(|x| !x.is_empty());
+    f
 }
 
-fn any_marker(lead: &str, markers: &[&str]) -> bool {
-    markers.iter().any(|m| lead.contains(m))
+fn any_field(fields: &[String], pred: impl Fn(&str) -> bool) -> bool {
+    fields.iter().any(|f| pred(f))
 }
 
-/// Not-found phrases that name "the page" itself, so a headline that merely
-/// contains "not found" does not qualify for the larger word budget.
-fn titled_not_found(titles: &str) -> bool {
-    const PAGE_WORDS: [&str; 5] = ["page", "seite", "página", "pagina", "страниц"];
-    NOT_FOUND_MARKERS
+fn word_edge_before(hay: &str, i: usize) -> bool {
+    hay[..i]
+        .chars()
+        .next_back()
+        .is_none_or(|c| !c.is_alphanumeric())
+}
+
+fn word_edge_after(hay: &str, j: usize) -> bool {
+    hay[j..].chars().next().is_none_or(|c| !c.is_alphanumeric())
+}
+
+/// `phrase` occurs in `hay` as whole words ("acceso" is not in "accesorios").
+fn contains_phrase(hay: &str, phrases: &[&str]) -> bool {
+    phrases.iter().any(|p| {
+        hay.match_indices(p)
+            .any(|(i, _)| word_edge_before(hay, i) && word_edge_after(hay, i + p.len()))
+    })
+}
+
+/// `hay` begins with one of `phrases` as whole words.
+fn starts_phrase(hay: &str, phrases: &[&str]) -> bool {
+    let t = hay.trim_start_matches(|c: char| !c.is_alphanumeric());
+    phrases
         .iter()
-        .filter(|m| PAGE_WORDS.iter().any(|w| m.contains(w)))
-        .any(|m| titles.contains(m))
+        .any(|p| t.starts_with(p) && word_edge_after(t, p.len()))
 }
 
-fn title_starts_with(input: &Input<'_>, html: &str, prefixes: &[&str]) -> bool {
-    let titles = [normalise(&decode_entities(input.title)), html_title(html)];
-    titles
-        .iter()
-        .any(|t| prefixes.iter().any(|p| t.starts_with(p)))
+/// Any paragraph with real prose in it: the mark of an article, not a wall.
+fn article_like(html: &str) -> bool {
+    PARAGRAPH
+        .captures_iter(clip(html, SCAN_BYTES))
+        .take(200)
+        .any(|c| {
+            effective_words(&visible_text(c.get(1).map_or("", |m| m.as_str()), 2000))
+                >= ARTICLE_PARA_WORDS
+        })
 }
 
 /// A password form counts as the page's purpose only when it sits in the main
@@ -574,23 +572,41 @@ fn form_weight(form: &str) -> usize {
     effective_words(&visible_text(form, FALLBACK_TEXT_CHARS)) + controls * CONTROL_WORDS
 }
 
-fn password_form_dominates(html: &str) -> bool {
+/// `password_only`: only forms with a password input count.
+fn form_dominates(html: &str, password_only: bool) -> bool {
+    let main = main_markup(html);
+    let main_words = effective_words(&visible_text(&main, FALLBACK_TEXT_CHARS * 4)).max(1);
+    FORM.find_iter(&main)
+        .filter(|f| !password_only || PASSWORD_INPUT.is_match(f.as_str()))
+        .filter(|f| FORM_CONTROL.is_match(f.as_str()))
+        .map(|f| form_weight(f.as_str()))
+        .any(|form_words| (form_words as f64) / (main_words as f64) >= FORM_SHARE)
+}
+
+/// A form with real controls in the main content (consent screens are mostly
+/// legal copy, so the form is a small share of the page, but it is there).
+fn has_main_form(html: &str) -> bool {
+    FORM.find_iter(&main_markup(html)).any(|f| {
+        FORM_CONTROL
+            .find_iter(f.as_str())
+            .count()
+            .saturating_sub(HIDDEN_INPUT.find_iter(f.as_str()).count())
+            >= MAIN_FORM_CONTROLS
+    })
+}
+
+/// The markup without header, nav, footer and aside blocks — unless that
+/// would remove over 40% of the text (a site wrapping its content in them).
+fn main_markup(html: &str) -> std::borrow::Cow<'_, str> {
     let all = clip(html, SCAN_BYTES);
     let stripped = CHROME.replace_all(all, " ");
     let stripped_words = effective_words(&visible_text(&stripped, FALLBACK_TEXT_CHARS * 4));
-    // A site that wraps its content in <header> or <nav> would lose the page;
-    // when stripping removes over 40% of the text, judge the unstripped markup.
     let all_words = effective_words(&visible_text(all, FALLBACK_TEXT_CHARS * 4));
-    let main: std::borrow::Cow<'_, str> = if stripped_words * 5 < all_words * 3 {
+    if stripped_words * 5 < all_words * 3 {
         std::borrow::Cow::Borrowed(all)
     } else {
         stripped
-    };
-    let main_words = effective_words(&visible_text(&main, FALLBACK_TEXT_CHARS * 4)).max(1);
-    FORM.find_iter(&main)
-        .filter(|f| PASSWORD_INPUT.is_match(f.as_str()))
-        .map(|f| form_weight(f.as_str()))
-        .any(|form_words| (form_words as f64) / (main_words as f64) >= FORM_SHARE)
+    }
 }
 
 fn is_consent_host(url: &str) -> bool {
@@ -678,7 +694,7 @@ mod tests {
     #[test]
     fn consent_wall_and_host() {
         let h = page(
-            "Before you continue",
+            "We use cookies",
             "<p>We use cookies and data to deliver our services.</p>",
         );
         assert_eq!(
@@ -784,7 +800,8 @@ mod tests {
     fn every_static_regex_compiles() {
         for re in [
             &*PASSWORD_INPUT,
-            &*HEADING,
+            &*H1,
+            &*PARAGRAPH,
             &*HTML_TITLE,
             &*NON_TEXT,
             &*TAG,

@@ -184,7 +184,8 @@ impl OxMcpServer {
         match outcome {
             CallOutcome::Ok(Ok(resp)) => {
                 let cf = detect_cloudflare(&resp);
-                let quality = ox_http::content_quality::assess_response(&resp);
+                let (resp, quality) =
+                    ox_http::content_quality::assess_response_blocking(resp).await;
                 let headers: HashMap<String, String> = resp
                     .headers
                     .iter()

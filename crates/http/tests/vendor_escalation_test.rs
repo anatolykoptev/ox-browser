@@ -440,6 +440,16 @@ async fn vendor_look_alikes_at_200_never_reach_the_solver() {
         .collect();
     assert_never_escalates("captured Akamai denial stub", 200, headers, body).await;
 
+    // an AWS-shaped token-wait stub served with 200 plus the token cookie
+    let (_, _, aws) = fixture("aws_waf_202");
+    assert_never_escalates(
+        "AWS-shaped stub at 200 with a token cookie",
+        200,
+        vec![("set-cookie", "aws-waf-token=x; Path=/")],
+        aws,
+    )
+    .await;
+
     let login = "<html><head><title>Sign in</title></head><body><h1>Sign in</h1><form action=\"/login\"><input name=u><input type=\"password\" name=p></form><iframe src=\"https://geo.captcha-delivery.com/captcha/?x=1\"></iframe></body></html>";
     assert_never_escalates(
         "login page with an embedded DataDome iframe",

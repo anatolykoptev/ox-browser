@@ -253,3 +253,31 @@ fn json_bodies_have_no_quality_verdict() {
         .insert("content-type", HeaderValue::from_static("application/json"));
     assert!(assess_response(&r).is_none());
 }
+
+/// Real-style short pages whose title or body brushes a marker phrase. Every
+/// one is ordinary content, so every one must be `ok`: go-search drops pages
+/// by this label.
+#[test]
+fn short_pages_that_brush_marker_phrases_are_ok() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("quality_negative");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("html") {
+            continue;
+        }
+        let html = std::fs::read_to_string(&path).unwrap();
+        let q = assess_response(&html_response(html)).unwrap();
+        assert_eq!(
+            q.verdict,
+            Verdict::Ok,
+            "{}: {q:?}",
+            path.file_name().unwrap().to_string_lossy()
+        );
+        seen += 1;
+    }
+    assert!(seen >= 12, "negative fixtures went missing ({seen})");
+}

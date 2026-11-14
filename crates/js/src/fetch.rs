@@ -177,7 +177,7 @@ pub async fn fetch(
             let cf = detect_cloudflare(&resp);
             let cf_detected = cf.is_some();
             let cf_type = cf.map(|c| c.challenge_type.to_string());
-            let quality = ox_http::content_quality::assess_response(&resp);
+            let (resp, quality) = ox_http::content_quality::assess_response_blocking(resp).await;
 
             let headers: HashMap<String, String> = resp
                 .headers
