@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.0](https://github.com/anatolykoptev/ox-browser/compare/v0.8.21...v0.9.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **license:** relicense under AGPL-3.0 ([#210](https://github.com/anatolykoptev/ox-browser/issues/210))
+
+* **license:** relicense under AGPL-3.0 ([#210](https://github.com/anatolykoptev/ox-browser/issues/210)) ([9eff835](https://github.com/anatolykoptev/ox-browser/commit/9eff835b4f2a567e4e823b9a1eafc7546339326e))
+
+
+### Fixed
+
+* **llm:** stop collapsing non-English prose into '... and N more' stubs ([#214](https://github.com/anatolykoptev/ox-browser/issues/214)) ([a3bdea3](https://github.com/anatolykoptev/ox-browser/commit/a3bdea3a4088fb65cd06d42fe22e5f2652d66e4d))
+
+
+### Documentation
+
+* bring repository documents up to the repo-standards set ([#205](https://github.com/anatolykoptev/ox-browser/issues/205)) ([dc751f2](https://github.com/anatolykoptev/ox-browser/commit/dc751f29d3af34f01084539b165b90b2751284a9))
+
 ## [0.8.21](https://github.com/anatolykoptev/ox-browser/compare/v0.8.20...v0.8.21) (2026-11-03)
 
 
