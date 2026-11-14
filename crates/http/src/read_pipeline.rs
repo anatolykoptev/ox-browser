@@ -258,38 +258,46 @@ async fn read_page_inner(
 
     crate::metrics::record_fetch_success();
     let extracted = content::extract_content(&resp.body, &params.url, format);
+    let interstitial = crate::interstitial::classify(&resp);
     let quality = quality_of(
-        resp.status,
-        &resp.url,
-        &resp.body,
         &extracted,
         format,
-        crate::interstitial::classify(&resp).as_ref(),
+        PageMeta {
+            status: resp.status,
+            url: &resp.url,
+            html: &resp.body,
+            interstitial: interstitial.as_ref(),
+        },
     );
     let mut output = build_output(extracted, params, "direct", elapsed(start));
     output.quality = Some(quality);
     output
 }
 
+/// What the quality verdict needs to know about the fetched page.
+struct PageMeta<'a> {
+    status: u16,
+    url: &'a str,
+    html: &'a str,
+    interstitial: Option<&'a crate::interstitial::Interstitial>,
+}
+
 /// Content-quality verdict for one extracted page. Reads the extraction
 /// BEFORE `build_output` truncates or reformats it, so `max_length` and the
 /// llm format cannot change the verdict. Report-only.
 fn quality_of(
-    status: u16,
-    url: &str,
-    html: &str,
     extracted: &content::ExtractedContent,
     format: ContentFormat,
-    interstitial: Option<&crate::interstitial::Interstitial>,
+    page: PageMeta<'_>,
 ) -> crate::content_quality::ContentQuality {
     crate::content_quality::assess(&crate::content_quality::Input {
-        status,
-        url,
-        html,
+        status: page.status,
+        url: page.url,
+        html: page.html,
         title: &extracted.title,
         text: &extracted.content,
         text_is_html: format == ContentFormat::Html,
-        interstitial,
+        interstitial: page.interstitial,
     })
 }
 
@@ -360,7 +368,16 @@ async fn chrome_fallback(
     }
 
     let extracted = content::extract_content(html, &params.url, format);
-    let quality = quality_of(200, &params.url, html, &extracted, format, None);
+    let quality = quality_of(
+        &extracted,
+        format,
+        PageMeta {
+            status: 200,
+            url: &params.url,
+            html,
+            interstitial: None,
+        },
+    );
     let mut output = build_output(extracted, params, "chrome", elapsed(start));
     output.quality = Some(quality);
     Some(output)
