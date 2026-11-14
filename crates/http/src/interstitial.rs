@@ -664,7 +664,7 @@ mod tests {
 
     #[test]
     fn large_body_with_marker_is_not_an_interstitial() {
-        let body = format!("{}captcha-delivery.com", "x".repeat(MAX_MARKER_BODY + 10));
+        let body = format!("captcha-delivery.com{}", "x".repeat(MAX_MARKER_BODY + 10));
         assert!(classify(&resp(200, &body, &[])).is_none());
     }
 
