@@ -10,19 +10,19 @@
 //!
 //! 1. an interstitial verdict from [`crate::interstitial`] at medium or higher
 //!    confidence (report-only: it never causes a re-fetch);
-//! 2. a generic "verify you are human" title on an almost empty page;
-//! 3. a password form that dominates a short page, or a sign-in title/heading
-//!    with a form or an almost empty page behind it;
-//! 4. an access-denied title/heading on an almost empty page;
+//! 2. HTTP status 401 / 403 / 429 / 404 / 410;
+//! 3. a `<title>` that EQUALS a verify-you-are-human phrase, an access-denied
+//!    phrase or a not-found phrase, on a page whose body (outside title, header,
+//!    nav and footer) has at most 15 words;
+//! 4. a password form that dominates a short page;
 //! 5. a cookie-consent title/heading with a form or an almost empty page;
-//! 6. a not-found title/heading on a short page;
-//! 7. too little extracted text, absolutely or relative to the markup.
+//! 6. too little extracted text, absolutely or relative to the markup.
 //!
-//! Marker phrases are read ONLY from the title and the first `<h1>`s, matched
-//! on word boundaries, and a marker alone never labels a page: the page must
-//! also have the structure of the thing it announces (a form that dominates it,
-//! or a body with almost no text and no article-like paragraph). An article
-//! that mentions "access denied" or "sign in" in its title or prose stays `ok`.
+//! The `login_required`, `access_denied`, `challenge` and `soft_404` labels
+//! drive a DROP decision downstream, so they are precision-first: a miss is
+//! acceptable, a dropped real page is not. A title or heading phrase alone never
+//! yields `login_required`; a headline that merely CONTAINS or STARTS WITH a
+//! phrase never yields a wall label; an `<h1>` alone never does either.
 //! Phrases exist for English, Russian, German, French and Spanish.
 
 use once_cell::sync::Lazy;
@@ -33,23 +33,18 @@ use crate::HttpResponse;
 use crate::interstitial::{self, Interstitial, Kind};
 
 /// A page with fewer effective words than this is "almost empty" for the
-/// purposes of an announcement title (denied, challenge, consent).
+/// consent rule.
 const SPARSE_WORDS: usize = 80;
-/// A sign-in title needs an even emptier page when no form backs it up.
-const LOGIN_SPARSE_WORDS: usize = 40;
-/// A login page is shorter than this when its title says so.
-const LOGIN_PAGE_WORDS: usize = 150;
 /// A `<p>` with at least this many words is article-like.
 const ARTICLE_PARA_WORDS: usize = 25;
+/// A wall stub has at most this many body words (outside title, header, nav,
+/// footer).
+const STUB_BODY_WORDS: usize = 15;
 /// A password form dominates a page below this many words.
 const FORM_PAGE_WORDS: usize = 250;
 /// Consent screens are mostly legal copy; when the title or a heading says so
 /// they may be this long.
 const CONSENT_TITLED_WORDS: usize = 700;
-/// A not-found title may sit on a page with a large navigation/footer.
-const NOT_FOUND_WORDS: usize = 600;
-/// Bare not-found words count only in a title this short.
-const NOT_FOUND_BARE_TITLE_WORDS: usize = 6;
 /// Minimum share of the main-content words that sit inside the password form.
 const FORM_SHARE: f64 = 0.25;
 /// A consent screen's form has at least this many visible controls.
@@ -157,50 +152,31 @@ static TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)<[^>]*>").expect("static
 
 // --- marker phrases ---------------------------------------------------------
 //
-// Page-announcement phrasing only, matched in the title or an <h1> on word
-// boundaries. Topical phrases ("forgot password", "unusual traffic",
-// "403 forbidden") are deliberately absent: they head articles too.
+// Wall labels (challenge, denied, not-found): the whole `<title>` must EQUAL one
+// of these after the site suffix, a leading error code and surrounding
+// punctuation are trimmed (see `title_equals`). Phrases are stored in that
+// normalised form.
 
 const CHALLENGE_TITLES: &[&str] = &[
+    "just a moment",
+    "attention required",
     "are you a robot",
     "are you human",
     "verify you are human",
     "verify you are a human",
     "checking your browser",
+    "security verification",
     "making sure you're not a bot",
     "client challenge",
     "ich bin kein roboter",
     "êtes-vous un robot",
-    "¿eres un robot",
+    "eres un robot",
     "вы не робот",
     "подтвердите, что вы не робот",
 ];
 
-/// Whole titles that announce a challenge.
-const CHALLENGE_EXACT_TITLES: &[&str] = &["just a moment...", "just a moment"];
-
-/// Sign-in announcements: the title or <h1> BEGINS with one of these.
-const LOGIN_TITLE_STARTS: &[&str] = &[
-    "log in",
-    "login",
-    "sign in",
-    "signin",
-    "anmelden",
-    "anmeldung",
-    "einloggen",
-    "connexion",
-    "se connecter",
-    "iniciar sesión",
-    "inicia sesión",
-    "войти",
-    "вход",
-    "авторизация",
-    "welcome back",
-];
-
 const DENIED_TITLES: &[&str] = &[
     "access denied",
-    "access to this page has been denied",
     "access forbidden",
     "request blocked",
     "zugriff verweigert",
@@ -211,6 +187,29 @@ const DENIED_TITLES: &[&str] = &[
     "доступ запрещён",
     "в доступе отказано",
 ];
+
+const NOT_FOUND_TITLES: &[&str] = &[
+    "page not found",
+    "not found",
+    "page cannot be found",
+    "page can't be found",
+    "page could not be found",
+    "page doesn't exist",
+    "page does not exist",
+    "this page isn't available",
+    "this page is no longer available",
+    "seite nicht gefunden",
+    "nicht gefunden",
+    "page introuvable",
+    "page non trouvée",
+    "introuvable",
+    "página no encontrada",
+    "страница не найдена",
+    "не найдена",
+];
+
+// Consent labels: a phrase in the title or an `<h1>` on word boundaries, plus a
+// form with controls or an almost empty page.
 
 const CONSENT_TITLES: &[&str] = &[
     "before you continue to",
@@ -233,29 +232,6 @@ const CONSENT_TITLES: &[&str] = &[
     "мы используем cookie",
     "этот сайт использует файлы cookie",
 ];
-
-const NOT_FOUND_TITLES: &[&str] = &[
-    "page not found",
-    "page cannot be found",
-    "page can't be found",
-    "page could not be found",
-    "page doesn't exist",
-    "page does not exist",
-    "this page isn't available",
-    "this page is no longer available",
-    "can't find that page",
-    "seite nicht gefunden",
-    "seite wurde nicht gefunden",
-    "page introuvable",
-    "page non trouvée",
-    "página no encontrada",
-    "no se encontró la página",
-    "страница не найдена",
-    "страница не существует",
-];
-
-/// Bare not-found words: trusted only in a very short title or heading.
-const NOT_FOUND_BARE: &[&str] = &["not found", "nicht gefunden", "introuvable", "не найдена"];
 
 /// Hosts that exist only to serve consent screens.
 const CONSENT_HOST_PREFIXES: &[&str] = &["consent.", "guce."];
@@ -300,25 +276,19 @@ pub fn assess(input: &Input<'_>) -> ContentQuality {
         _ => {}
     }
 
-    if sparse
-        && (any_field(&fields, |f| contains_phrase(f, CHALLENGE_TITLES))
-            || any_field(&fields, |f| CHALLENGE_EXACT_TITLES.contains(&f.trim())))
-    {
+    // A wall stub: the `<title>` IS the announcement and the body has next to
+    // nothing else. The extractor's title and `<h1>` are not consulted.
+    let title = html_title(html);
+    let stub = stub_body_words(html) <= STUB_BODY_WORDS;
+    if stub && title_equals(&title, CHALLENGE_TITLES) {
         return ContentQuality::new(Verdict::Challenge, "challenge_title");
     }
 
     if words < FORM_PAGE_WORDS && form_dominates(html, true) {
         return ContentQuality::new(Verdict::LoginRequired, "password_form_dominates");
     }
-    if words < LOGIN_PAGE_WORDS
-        && !article
-        && any_field(&fields, |f| starts_phrase(f, LOGIN_TITLE_STARTS))
-        && (words < LOGIN_SPARSE_WORDS || form_dominates(html, false))
-    {
-        return ContentQuality::new(Verdict::LoginRequired, "login_title");
-    }
 
-    if sparse && any_field(&fields, |f| contains_phrase(f, DENIED_TITLES)) {
+    if stub && title_equals(&title, DENIED_TITLES) {
         return ContentQuality::new(Verdict::AccessDenied, "denied_title");
     }
 
@@ -332,14 +302,7 @@ pub fn assess(input: &Input<'_>) -> ContentQuality {
         return ContentQuality::new(Verdict::ConsentWall, "consent_title");
     }
 
-    if words < NOT_FOUND_WORDS
-        && any_field(&fields, |f| {
-            contains_phrase(f, NOT_FOUND_TITLES)
-                || (!article
-                    && f.split_whitespace().count() <= NOT_FOUND_BARE_TITLE_WORDS
-                    && contains_phrase(f, NOT_FOUND_BARE))
-        })
-    {
+    if stub && title_equals(&title, NOT_FOUND_TITLES) {
         return ContentQuality::new(Verdict::Soft404, "not_found_title");
     }
 
@@ -539,12 +502,33 @@ fn contains_phrase(hay: &str, phrases: &[&str]) -> bool {
     })
 }
 
-/// `hay` begins with one of `phrases` as whole words.
-fn starts_phrase(hay: &str, phrases: &[&str]) -> bool {
-    let t = hay.trim_start_matches(|c: char| !c.is_alphanumeric());
-    phrases
-        .iter()
-        .any(|p| t.starts_with(p) && word_edge_after(t, p.len()))
+/// The `<title>` equals one of `phrases` once the site suffix ("… | Site",
+/// "… - Site"), a leading three-digit error code ("404: …") and surrounding
+/// punctuation are trimmed. A longer headline that merely contains or starts
+/// with a phrase does not equal it.
+fn title_equals(title: &str, phrases: &[&str]) -> bool {
+    let mut t = title.trim();
+    for sep in [" | ", " - ", " – ", " — ", " · ", " :: ", " « "] {
+        if let Some((head, _)) = t.split_once(sep) {
+            t = head;
+        }
+    }
+    let code = t
+        .split_once(|c: char| c == ':' || c == '-' || c.is_whitespace())
+        .filter(|(c, _)| c.len() == 3 && c.chars().all(|d| d.is_ascii_digit()));
+    if let Some((_, rest)) = code {
+        t = rest;
+    }
+    let t = t.trim_matches(|c: char| !c.is_alphanumeric());
+    !t.is_empty() && phrases.contains(&t)
+}
+
+/// Words of body text outside the title, header, nav, footer and aside.
+fn stub_body_words(html: &str) -> usize {
+    let all = clip(html, SCAN_BYTES);
+    let no_title = HTML_TITLE.replace_all(all, " ");
+    let no_chrome = CHROME.replace_all(&no_title, " ");
+    effective_words(&visible_text(&no_chrome, FALLBACK_TEXT_CHARS))
 }
 
 /// Any paragraph with real prose in it: the mark of an article, not a wall.
@@ -794,6 +778,44 @@ mod tests {
             &format!("<main><p>{filler}</p><form><input type=password name=p></form></main>"),
         );
         assert_eq!(judge(&h, &filler).verdict, Verdict::Ok);
+    }
+
+    /// A headline that merely contains a wall phrase is not a wall, even on a
+    /// stub-sized page: only a `<title>` that EQUALS the phrase counts.
+    #[test]
+    fn headline_containing_a_wall_phrase_is_not_a_wall() {
+        let text = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen";
+        let cases = [
+            (
+                "Марафон: перекрытия",
+                "<h1>Доступ запрещён в центр на время марафона</h1><p>В воскресенье с семи утра центр закрыт.</p>",
+            ),
+            (
+                "Council budget",
+                "<h1>Council: page not found on budget site</h1><p>A short note.</p>",
+            ),
+            (
+                "Council: page not found on budget site",
+                "<p>A short note.</p>",
+            ),
+            ("Access denied for the new stadium?", "<p>Fans protest.</p>"),
+            ("Sign in to buy — Widget 3", "<p>Price 19 dollars.</p>"),
+            ("Login Festival 2026 tickets", "<p>Three days in July.</p>"),
+        ];
+        for (title, body) in cases {
+            let h = page(title, body);
+            let q = judge(&h, text);
+            assert_eq!(q.verdict, Verdict::Ok, "{title}: {q:?}");
+        }
+        // the title alone equalling the phrase, after the site suffix, is a wall
+        let h = page("Access Denied | Example", "<p>Reference 18.2</p>");
+        assert_eq!(judge(&h, text).verdict, Verdict::AccessDenied);
+        let h = page("404: Page Not Found", "<p>Nothing here.</p>");
+        assert_eq!(judge(&h, text).verdict, Verdict::Soft404);
+        // but not when the body is a real page
+        let long = format!("<p>{}</p>", prose(3));
+        let h = page("Access Denied", &long);
+        assert_eq!(judge(&h, &prose(3)).verdict, Verdict::Ok);
     }
 
     #[test]

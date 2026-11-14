@@ -147,13 +147,7 @@ fn vendor_cookie_on_a_plain_200_is_not_an_interstitial() {
 fn quality_verdicts_on_real_pages() {
     let table = [
         ("login_hn", Verdict::LoginRequired),
-        ("login_github", Verdict::LoginRequired),
-        ("login_dropbox", Verdict::LoginRequired),
-        ("login_spotify", Verdict::LoginRequired),
         ("consent_yahoo", Verdict::ConsentWall),
-        ("notfound_apple_as_200", Verdict::Soft404),
-        ("notfound_mozilla_as_200", Verdict::Soft404),
-        ("notfound_paypal_as_200", Verdict::Soft404),
         ("empty_instagram", Verdict::Empty),
         ("cloudflare_managed_200", Verdict::Challenge),
         ("empty_airline_shell", Verdict::Empty),
@@ -280,4 +274,56 @@ fn short_pages_that_brush_marker_phrases_are_ok() {
         seen += 1;
     }
     assert!(seen >= 12, "negative fixtures went missing ({seen})");
+}
+
+/// Title-only wall stubs: the `<title>` equals a wall phrase (after the site
+/// suffix) and the body is nearly empty.
+#[test]
+fn title_only_wall_stubs_are_labelled() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("quality_positive");
+    let table = [
+        ("en_access_denied_stub", Verdict::AccessDenied),
+        ("ru_dostup_zapreshchen_stub", Verdict::AccessDenied),
+        ("en_just_a_moment_stub", Verdict::Challenge),
+        ("en_attention_required_stub", Verdict::Challenge),
+        ("en_page_not_found_stub", Verdict::Soft404),
+        ("en_404_prefix_not_found_stub", Verdict::Soft404),
+    ];
+    for (name, want) in table {
+        let html = std::fs::read_to_string(dir.join(format!("{name}.html"))).unwrap();
+        let q = assess_response(&html_response(html)).unwrap();
+        assert_eq!(q.verdict, want, "{name}: {q:?}");
+    }
+}
+
+/// The wall labels are precision-first (a label drops the page downstream), so
+/// some real captures are no longer labelled: their wall text is longer than the
+/// 15-word stub budget, or their sign-in form is a small share of a full page.
+/// Those misses are accepted; what must hold is that none of them is labelled
+/// as a wall.
+#[test]
+fn accepted_misses_are_never_labelled_as_walls() {
+    for name in [
+        "login_github",
+        "login_dropbox",
+        "login_spotify",
+        "notfound_apple_as_200",
+        "notfound_mozilla_as_200",
+        "notfound_paypal_as_200",
+    ] {
+        let v = quality(name);
+        assert!(
+            !matches!(
+                v,
+                Verdict::LoginRequired
+                    | Verdict::AccessDenied
+                    | Verdict::Challenge
+                    | Verdict::Soft404
+            ),
+            "{name}: {v:?}"
+        );
+    }
 }
