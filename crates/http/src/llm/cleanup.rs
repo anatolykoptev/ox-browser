@@ -1014,8 +1014,10 @@ pub(crate) fn collapse_word_lists(input: &str) -> String {
 /// * sentence structure: a token that closes a sentence (see [`is_sentence_end`])
 ///   breaks a run and disqualifies any tail that contains it;
 /// * prose evidence: function-word-like tokens, i.e. short lowercase words
-///   ("in", "и", "de", "der", "ve") plus the English function-word list. A tail
-///   where fewer than 5% of the tokens are such words is a dump.
+///   ("in", "и", "de", "der", "ve") plus the English function-word list. Short
+///   tokens only count outside a long unbroken run of them (a list of short
+///   tokens is not prose). A tail where fewer than 5% of the tokens are such
+///   words is a dump.
 ///
 /// Name, identifier and keyword dumps have neither; prose in any alphabetic
 /// script has both.
@@ -1029,8 +1031,8 @@ fn find_dump_start(words: &[&str]) -> Option<usize> {
     let mut evidence_before = Vec::with_capacity(words.len() + 1);
     let mut evidence = 0usize;
     evidence_before.push(0);
-    for word in words {
-        if is_prose_evidence(word) {
+    for is_evidence in prose_evidence_flags(words) {
+        if is_evidence {
             evidence += 1;
         }
         evidence_before.push(evidence);
@@ -1087,6 +1089,11 @@ fn is_sentence_end(word: &str) -> bool {
         // `)` `%` `»` etc. directly before the full stop: a closed clause.
         return true;
     }
+    if !(last.is_lowercase() || last.is_uppercase()) {
+        // Caseless scripts (Hangul, kana, ideographs): sentence-final words
+        // are often two characters, so there is no abbreviation heuristic.
+        return true;
+    }
     stem.chars().rev().take_while(|c| c.is_alphabetic()).count() >= 3
 }
 
@@ -1103,9 +1110,35 @@ fn is_short_lowercase_word(word: &str) -> bool {
     }
 }
 
-/// A token that counts as evidence of prose structure in the tail ratio.
-fn is_prose_evidence(word: &str) -> bool {
-    is_short_lowercase_word(word) || is_prose_function_word(&word.to_lowercase())
+/// Longest run of consecutive short lowercase tokens that still reads as prose.
+/// Prose interleaves function words with longer words; a list of short tokens
+/// (`get set put del`, `js css api git sql`) is one long unbroken run.
+const MAX_SHORT_RUN: usize = 5;
+
+/// Per token: does it count as evidence of prose structure in the tail ratio?
+/// English function words always do; a short lowercase token does only when
+/// its run of consecutive short lowercase tokens is at most [`MAX_SHORT_RUN`].
+fn prose_evidence_flags(words: &[&str]) -> Vec<bool> {
+    let short: Vec<bool> = words.iter().map(|w| is_short_lowercase_word(w)).collect();
+    let mut flags = vec![false; words.len()];
+    let mut i = 0;
+    while i < words.len() {
+        if !short[i] {
+            i += 1;
+            continue;
+        }
+        let run_end = (i..words.len()).find(|&j| !short[j]).unwrap_or(words.len());
+        if run_end - i <= MAX_SHORT_RUN {
+            flags[i..run_end].fill(true);
+        }
+        i = run_end;
+    }
+    for (flag, word) in flags.iter_mut().zip(words) {
+        if !*flag && is_prose_function_word(&word.to_lowercase()) {
+            *flag = true;
+        }
+    }
+    flags
 }
 
 /// Common English function words that indicate prose structure.
@@ -1491,6 +1524,10 @@ mod tests {
     const PROSE_DE: &str = include_str!("testdata/prose_de.txt");
     const PROSE_TR: &str = include_str!("testdata/prose_tr.txt");
     const PROSE_ZH: &str = include_str!("testdata/prose_zh.txt");
+    // Hangul words are short and caseless, and sentences end in two-character
+    // words ("있다."): a long list of schools in this paragraph looks like a
+    // run of short tokens.
+    const PROSE_KO: &str = include_str!("testdata/prose_ko.txt");
     const DUMP_RU_NAMES: &str = include_str!("testdata/dump_ru_names.txt");
     const DUMP_DE_LINKS: &str = include_str!("testdata/dump_de_links.txt");
 
@@ -1519,6 +1556,27 @@ mod tests {
     fn turkish_prose_not_collapsed() {
         assert_survives("tr", PROSE_TR);
         assert_survives("tr sparse", PROSE_TR_SPARSE);
+    }
+
+    #[test]
+    fn korean_prose_not_collapsed() {
+        assert_survives("ko", PROSE_KO);
+    }
+
+    #[test]
+    fn short_token_list_still_collapsed() {
+        // Every token is lowercase and at most three characters, so none of
+        // them may count as function-word evidence.
+        let input = "get set put del ".repeat(25);
+        let result = collapse_word_lists(input.trim_end());
+        assert!(result.contains("... and"), "should collapse: {result}");
+    }
+
+    #[test]
+    fn short_tag_cloud_still_collapsed() {
+        let input = "js css api git sql ".repeat(12);
+        let result = collapse_word_lists(input.trim_end());
+        assert!(result.contains("... and"), "should collapse: {result}");
     }
 
     #[test]
@@ -1573,6 +1631,7 @@ mod tests {
         assert!(is_sentence_end("Pflanzen.\u{201D}"));
         assert!(is_sentence_end("(rang 94)."));
         assert!(is_sentence_end("光合作用。"));
+        assert!(is_sentence_end("있다."));
         assert!(is_sentence_end("really?!"));
         // Abbreviations, initials, ordinals, numbers and dotted forms are not.
         assert!(!is_sentence_end("U."));
