@@ -1,15 +1,101 @@
-use rand::seq::SliceRandom;
-
 use crate::profile::BrowserProfile;
 
-/// GREASE brands used by Chrome to detect servers that reject unknown brands.
-/// Randomized per call to avoid static fingerprinting.
-const GREASE_BRANDS: &[&str] = &[
-    r#""Not_A Brand";v="8""#,
-    r#""Not/A)Brand";v="8""#,
-    r#""Not A(Brand";v="99""#,
-    r#""Not:A-Brand";v="99""#,
+// ── sec-ch-ua brand list ───────────────────────────────────────────────
+//
+// Chromium derives the `sec-ch-ua` brand list from the Chromium major
+// version alone (components/embedder_support/user_agent_utils.cc,
+// `GetGreasedUserAgentBrandVersion` + `GenerateBrandVersionList`): the GREASE
+// brand name, its version and the position of the three entries are all
+// functions of the major, so one release always sends the same string. A
+// per-request random choice therefore cannot equal what any real release
+// sends.
+//
+// The derivation follows the algorithm implemented by go-stealth
+// (`secChUa`, v1.29.0, Apache-2.0). See THIRD_PARTY_NOTICES.md.
+
+/// Characters Chromium splices into the GREASE brand name `Not?A?Brand`.
+const GREASE_CHARS: [&str; 11] = [" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"];
+
+/// GREASE brand versions Chromium cycles through.
+const GREASE_VERSIONS: [&str; 3] = ["8", "99", "24"];
+
+/// Entry permutations Chromium picks from (`seed % 6`). `ORDERS[i][k]` is the
+/// output position of the k-th entry of `[GREASE, Chromium, product brand]`.
+const ORDERS: [[usize; 3]; 6] = [
+    [0, 1, 2],
+    [0, 2, 1],
+    [1, 0, 2],
+    [1, 2, 0],
+    [2, 0, 1],
+    [2, 1, 0],
 ];
+
+/// Renders the three-entry brand list (GREASE, Chromium, product brand) in
+/// the order Chromium uses for `seed`. `grease_suffix` is appended to the
+/// GREASE version (`""` for `sec-ch-ua`, `".0.0.0"` for the full version list).
+fn brand_list(
+    seed: usize,
+    chromium: &str,
+    brand: &str,
+    brand_version: &str,
+    grease_suffix: &str,
+) -> String {
+    let grease = format!(
+        r#""Not{}A{}Brand";v="{}{}""#,
+        GREASE_CHARS[seed % GREASE_CHARS.len()],
+        GREASE_CHARS[(seed + 1) % GREASE_CHARS.len()],
+        GREASE_VERSIONS[seed % GREASE_VERSIONS.len()],
+        grease_suffix,
+    );
+    let entries = [
+        grease,
+        format!(r#""Chromium";v="{chromium}""#),
+        format!(r#""{brand}";v="{brand_version}""#),
+    ];
+    let mut out: [Option<String>; 3] = [None, None, None];
+    for (entry, pos) in entries.into_iter().zip(ORDERS[seed % ORDERS.len()]) {
+        out[pos] = Some(entry);
+    }
+    out.into_iter().flatten().collect::<Vec<_>>().join(", ")
+}
+
+/// Chromium major used as the derivation seed; 0 when it is not a number.
+fn seed_of(major: &str) -> usize {
+    major.parse().unwrap_or(0)
+}
+
+/// The `sec-ch-ua` value a Chromium-based browser of `chromium_major` sends.
+/// `brand` / `brand_version` name the product (`"Google Chrome"` with the same
+/// major, or `"Microsoft Edge"` with the Edge major).
+///
+/// The single builder for this header: `tls::chrome_headers`,
+/// `tls::edge_headers` and [`client_hints_headers`] all call it.
+pub fn sec_ch_ua(chromium_major: &str, brand: &str, brand_version: &str) -> String {
+    brand_list(
+        seed_of(chromium_major),
+        chromium_major,
+        brand,
+        brand_version,
+        "",
+    )
+}
+
+/// The `sec-ch-ua-full-version-list` value: same brands and order as
+/// [`sec_ch_ua`], with full versions (the GREASE brand carries `X.0.0.0`).
+pub fn sec_ch_ua_full_version_list(
+    chromium_major: &str,
+    chromium_full: &str,
+    brand: &str,
+    brand_full: &str,
+) -> String {
+    brand_list(
+        seed_of(chromium_major),
+        chromium_full,
+        brand,
+        brand_full,
+        ".0.0.0",
+    )
+}
 
 /// Chrome-like default header order for anti-fingerprint consistency.
 /// Used by HttpClient (Task 6) to reorder outgoing headers.
@@ -38,7 +124,7 @@ pub static DEFAULT_HEADER_ORDER: &[&str] = &[
 
 /// Returns `sec-ch-ua-*` client hint headers for Chromium-based user agents.
 /// Returns empty vec for Firefox/Safari (they don't send Client Hints).
-/// GREASE brand is randomized per call to avoid static fingerprinting.
+/// The output is a pure function of the UA: see [`sec_ch_ua`].
 pub fn client_hints_headers(ua: &str) -> Vec<(String, String)> {
     if !ua.contains("Chrome/") {
         return Vec::new();
@@ -48,54 +134,27 @@ pub fn client_hints_headers(ua: &str) -> Vec<(String, String)> {
     let platform = extract_platform(ua);
     let mobile = if ua.contains("Mobile") { "?1" } else { "?0" };
 
-    let mut rng = rand::thread_rng();
-    let grease = GREASE_BRANDS
-        .choose(&mut rng)
-        .expect("GREASE_BRANDS non-empty");
-    // Extract GREASE brand name and version for full-version-list (needs .0.0.0 suffix).
-    let grease_full = grease_to_full_version(grease);
-
-    let mut hints = vec![
+    // Edge adds its own brand alongside Chromium; the GREASE seed stays the
+    // Chromium major.
+    let (brand, brand_ver, brand_full) = if ua.contains("Edg/") {
         (
-            "sec-ch-ua".to_owned(),
-            format!("\"Chromium\";v=\"{version}\", \"Google Chrome\";v=\"{version}\", {grease}"),
-        ),
+            "Microsoft Edge",
+            extract_edge_version(ua),
+            extract_edge_full_version(ua),
+        )
+    } else {
+        ("Google Chrome", version, full_version)
+    };
+
+    vec![
+        ("sec-ch-ua".to_owned(), sec_ch_ua(version, brand, brand_ver)),
         ("sec-ch-ua-mobile".to_owned(), mobile.to_owned()),
         ("sec-ch-ua-platform".to_owned(), format!("\"{platform}\"")),
         (
             "sec-ch-ua-full-version-list".to_owned(),
-            format!(
-                "\"Chromium\";v=\"{full_version}\", \"Google Chrome\";v=\"{full_version}\", {grease_full}"
-            ),
+            sec_ch_ua_full_version_list(version, full_version, brand, brand_full),
         ),
-    ];
-
-    // Edge adds its own brand alongside Chromium.
-    if ua.contains("Edg/") {
-        let edge_ver = extract_edge_version(ua);
-        let edge_full = extract_edge_full_version(ua);
-        hints[0].1 =
-            format!("\"Chromium\";v=\"{version}\", \"Microsoft Edge\";v=\"{edge_ver}\", {grease}");
-        hints[3].1 = format!(
-            "\"Chromium\";v=\"{full_version}\", \"Microsoft Edge\";v=\"{edge_full}\", {grease_full}"
-        );
-    }
-
-    hints
-}
-
-/// Converts a GREASE brand like `"Not_A Brand";v="8"` to full-version format
-/// like `"Not_A Brand";v="8.0.0.0"`.
-fn grease_to_full_version(grease: &str) -> String {
-    // Find the version value between the last pair of quotes.
-    if let Some(last_quote) = grease.rfind('"')
-        && let Some(second_last) = grease[..last_quote].rfind('"')
-    {
-        let ver = &grease[second_last + 1..last_quote];
-        let prefix = &grease[..second_last + 1];
-        return format!("{prefix}{ver}.0.0.0\"");
-    }
-    grease.to_owned()
+    ]
 }
 
 /// Builds common browser headers from a profile (UA + client hints).
@@ -215,19 +274,101 @@ mod tests {
         assert!(hints[3].1.contains("145.0.0.0"));
     }
 
+    // Oracles that are not derived from the code under test: strings real
+    // Google Chrome releases send. 156 is the branded capture in
+    // tests/fixtures/wire/google_chrome_156_nav.json; 131, 133, 136 and 148 are
+    // the values those stable releases are known to send.
+    const CANONICAL: &[(&str, &str)] = &[
+        (
+            "131",
+            r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
+        ),
+        (
+            "133",
+            r#""Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133""#,
+        ),
+        (
+            "136",
+            r#""Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99""#,
+        ),
+        (
+            "148",
+            r#""Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99""#,
+        ),
+        (
+            "156",
+            r#""Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156""#,
+        ),
+    ];
+
     #[test]
-    fn grease_brand_is_randomized() {
-        let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
-        let mut seen = std::collections::HashSet::new();
-        for _ in 0..100 {
-            let hints = client_hints_headers(ua);
-            seen.insert(hints[0].1.clone());
+    fn sec_ch_ua_equals_real_chrome_for_each_major() {
+        for (major, want) in CANONICAL {
+            assert_eq!(&sec_ch_ua(major, "Google Chrome", major), want, "{major}");
         }
-        // With 4 GREASE brands and 100 iterations, we should see at least 2 variants.
-        assert!(
-            seen.len() >= 2,
-            "GREASE brand should be randomized, saw only {} variant(s)",
-            seen.len()
+    }
+
+    #[test]
+    fn sec_ch_ua_is_deterministic() {
+        // The old builder drew the GREASE brand at random per call.
+        let first = sec_ch_ua("148", "Google Chrome", "148");
+        for _ in 0..200 {
+            assert_eq!(sec_ch_ua("148", "Google Chrome", "148"), first);
+        }
+        let ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+        let a = client_hints_headers(ua);
+        for _ in 0..200 {
+            assert_eq!(client_hints_headers(ua), a);
+        }
+    }
+
+    #[test]
+    fn client_hints_headers_use_the_canonical_string() {
+        for (major, want) in CANONICAL {
+            let ua = format!(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+            );
+            assert_eq!(client_hints_headers(&ua)[0].1, *want, "{major}");
+        }
+    }
+
+    #[test]
+    fn full_version_list_follows_the_same_order() {
+        let ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.178 Safari/537.36";
+        assert_eq!(
+            client_hints_headers(ua)[3].1,
+            r#""Chromium";v="148.0.7778.178", "Google Chrome";v="148.0.7778.178", "Not/A)Brand";v="99.0.0.0""#
+        );
+    }
+
+    #[test]
+    fn wire_path_and_middleware_path_send_the_same_sec_ch_ua() {
+        // Two entry points used to build the value separately and disagreed
+        // on brand order for the same UA.
+        for p in BUILTIN_PROFILES
+            .iter()
+            .filter(|p| p.browser == "chrome" || p.browser == "edge")
+        {
+            let wire = browser_headers(p)
+                .into_iter()
+                .find(|(k, _)| k == "sec-ch-ua")
+                .expect("wire path sends sec-ch-ua")
+                .1;
+            assert_eq!(
+                wire,
+                client_hints_headers(p.user_agent)[0].1,
+                "{}",
+                p.user_agent
+            );
+        }
+    }
+
+    #[test]
+    fn edge_grease_is_seeded_by_the_chromium_major() {
+        // Edge major differs from the Chromium major: the seed is Chromium's.
+        assert_eq!(
+            sec_ch_ua("148", "Microsoft Edge", "147"),
+            r#""Chromium";v="148", "Microsoft Edge";v="147", "Not/A)Brand";v="99""#
         );
     }
 
@@ -304,18 +445,6 @@ mod tests {
         assert_eq!(
             extract_edge_full_version("Edg/145.0.2903.70"),
             "145.0.2903.70"
-        );
-    }
-
-    #[test]
-    fn grease_to_full_version_format() {
-        assert_eq!(
-            grease_to_full_version(r#""Not_A Brand";v="8""#),
-            r#""Not_A Brand";v="8.0.0.0""#
-        );
-        assert_eq!(
-            grease_to_full_version(r#""Not A(Brand";v="99""#),
-            r#""Not A(Brand";v="99.0.0.0""#
         );
     }
 

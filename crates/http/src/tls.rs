@@ -39,6 +39,7 @@ use wreq::{Emulation, Group, IntoEmulation};
 use wreq_util::emulate::compress::BrotliCompressor;
 
 use crate::profile::BrowserProfile;
+use crate::profile_hints::sec_ch_ua;
 
 // ── Chrome TLS constants ───────────────────────────────────────────────
 
@@ -175,83 +176,76 @@ fn chrome_h2() -> Http2Options {
 ///   - Adds `priority: u=0, i`
 ///   - `accept` uses `q=0.7` for signed-exchange (was `q=0.9`)
 ///   - `accept-encoding` includes `deflate` and `zstd` (was just `gzip,br`)
-///   - Correct wire order: sec-ch-ua → sec-ch-ua-mobile → sec-ch-ua-platform →
-///     upgrade-insecure-requests → user-agent → accept → sec-fetch-* →
-///     accept-encoding → accept-language → priority
+///   - Wire order: see [`navigation_headers`] (it depends on the Chrome major)
 pub fn chrome_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
     let ua = &profile.user_agent;
-    let platform = extract_platform_from_ua(ua);
     let version = extract_chrome_major(ua);
+    navigation_headers(sec_ch_ua(version, "Google Chrome", version), version, ua)
+}
+
+/// First Chrome major whose navigation shape was measured on branded Google
+/// Chrome (`tests/fixtures/wire/google_chrome_156_nav.json`). From it on,
+/// `accept` lists `image/jxl` and `accept-language` follows
+/// `accept-encoding`. Earlier majors keep the Chrome-for-Testing shape their
+/// references recorded (`accept-language` right after `sec-ch-ua-platform`);
+/// no branded capture exists for them, so their order is not claimed to be
+/// branded Chrome's.
+const BRANDED_NAV_FIRST_MAJOR: u32 = 156;
+
+const ACCEPT_NAV: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
+const ACCEPT_NAV_JXL: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
+
+/// Top-level navigation headers of a Chromium browser, in wire order, around
+/// an already-built `sec-ch-ua` value.
+fn navigation_headers(sec_ch_ua: String, chromium_major: &str, ua: &str) -> Vec<(String, String)> {
+    let branded = chromium_major
+        .parse::<u32>()
+        .is_ok_and(|m| m >= BRANDED_NAV_FIRST_MAJOR);
     let mobile = if ua.contains("Mobile") { "?1" } else { "?0" };
+    let platform = extract_platform_from_ua(ua);
+    let accept_language = ("accept-language".to_owned(), "en-US,en;q=0.9".to_owned());
 
-    // GREASE brand — randomized per call to avoid static fingerprinting.
-    let grease = pick_grease_brand();
-
-    vec![
-        (
-            "sec-ch-ua".to_owned(),
-            format!(
-                r#""Google Chrome";v="{version}", "Chromium";v="{version}", {grease}"#
-            ),
-        ),
+    let mut headers = vec![
+        ("sec-ch-ua".to_owned(), sec_ch_ua),
         ("sec-ch-ua-mobile".to_owned(), mobile.to_owned()),
-        (
-            "sec-ch-ua-platform".to_owned(),
-            format!("\"{platform}\""),
-        ),
-        // Chrome 148 sends accept-language BEFORE upgrade-insecure-requests.
-        // This differs from Chrome 133/145 order captured by webclaw.
-        ("accept-language".to_owned(), "en-US,en;q=0.9".to_owned()),
+        ("sec-ch-ua-platform".to_owned(), format!("\"{platform}\"")),
+    ];
+    if !branded {
+        headers.push(accept_language.clone());
+    }
+    headers.extend([
         ("upgrade-insecure-requests".to_owned(), "1".to_owned()),
-        ("user-agent".to_owned(), ua.to_string()),
+        ("user-agent".to_owned(), ua.to_owned()),
         (
             "accept".to_owned(),
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7".to_owned(),
+            if branded { ACCEPT_NAV_JXL } else { ACCEPT_NAV }.to_owned(),
         ),
         ("sec-fetch-site".to_owned(), "none".to_owned()),
         ("sec-fetch-mode".to_owned(), "navigate".to_owned()),
         ("sec-fetch-user".to_owned(), "?1".to_owned()),
         ("sec-fetch-dest".to_owned(), "document".to_owned()),
-        ("accept-encoding".to_owned(), "gzip, deflate, br, zstd".to_owned()),
-        ("priority".to_owned(), "u=0, i".to_owned()),
-    ]
+        (
+            "accept-encoding".to_owned(),
+            "gzip, deflate, br, zstd".to_owned(),
+        ),
+    ]);
+    if branded {
+        headers.push(accept_language);
+    }
+    headers.push(("priority".to_owned(), "u=0, i".to_owned()));
+    headers
 }
 
 /// Edge headers — same as Chrome but with Edge brand in sec-ch-ua.
 pub fn edge_headers(profile: &BrowserProfile) -> Vec<(String, String)> {
     let ua = &profile.user_agent;
-    let platform = extract_platform_from_ua(ua);
     let chrome_version = extract_chrome_major(ua);
     let edge_version = extract_edge_major(ua);
-    let mobile = if ua.contains("Mobile") { "?1" } else { "?0" };
-    let grease = pick_grease_brand();
-
-    vec![
-        (
-            "sec-ch-ua".to_owned(),
-            format!(
-                r#""Microsoft Edge";v="{edge_version}", "Chromium";v="{chrome_version}", {grease}"#
-            ),
-        ),
-        ("sec-ch-ua-mobile".to_owned(), mobile.to_owned()),
-        (
-            "sec-ch-ua-platform".to_owned(),
-            format!("\"{platform}\""),
-        ),
-        ("accept-language".to_owned(), "en-US,en;q=0.9".to_owned()),
-        ("upgrade-insecure-requests".to_owned(), "1".to_owned()),
-        ("user-agent".to_owned(), ua.to_string()),
-        (
-            "accept".to_owned(),
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7".to_owned(),
-        ),
-        ("sec-fetch-site".to_owned(), "none".to_owned()),
-        ("sec-fetch-mode".to_owned(), "navigate".to_owned()),
-        ("sec-fetch-user".to_owned(), "?1".to_owned()),
-        ("sec-fetch-dest".to_owned(), "document".to_owned()),
-        ("accept-encoding".to_owned(), "gzip, deflate, br, zstd".to_owned()),
-        ("priority".to_owned(), "u=0, i".to_owned()),
-    ]
+    navigation_headers(
+        sec_ch_ua(chrome_version, "Microsoft Edge", edge_version),
+        chrome_version,
+        ua,
+    )
 }
 
 /// Build a wreq Emulation for Chrome from scratch (not using wreq-util
@@ -343,22 +337,6 @@ fn extract_edge_major(ua: &str) -> &str {
     } else {
         "145"
     }
-}
-
-const GREASE_BRANDS: &[&str] = &[
-    r#""Not_A Brand";v="8""#,
-    r#""Not/A)Brand";v="8""#,
-    r#""Not A(Brand";v="99""#,
-    r#""Not:A-Brand";v="99""#,
-];
-
-fn pick_grease_brand() -> &'static str {
-    use rand::seq::SliceRandom;
-    let mut rng = rand::thread_rng();
-    GREASE_BRANDS
-        .choose(&mut rng)
-        .copied()
-        .unwrap_or(GREASE_BRANDS[0])
 }
 
 // ── Firefox/Safari profile mapping (delegated to wreq-util presets) ────

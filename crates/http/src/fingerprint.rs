@@ -170,27 +170,6 @@ pub fn split_header(h: &str) -> (String, String) {
     }
 }
 
-/// Replace the GREASE brand in a sec-ch-ua header value with a placeholder.
-/// The GREASE brand is seed-permuted by Chrome per connection, so a raw
-/// compare flaps. The Chromium and Google Chrome brands (with version) are
-/// compared exactly.
-pub fn normalize_sec_ch_ua(s: &str) -> String {
-    if s.is_empty() {
-        return String::new();
-    }
-    s.split(", ")
-        .map(|p| {
-            let brand = p.split(';').next().unwrap_or("").trim().trim_matches('"');
-            if brand != "Chromium" && brand != "Google Chrome" && brand != "Microsoft Edge" {
-                "GREASE".to_string()
-            } else {
-                p.trim().to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 // ── Echo-service response parsing ──────────────────────────────────────
 //
 // peet.ws /api/all returns a JSON object with `tls`, `http2`, `user_agent`
@@ -436,9 +415,10 @@ pub fn compare(o: &Observed, r: &Reference) -> (Vec<FieldDiff>, Vec<String>) {
                 });
             }
             if !skip_sec_ch_ua {
-                if normalize_sec_ch_ua(&o.sec_ch_ua) != normalize_sec_ch_ua(&r.sec_ch_ua)
-                    && !r.sec_ch_ua.is_empty()
-                {
+                // Exact: Chrome derives the GREASE brand, its version and the
+                // entry order from the major, so a release always sends the
+                // same string. A flapping value is a defect, not noise.
+                if o.sec_ch_ua != r.sec_ch_ua && !r.sec_ch_ua.is_empty() {
                     diffs.push(FieldDiff {
                         field: "sec_ch_ua".into(),
                         expected: r.sec_ch_ua.clone(),
