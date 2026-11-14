@@ -41,10 +41,8 @@ ox-js = { path = "crates/js" }
 ox-crawler = { path = "crates/crawler" }
 ox-media = { path = "crates/media" }
 ox-mcp = { path = "crates/mcp" }
-ox-twitter = { path = "crates/twitter" }
 axum = "0.8"
 async-trait = "0.1"
-wreq-util = "3.0.0-rc.12"
 wreq = { version = "6.0.0-rc.29", default-features = false }
 clap = { version = "4", features = ["derive", "env"] }
 toml = "0.8"
