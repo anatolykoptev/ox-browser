@@ -222,6 +222,8 @@ pub fn profile_to_emulation(profile: &BrowserProfile) -> Option<Emulation> {
     // are missing `trust_anchors` (0xca34 = 51764,
     // draft-ietf-tls-trust-anchor-ids — see issue #81) and don't control
     // header order. See Issue #80.
+    // A UA newer than the handshake we can build has no emulation.
+    crate::tls::ensure_tls_matches_profile(profile).ok()?;
     match profile.browser {
         "chrome" => Some(crate::tls::chrome_emulation(profile)),
         "edge" => Some(crate::tls::edge_emulation(profile)),

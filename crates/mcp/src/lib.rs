@@ -19,6 +19,7 @@ use rmcp::handler::server::ServerHandler;
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::*;
 use rmcp::service::RequestContext;
+use rmcp::transport::streamable_http_server::StreamableHttpServerConfig;
 use rmcp::transport::streamable_http_server::StreamableHttpService;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 
@@ -118,7 +119,31 @@ impl ServerHandler for OxMcpServer {
     }
 }
 
+/// `Host` authorities always admitted by the MCP transport's DNS-rebinding
+/// guard (RUSTSEC-2026-0189). Mirrors rmcp's own loopback-only default.
+pub const LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+
+/// The effective `Host` allowlist: loopback plus operator-supplied entries.
+///
+/// Operator entries are ADDED to loopback, never substituted for it, and
+/// blank entries are dropped. The result is never empty: rmcp treats an empty
+/// list as "allow every host", which would silently switch the guard off.
+pub fn allowed_hosts(extra: &[String]) -> Vec<String> {
+    let mut hosts: Vec<String> = LOOPBACK_HOSTS.iter().map(|h| (*h).to_owned()).collect();
+    for e in extra {
+        let e = e.trim();
+        if !e.is_empty() && !hosts.iter().any(|h| h.eq_ignore_ascii_case(e)) {
+            hosts.push(e.to_owned());
+        }
+    }
+    hosts
+}
+
 /// Build an Axum router that serves the MCP endpoint at `/mcp`.
+///
+/// `extra_allowed_hosts` are `Host` / `host:port` authorities admitted in
+/// addition to loopback (see [`allowed_hosts`]); every other `Host` is
+/// answered 403 by the transport before any tool runs.
 #[allow(clippy::too_many_arguments)] // DI ctor wiring the shared dep set
 pub fn build_mcp_router(
     provider: Arc<dyn CookieProvider>,
@@ -127,6 +152,7 @@ pub fn build_mcp_router(
     defaults: EndpointDefaults,
     media_config: ox_media::MediaConfig,
     gobrowser_proxy: Arc<ox_js::gobrowser_proxy::GoBrowserProxy>,
+    extra_allowed_hosts: &[String],
 ) -> Router {
     let server = OxMcpServer::new(
         provider,
@@ -139,7 +165,8 @@ pub fn build_mcp_router(
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
         LocalSessionManager::default().into(),
-        Default::default(),
+        StreamableHttpServerConfig::default()
+            .with_allowed_hosts(allowed_hosts(extra_allowed_hosts)),
     );
 
     Router::new().nest_service("/mcp", service)
@@ -149,6 +176,13 @@ pub fn build_mcp_router(
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn allowed_hosts_adds_to_loopback_and_is_never_empty() {
+        assert_eq!(allowed_hosts(&[]), ["localhost", "127.0.0.1", "::1"]);
+        let got = allowed_hosts(&["  ".into(), "mesh.test:8901".into(), "LOCALHOST".into()]);
+        assert_eq!(got, ["localhost", "127.0.0.1", "::1", "mesh.test:8901"]);
+    }
 
     #[test]
     fn dispatch_deadline_skips_inner_bounded_tools() {

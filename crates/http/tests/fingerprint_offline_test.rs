@@ -604,3 +604,40 @@ fn compare_emits_source_diff_with_bucket_field_name() {
         "compare must emit source:peetprint_hash (bucket field name), not source:peetprint"
     );
 }
+
+/// A non-headless reference's `sec-ch-ua` is compared exactly. The GREASE
+/// brand is not masked: Chrome derives it from the major, so a client that
+/// sends a different GREASE entry (or order) differs from the real browser.
+#[test]
+fn sec_ch_ua_is_compared_exactly_when_the_reference_does_not_exclude_it() {
+    let mut reference = load_reference("148");
+    reference.notes.clear(); // a headed capture carries no exclusion note
+    reference.sources.headers = SERVICE_PEET.to_string();
+    reference.sec_ch_ua =
+        r#""Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99""#.to_string();
+
+    let mut observed = Observed::default();
+    observed.sources.headers = SERVICE_PEET.to_string();
+    observed.header_order = reference.header_order.clone();
+
+    // Same brands and versions, a different GREASE entry.
+    observed.sec_ch_ua =
+        r#""Chromium";v="148", "Google Chrome";v="148", "Not_A Brand";v="8""#.to_string();
+    let (diffs, _) = compare(&observed, &reference);
+    assert!(
+        diffs.iter().any(|d| d.field == "sec_ch_ua"),
+        "a different GREASE brand must be reported, got {:?}",
+        diffs.iter().map(|d| &d.field).collect::<Vec<_>>()
+    );
+
+    // Same entries, a different order.
+    observed.sec_ch_ua =
+        r#""Google Chrome";v="148", "Chromium";v="148", "Not/A)Brand";v="99""#.to_string();
+    let (diffs, _) = compare(&observed, &reference);
+    assert!(diffs.iter().any(|d| d.field == "sec_ch_ua"));
+
+    // The identical string is clean.
+    observed.sec_ch_ua = reference.sec_ch_ua.clone();
+    let (diffs, _) = compare(&observed, &reference);
+    assert!(!diffs.iter().any(|d| d.field == "sec_ch_ua"));
+}

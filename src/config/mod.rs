@@ -43,7 +43,7 @@ pub use media::MediaSection;
 pub use proxy::ProxySection;
 pub use ratelimit::RatelimitSection;
 pub use retry::RetrySection;
-pub use server::ServerSection;
+pub use server::{MCP_ALLOWED_HOSTS_ENV, ServerSection};
 pub use solver::SolverSection;
 
 use std::path::Path;
