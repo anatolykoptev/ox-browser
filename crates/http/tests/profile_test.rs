@@ -3,6 +3,64 @@ use ox_http::{
     platform_matched_profile, random_profile,
 };
 
+fn chrome_profile(major: u32) -> BrowserProfile {
+    BrowserProfile {
+        user_agent: Box::leak(
+            format!(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+            )
+            .into_boxed_str(),
+        ),
+        browser: "chrome",
+        os: "linux",
+        mobile: false,
+        accept_language: "en-US,en;q=0.9",
+    }
+}
+
+/// The headers follow the profile's UA major and the handshake is fixed at
+/// 148, so a newer UA must not become a client at all: a 156 header set over
+/// a 148 ClientHello is a mismatch no caller asked for.
+#[test]
+fn profile_newer_than_the_tls_handshake_is_refused() {
+    use ox_http::{
+        HttpClient, HttpConfig, HttpError, build_profiled_wreq_client, profile_to_emulation,
+    };
+    use std::time::Duration;
+
+    let newer: &'static BrowserProfile = Box::leak(Box::new(chrome_profile(156)));
+    assert!(profile_to_emulation(newer).is_none());
+    let err = HttpClient::new(HttpConfig {
+        profile: Some(newer),
+        ..HttpConfig::default()
+    })
+    .err()
+    .expect("a 156 profile over the 148 handshake must be refused");
+    assert!(matches!(err, HttpError::UnsupportedProfile(_)), "{err}");
+    assert!(matches!(
+        build_profiled_wreq_client(newer, "", Duration::from_secs(5), 5),
+        Err(HttpError::UnsupportedProfile(_))
+    ));
+
+    // The handshake's own major and older ones still build.
+    for major in [131, 145, 148] {
+        let p: &'static BrowserProfile = Box::leak(Box::new(chrome_profile(major)));
+        assert!(profile_to_emulation(p).is_some(), "{major}");
+        HttpClient::new(HttpConfig {
+            profile: Some(p),
+            ..HttpConfig::default()
+        })
+        .unwrap_or_else(|e| panic!("{major}: {e}"));
+    }
+    // An Edge profile claiming a newer Chromium is refused the same way.
+    let edge = BrowserProfile {
+        user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+        browser: "edge",
+        ..chrome_profile(156)
+    };
+    assert!(profile_to_emulation(&edge).is_none());
+}
+
 #[test]
 fn builtin_profiles_all_valid() {
     assert_eq!(BUILTIN_PROFILES.len(), 16);

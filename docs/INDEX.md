@@ -12,4 +12,5 @@
 | [ROADMAP](ROADMAP.md) | Phase-by-phase roadmap from the core MVP onward, with completed items ticked |
 | [research/2026-03-06-competitor-analysis](research/2026-03-06-competitor-analysis.md) | Gap analysis of competing passive security scanners |
 | [research/2026-03-06-rust-libraries](research/2026-03-06-rust-libraries.md) | Survey of Rust libraries considered for the project |
+| [wire captures](../crates/http/tests/fixtures/wire/README.md) | Branded Chrome 156 header captures used by the header-layer oracle: provenance, what they cover and what they do not |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Build, the CI gate, commit style and pull-request expectations |

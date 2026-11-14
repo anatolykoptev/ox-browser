@@ -49,6 +49,20 @@ implementation as the reference. Treated as derived works.
 `crates/http/src/body_cap.rs` and `crates/http/src/config.rs` cite webclaw's
 response-size cap as a reference value only. No code was taken.
 
+## go-stealth
+
+- Upstream: <https://github.com/anatolykoptev/go-stealth>, v1.29.0
+- Licence: `Apache-2.0`. Apache-2.0 material may be combined into an AGPL-3.0
+  work; this notice and the licence terms stay with it.
+- Algorithm: `crates/http/src/profile_hints.rs` (`sec_ch_ua`,
+  `sec_ch_ua_full_version_list`) implements the Client Hints brand-list
+  derivation that go-stealth's `secChUa` (`profile.go`) implements. The Rust is
+  written for ox-browser's types; the GREASE character and version tables and
+  the six entry permutations are the same data.
+- Fixtures: `crates/http/tests/fixtures/wire/google_chrome_156_nav.json` and
+  `google_chrome_156_fetch.json` are copied unchanged from go-stealth's
+  `testdata/wire/` (see the README next to them).
+
 ### Original MIT notice
 
 The upstream files above first existed under webclaw's MIT licence. Its notice is
