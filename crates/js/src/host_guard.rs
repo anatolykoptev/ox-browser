@@ -20,17 +20,66 @@
 //!   when both are present, both must be admitted;
 //! - no wildcards: an entry that is not a plain host or `host:port` is dropped
 //!   at startup with a warning.
+//!
+//! `OX_HOST_GUARD_MODE=report` is the rollout aid: a disallowed `Host` is
+//! counted and logged (first sighting per distinct value, capped, never in a
+//! metric label) but the request is let through. Default and any other value:
+//! enforce.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-/// `Host` names and addresses always admitted, on any port.
+/// `Host` names and addresses always admitted, on any port. The single source
+/// for [`is_loopback`] and the startup log.
 pub const LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+
+/// Body of the 403 this guard answers with; tests use it to tell a guard
+/// rejection from a handler's or the auth gate's own 403.
+pub const REJECTION_BODY: &str = "forbidden: Host not allowed";
+
+/// Env var selecting [`Mode`].
+pub const MODE_ENV: &str = "OX_HOST_GUARD_MODE";
+
+/// Most distinct rejected `Host` values logged individually; after that one
+/// "cap reached" line is logged and the counter keeps counting.
+const MAX_LOGGED_HOSTS: usize = 64;
+
+/// Longest rejected `Host` value kept for a log line.
+const MAX_LOGGED_HOST_LEN: usize = 80;
+
+/// What the guard does with a disallowed `Host`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// Answer 403 (default; any unknown value also enforces).
+    #[default]
+    Enforce,
+    /// Rollout aid: count and log the disallowed `Host`, then let the
+    /// request through.
+    Report,
+}
+
+impl Mode {
+    /// Parse the raw env value; only `report` (any case) selects report mode.
+    pub fn from_env_value(raw: Option<&str>) -> Self {
+        match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+            Some("report") => Self::Report,
+            _ => Self::Enforce,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Enforce => "enforce",
+            Self::Report => "report",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HostKey {
@@ -101,19 +150,22 @@ fn parse_entry(raw: &str) -> Option<Authority> {
     parse_authority(raw)
 }
 
+static LOOPBACK: LazyLock<Vec<HostKey>> = LazyLock::new(|| {
+    LOOPBACK_HOSTS
+        .iter()
+        .map(|h| parse_entry(h).expect("LOOPBACK_HOSTS entry parses").host)
+        .collect()
+});
+
 fn is_loopback(host: &HostKey) -> bool {
-    match host {
-        HostKey::Ip(ip) => {
-            *ip == IpAddr::V4(Ipv4Addr::LOCALHOST) || *ip == IpAddr::V6(Ipv6Addr::LOCALHOST)
-        }
-        HostKey::Name(n) => n == "localhost",
-    }
+    LOOPBACK.contains(host)
 }
 
 /// The effective `Host` allowlist: loopback plus operator-supplied entries.
 #[derive(Debug, Clone, Default)]
 pub struct HostAllowlist {
     extra: Vec<(String, Authority)>,
+    mode: Mode,
 }
 
 impl HostAllowlist {
@@ -134,7 +186,22 @@ impl HostAllowlist {
                 ),
             }
         }
-        Self { extra: out }
+        Self {
+            extra: out,
+            mode: Mode::Enforce,
+        }
+    }
+
+    /// The same allowlist with `mode` (default [`Mode::Enforce`]).
+    #[must_use]
+    pub fn with_mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// The configured mode.
+    pub fn mode(&self) -> Mode {
+        self.mode
     }
 
     /// Operator entries as written (loopback is implicit).
@@ -142,21 +209,31 @@ impl HostAllowlist {
         self.extra.iter().map(|(raw, _)| raw.as_str()).collect()
     }
 
-    /// Log the effective allowlist once at startup: WARN when only loopback
-    /// is admitted (callers on another address are rejected), INFO otherwise.
+    /// Log the effective allowlist and mode once at startup: WARN when only
+    /// loopback is admitted or the guard is in report mode (it is not
+    /// protecting yet), INFO otherwise.
     pub fn log_effective(&self) {
         let extra = self.extra_entries();
-        if extra.is_empty() {
+        let allowed = if extra.is_empty() {
+            LOOPBACK_HOSTS.join(",")
+        } else {
+            format!("{},{}", LOOPBACK_HOSTS.join(","), extra.join(","))
+        };
+        let mode = self.mode.as_str();
+        if self.mode == Mode::Report {
             tracing::warn!(
-                allowed = %LOOPBACK_HOSTS.join(","),
+                allowed = %allowed, mode,
+                "Host guard is in REPORT mode: disallowed Hosts are logged and counted but \
+                 NOT rejected; set OX_HOST_GUARD_MODE=enforce once the log is clean"
+            );
+        } else if extra.is_empty() {
+            tracing::warn!(
+                allowed = %allowed, mode,
                 "Host allowlist is loopback only: requests addressed to any other Host get 403; \
                  set OX_ALLOWED_HOSTS for callers that reach this service by name or address"
             );
         } else {
-            tracing::info!(
-                allowed = %format!("{},{}", LOOPBACK_HOSTS.join(","), extra.join(",")),
-                "Host allowlist"
-            );
+            tracing::info!(allowed = %allowed, mode, "Host allowlist");
         }
     }
 
@@ -200,28 +277,107 @@ impl HostAllowlist {
     }
 }
 
-/// axum middleware: `from_fn_with_state(Arc<HostAllowlist>, host_guard::middleware)`.
-pub async fn middleware(
-    State(allow): State<Arc<HostAllowlist>>,
-    req: Request,
-    next: Next,
-) -> Response {
-    if allow.admits_request(&req) {
+/// Distinct rejected `Host` values seen so far, bounded so a flood of random
+/// names cannot grow memory or the log.
+#[derive(Debug, Default)]
+struct Sightings {
+    seen: Mutex<HashSet<String>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Sighting {
+    /// First time this value is seen: log it.
+    New,
+    /// The cap was just reached by this value: log once that logging stops.
+    CapReached,
+    /// Already logged, or past the cap.
+    Quiet,
+}
+
+impl Sightings {
+    fn note(&self, host: &str) -> Sighting {
+        let mut seen = self
+            .seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if seen.len() > MAX_LOGGED_HOSTS {
+            return Sighting::Quiet;
+        }
+        if seen.contains(host) {
+            return Sighting::Quiet;
+        }
+        if seen.len() == MAX_LOGGED_HOSTS {
+            // Sentinel keeps the "cap reached" line to one.
+            seen.insert("\0cap".to_owned());
+            return Sighting::CapReached;
+        }
+        seen.insert(host.to_owned());
+        Sighting::New
+    }
+}
+
+/// The `Host` value(s) of a request for a log line: escaped and truncated
+/// (it is attacker-controlled), `<missing>` / `<repeated>` for the odd shapes.
+fn describe_host(req: &Request) -> String {
+    let mut it = req.headers().get_all(header::HOST).iter();
+    let raw = match (it.next(), it.next()) {
+        (Some(_), Some(_)) => "<repeated>".to_owned(),
+        (Some(v), None) => v
+            .to_str()
+            .map_or_else(|_| "<non-ascii>".to_owned(), str::to_owned),
+        (None, _) => req
+            .uri()
+            .authority()
+            .map_or_else(|| "<missing>".to_owned(), |a| a.as_str().to_owned()),
+    };
+    raw.chars()
+        .take(MAX_LOGGED_HOST_LEN)
+        .flat_map(char::escape_debug)
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+#[derive(Debug)]
+struct Guard {
+    allow: HostAllowlist,
+    sightings: Sightings,
+}
+
+/// axum middleware: `from_fn_with_state(Arc<Guard>, host_guard::middleware)`
+/// (built by [`protect_hosts`]).
+async fn middleware(State(guard): State<Arc<Guard>>, req: Request, next: Next) -> Response {
+    if guard.allow.admits_request(&req) {
         return next.run(req).await;
     }
     let route = crate::inbound_auth::route_class(req.uri().path());
     ox_http::metrics::record_host_rejected(route);
-    tracing::debug!(route, "host_guard: rejected request with a disallowed Host");
-    (StatusCode::FORBIDDEN, "forbidden: Host not allowed").into_response()
+    let mode = guard.allow.mode.as_str();
+    let shown = describe_host(&req);
+    match guard.sightings.note(&shown) {
+        Sighting::New => tracing::warn!(
+            host = %shown, route, mode,
+            "host_guard: disallowed Host (first sighting; add it to OX_ALLOWED_HOSTS if it is a real caller)"
+        ),
+        Sighting::CapReached => tracing::warn!(
+            mode,
+            "host_guard: {MAX_LOGGED_HOSTS} distinct disallowed Hosts logged; further ones are only counted"
+        ),
+        Sighting::Quiet => {}
+    }
+    if guard.allow.mode == Mode::Report {
+        return next.run(req).await;
+    }
+    (StatusCode::FORBIDDEN, REJECTION_BODY).into_response()
 }
 
 /// Wrap `router` with the guard. Like `inbound_auth::protect` it wraps the
 /// whole router service, so it also covers unmatched paths and merged routers.
 pub fn protect_hosts(router: axum::Router, allow: HostAllowlist) -> axum::Router {
-    router.layer(axum::middleware::from_fn_with_state(
-        Arc::new(allow),
-        middleware,
-    ))
+    let guard = Arc::new(Guard {
+        allow,
+        sightings: Sightings::default(),
+    });
+    router.layer(axum::middleware::from_fn_with_state(guard, middleware))
 }
 
 #[cfg(test)]
@@ -272,7 +428,13 @@ mod tests {
 
     #[test]
     fn extras_are_added_case_insensitive_and_port_aware() {
-        let a = list(&["Mesh.Test", "pinned.test:8901", "192.0.2.7:8901", "::1", " "]);
+        let a = list(&[
+            "Mesh.Test",
+            "pinned.test:8901",
+            "192.0.2.7:8901",
+            "::1",
+            " ",
+        ]);
         assert!(a.admits_raw("mesh.test"));
         assert!(a.admits_raw("MESH.TEST:1234"));
         assert!(a.admits_raw("pinned.test:8901"));
@@ -291,5 +453,45 @@ mod tests {
         let a = list(&["*", "*.test", "a b", "http://x.test", "x.test:notaport"]);
         assert!(a.extra_entries().is_empty());
         assert!(!a.admits_raw("anything.test"));
+    }
+
+    #[test]
+    fn every_loopback_host_is_admitted_on_any_port() {
+        let a = list(&[]);
+        for h in LOOPBACK_HOSTS {
+            let bracketed = if h.contains(':') {
+                format!("[{h}]")
+            } else {
+                h.to_owned()
+            };
+            for form in [bracketed.clone(), format!("{bracketed}:8901")] {
+                assert!(a.admits_raw(&form), "{form}");
+            }
+        }
+        assert_eq!(LOOPBACK.len(), LOOPBACK_HOSTS.len());
+    }
+
+    #[test]
+    fn mode_defaults_to_enforce_and_only_report_relaxes() {
+        assert_eq!(Mode::from_env_value(None), Mode::Enforce);
+        assert_eq!(Mode::from_env_value(Some("")), Mode::Enforce);
+        assert_eq!(Mode::from_env_value(Some("enforce")), Mode::Enforce);
+        assert_eq!(Mode::from_env_value(Some("reprot")), Mode::Enforce);
+        assert_eq!(Mode::from_env_value(Some(" Report ")), Mode::Report);
+        assert_eq!(HostAllowlist::default().mode(), Mode::Enforce);
+    }
+
+    #[test]
+    fn sightings_log_each_value_once_and_stop_at_the_cap() {
+        let s = Sightings::default();
+        assert_eq!(s.note("a.test"), Sighting::New);
+        assert_eq!(s.note("a.test"), Sighting::Quiet);
+        for i in 1..MAX_LOGGED_HOSTS {
+            assert_eq!(s.note(&format!("h{i}.test")), Sighting::New, "{i}");
+        }
+        assert_eq!(s.note("over.test"), Sighting::CapReached);
+        assert_eq!(s.note("over2.test"), Sighting::Quiet);
+        assert_eq!(s.note("over.test"), Sighting::Quiet);
+        assert_eq!(s.note("a.test"), Sighting::Quiet);
     }
 }

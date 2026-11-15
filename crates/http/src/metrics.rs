@@ -453,8 +453,9 @@ pub fn record_auth_result(result: &str) {
     }
 }
 
-/// Requests answered 403 by the inbound `Host` allowlist (ox-js `host_guard`),
-/// one counter per route class. A caller addressing ox-browser by a name or
+/// Requests with a `Host` outside the inbound allowlist (ox-js `host_guard`;
+/// 403 in enforce mode, counted and admitted in report mode), one counter per
+/// route class. A caller addressing ox-browser by a name or
 /// address missing from `OX_ALLOWED_HOSTS` shows up here.
 pub static HOST_REJECTED_REST: AtomicU64 = AtomicU64::new(0);
 /// See [`HOST_REJECTED_REST`].
@@ -719,7 +720,7 @@ pub fn render() -> String {
         },
         LabelledCounter {
             name: "oxbrowser_host_rejected_total",
-            help: "Requests answered 403 by the inbound Host allowlist (DNS-rebinding guard), by route class (rest, mcp, chrome, metrics, health). Non-zero from a known caller means its Host is missing from OX_ALLOWED_HOSTS.",
+            help: "Requests with a Host outside the inbound allowlist (DNS-rebinding guard), by route class (rest, mcp, chrome, metrics, health). Answered 403 in enforce mode; in OX_HOST_GUARD_MODE=report the request is let through and only counted. Non-zero from a known caller means its Host is missing from OX_ALLOWED_HOSTS.",
             label: "route",
             rows: HOST_REJECTED_ROWS,
         },

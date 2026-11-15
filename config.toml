@@ -10,7 +10,8 @@
 # is a name or address, optionally with a port ("name", "name:8901", "[::1]:8901");
 # a bare name admits any port, case-insensitive, no wildcards. Also settable via
 # OX_ALLOWED_HOSTS (comma-separated; the older OX_MCP_ALLOWED_HOSTS and the
-# mcp_allowed_hosts key are still read and merged).
+# mcp_allowed_hosts key are still read and merged). OX_HOST_GUARD_MODE=report
+# logs and counts a disallowed Host but lets it through (rollout aid); default enforce.
 # allowed_hosts = ["private-addr:8901"]
 
 [http]

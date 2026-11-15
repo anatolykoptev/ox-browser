@@ -58,6 +58,8 @@ merge.
   `OX_ALLOWED_HOSTS` (legacy `OX_MCP_ALLOWED_HOSTS` is merged), `/health` and `/metrics` included; the
   `/mcp` transport's own check is off so there is one matcher. A new caller that reaches the service by
   a name or address needs that entry, and `oxbrowser_host_rejected_total` shows the miss.
+  `OX_HOST_GUARD_MODE=report` logs (first sighting per Host, capped) and counts but admits, for
+  rollout; the default and any other value enforce.
 - **Onion targets never leave through clearnet.** `.onion` goes only through `OX_TOR_PROXY`, is
   never resolved locally, and endpoints that would hand the URL to a third party refuse it. Keep
   that when adding an endpoint or a fallback.

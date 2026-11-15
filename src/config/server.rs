@@ -11,9 +11,12 @@ pub struct ServerSection {
     /// DNS-rebinding guard, RUSTSEC-2026-0189), added to loopback, which is
     /// always admitted. Merged with the `OX_ALLOWED_HOSTS` and legacy
     /// `OX_MCP_ALLOWED_HOSTS` env vars (comma-separated). Empty = loopback
-    /// only. `mcp_allowed_hosts` is the pre-0.9.2 key name.
-    #[serde(alias = "mcp_allowed_hosts")]
+    /// only.
     pub allowed_hosts: Vec<String>,
+    /// Former name of `allowed_hosts` (0.9.1 and earlier, when the allowlist
+    /// guarded only `/mcp`). Still read and merged with `allowed_hosts`, so a
+    /// file may carry either key or both.
+    pub mcp_allowed_hosts: Vec<String>,
 }
 
 impl Default for ServerSection {
@@ -22,6 +25,7 @@ impl Default for ServerSection {
             port: 8901,
             bind: "0.0.0.0".into(),
             allowed_hosts: Vec::new(),
+            mcp_allowed_hosts: Vec::new(),
         }
     }
 }
@@ -39,6 +43,7 @@ impl ServerSection {
     pub fn allowed_hosts_with(&self, raw_envs: &[Option<&str>]) -> Vec<String> {
         self.allowed_hosts
             .iter()
+            .chain(&self.mcp_allowed_hosts)
             .map(String::as_str)
             .chain(
                 raw_envs
@@ -81,10 +86,18 @@ mod tests {
     }
 
     #[test]
-    fn toml_accepts_the_legacy_key_name() {
-        let s: ServerSection = toml::from_str(r#"mcp_allowed_hosts = ["old.test"]"#).unwrap();
-        assert_eq!(s.allowed_hosts, ["old.test"]);
-        let s: ServerSection = toml::from_str(r#"allowed_hosts = ["new.test"]"#).unwrap();
-        assert_eq!(s.allowed_hosts, ["new.test"]);
+    fn toml_accepts_the_legacy_key_and_both_at_once() {
+        let load = |t: &str| {
+            toml::from_str::<ServerSection>(t)
+                .unwrap()
+                .allowed_hosts_with(&[])
+        };
+        assert_eq!(load(r#"mcp_allowed_hosts = ["old.test"]"#), ["old.test"]);
+        assert_eq!(load(r#"allowed_hosts = ["new.test"]"#), ["new.test"]);
+        // Both keys in one file merge instead of failing to load.
+        assert_eq!(
+            load("allowed_hosts = [\"new.test\"]\nmcp_allowed_hosts = [\"old.test\"]"),
+            ["new.test", "old.test"]
+        );
     }
 }
