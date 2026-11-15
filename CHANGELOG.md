@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/anatolykoptev/ox-browser/compare/v0.9.1...v0.9.2) (2026-11-15)
+
+
+### Fixed
+
+* **http:** Host allowlist on every route, not just /mcp ([#223](https://github.com/anatolykoptev/ox-browser/issues/223)) ([e5984e7](https://github.com/anatolykoptev/ox-browser/commit/e5984e7589acef425bb70425c32ac9ec988e2122))
+
 ## [0.9.1](https://github.com/anatolykoptev/ox-browser/compare/v0.9.0...v0.9.1) (2026-11-15)
 
 
