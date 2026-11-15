@@ -9,6 +9,7 @@ mod deadline_layer;
 mod fetch;
 mod fetch_smart;
 pub mod gobrowser_proxy;
+pub mod host_guard;
 mod image_search;
 pub mod inbound_auth;
 mod media_download;

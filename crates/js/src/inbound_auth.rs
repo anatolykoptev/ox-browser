@@ -378,13 +378,15 @@ fn is_exempt(method: &Method, path: &str) -> bool {
     (method == Method::GET || method == Method::HEAD) && path == "/health"
 }
 
-fn route_class(path: &str) -> &'static str {
+pub(crate) fn route_class(path: &str) -> &'static str {
     if path == "/mcp" || path.starts_with("/mcp/") {
         "mcp"
     } else if path.starts_with("/chrome/") {
         "chrome"
     } else if path == "/metrics" {
         "metrics"
+    } else if path == "/health" {
+        "health"
     } else {
         "rest"
     }

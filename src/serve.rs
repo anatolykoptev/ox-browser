@@ -145,21 +145,12 @@ pub async fn run(config: ServerConfig) -> anyhow::Result<()> {
         Arc::clone(&gobrowser_proxy),
     );
     let gate = ox_js::inbound_auth::Gate::new(ox_js::inbound_auth::AuthConfig::from_env());
-    let mcp_hosts = config
-        .server
-        .mcp_allowed_hosts_with(std::env::var(config::MCP_ALLOWED_HOSTS_ENV).ok().as_deref());
-    tracing::info!(
-        extra_hosts = mcp_hosts.len(),
-        "MCP Host allowlist: loopback plus extras"
-    );
-    let app = build_app(
-        state,
-        defaults,
-        media_config,
-        gobrowser_proxy,
-        gate,
-        &mcp_hosts,
-    );
+    let hosts = ox_js::host_guard::HostAllowlist::new(&config.server.allowed_hosts_from_env())
+        .with_mode(ox_js::host_guard::Mode::from_env_value(
+            std::env::var(ox_js::host_guard::MODE_ENV).ok().as_deref(),
+        ));
+    hosts.log_effective();
+    let app = build_app(state, defaults, media_config, gobrowser_proxy, gate, hosts);
 
     // Background task: clean up media files older than 7 days (runs every 24h)
     ox_media::cleanup::spawn_cleanup_task();
@@ -261,10 +252,12 @@ fn validate_media_proxy(media_config: &ox_media::MediaConfig) -> anyhow::Result<
     Ok(())
 }
 
-/// Assemble the served app: the REST router merged with the MCP router, the
-/// whole thing wrapped by the inbound auth gate so every route and every
-/// unmatched path goes through it (ox_js::inbound_auth). `run` and the tests
-/// below both call this, so removing the gate here turns a test RED.
+/// Assemble the served app: the REST router merged with the MCP router,
+/// wrapped by the inbound auth gate (ox_js::inbound_auth) and then, outermost,
+/// by the `Host` allowlist (ox_js::host_guard), so every route and every
+/// unmatched path goes through both and a foreign `Host` is refused before any
+/// credential is looked at. `run` and the tests below both call this, so
+/// removing either layer here turns a test RED.
 #[allow(clippy::too_many_arguments)] // DI ctor wiring the shared dep set
 pub(crate) fn build_app(
     state: ox_js::AppState,
@@ -272,7 +265,7 @@ pub(crate) fn build_app(
     media_config: ox_media::MediaConfig,
     gobrowser_proxy: Arc<ox_js::gobrowser_proxy::GoBrowserProxy>,
     gate: ox_js::inbound_auth::Gate,
-    mcp_allowed_hosts: &[String],
+    hosts: ox_js::host_guard::HostAllowlist,
 ) -> axum::Router {
     let rest_router = ox_js::router(state.clone());
     let mcp_router = ox_mcp::build_mcp_router(
@@ -282,9 +275,9 @@ pub(crate) fn build_app(
         defaults,
         media_config,
         gobrowser_proxy,
-        mcp_allowed_hosts,
     );
-    ox_js::inbound_auth::protect(rest_router.merge(mcp_router), gate)
+    let gated = ox_js::inbound_auth::protect(rest_router.merge(mcp_router), gate);
+    ox_js::host_guard::protect_hosts(gated, hosts)
 }
 
 #[cfg(test)]
@@ -328,13 +321,30 @@ mod tests {
         app_with_hosts(wowa_url, wowa_secret, mode, http_cfg, &[])
     }
 
-    /// `app_with_http` plus extra MCP `Host` allowlist entries.
+    /// `app_with_http` plus extra `Host` allowlist entries.
     fn app_with_hosts(
         wowa_url: String,
         wowa_secret: &str,
         mode: Mode,
         http_cfg: ox_http::HttpConfig,
-        mcp_hosts: &[String],
+        extra_hosts: &[String],
+    ) -> axum::Router {
+        app_with_guard(
+            wowa_url,
+            wowa_secret,
+            mode,
+            http_cfg,
+            ox_js::host_guard::HostAllowlist::new(extra_hosts),
+        )
+    }
+
+    /// `app_with_hosts` with a ready-made `Host` allowlist (carries its mode).
+    fn app_with_guard(
+        wowa_url: String,
+        wowa_secret: &str,
+        mode: Mode,
+        http_cfg: ox_http::HttpConfig,
+        allow: ox_js::host_guard::HostAllowlist,
     ) -> axum::Router {
         let proxy = Arc::new(ox_js::gobrowser_proxy::GoBrowserProxy::new(
             wowa_url,
@@ -360,7 +370,7 @@ mod tests {
             ox_media::MediaConfig::default(),
             proxy,
             gate,
-            mcp_hosts,
+            allow,
         )
     }
 
@@ -436,9 +446,8 @@ mod tests {
     /// foreign `Host` even with valid credentials, admits loopback, and
     /// admits an operator-listed authority only when it is configured.
     ///
-    /// Falsification: in `ox_mcp::build_mcp_router` replace
-    /// `.with_allowed_hosts(allowed_hosts(extra_allowed_hosts))` with
-    /// `.disable_allowed_hosts()` (crates/mcp/src/lib.rs) and the foreign-host
+    /// Falsification: in `build_app` return `gated` instead of
+    /// `ox_js::host_guard::protect_hosts(gated, hosts)` and the foreign-host
     /// rows return the MCP handler's status instead of 403 -> RED.
     #[tokio::test]
     async fn mcp_rejects_foreign_host_and_admits_configured_ones() {
@@ -471,6 +480,331 @@ mod tests {
         assert_eq!(mcp_status_with_host(&extra, "mesh.test:9999").await, 403);
         assert_eq!(mcp_status_with_host(&extra, "attacker.test").await, 403);
         assert_eq!(mcp_status_with_host(&extra, "localhost").await, 200);
+    }
+
+    fn host_app(extra: &[&str]) -> axum::Router {
+        let extra: Vec<String> = extra.iter().map(|h| (*h).to_owned()).collect();
+        app_with_hosts(
+            "http://127.0.0.1:1".into(),
+            "",
+            Mode::Enforce,
+            ox_http::HttpConfig::default(),
+            &extra,
+        )
+    }
+
+    /// `method path` with a valid credential and an explicit (or absent) `Host`.
+    async fn host_status(a: &axum::Router, method: &str, path: &str, host: Option<&str>) -> u16 {
+        let mut b = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("x-internal-secret", "s")
+            .header("content-type", "application/json");
+        if let Some(h) = host {
+            b = b.header("host", h);
+        }
+        a.clone()
+            .oneshot(b.body(axum::body::Body::from("{}")).unwrap())
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    }
+
+    /// DNS rebinding on the REST surface: a foreign `Host` is 403 on the
+    /// fetching routes even with a valid credential; loopback (any port) and
+    /// an operator-listed name reach the handlers.
+    ///
+    /// Falsification: in `build_app` return `gated` instead of
+    /// `ox_js::host_guard::protect_hosts(gated, hosts)` -> the foreign-host
+    /// rows reach the handlers (not 403) -> RED.
+    #[tokio::test]
+    async fn rest_rejects_foreign_host_and_admits_loopback_and_listed() {
+        let a = host_app(&["svc.test"]);
+        for path in ["/read", "/fetch", "/solve", "/crawl", "/chrome/interact"] {
+            for host in ["attacker.test", "attacker.test:8901", "svc.test.evil.test"] {
+                assert_eq!(
+                    host_status(&a, "POST", path, Some(host)).await,
+                    403,
+                    "{path} {host}"
+                );
+            }
+            for host in [
+                "localhost:8901",
+                "127.0.0.1:8901",
+                "[::1]:8901",
+                "svc.test:8901",
+            ] {
+                assert_ne!(
+                    host_status(&a, "POST", path, Some(host)).await,
+                    403,
+                    "{path} {host}"
+                );
+            }
+        }
+        for host in [
+            "localhost",
+            "localhost:8901",
+            "127.0.0.1:8901",
+            "[::1]:8901",
+            "svc.test",
+        ] {
+            assert_eq!(
+                host_status(&a, "GET", "/health", Some(host)).await,
+                200,
+                "{host}"
+            );
+        }
+        assert_eq!(
+            host_status(&a, "GET", "/health", Some("attacker.test")).await,
+            403
+        );
+    }
+
+    /// A request with no `Host` (and no URI authority) is refused.
+    ///
+    /// Falsification: in `HostAllowlist::admits_request`
+    /// (crates/js/src/host_guard.rs) return `true` instead of `seen` -> RED.
+    #[tokio::test]
+    async fn missing_host_is_forbidden() {
+        let a = host_app(&[]);
+        for (m, p) in [("GET", "/health"), ("POST", "/read"), ("POST", "/mcp")] {
+            assert_eq!(host_status(&a, m, p, None).await, 403, "{m} {p}");
+        }
+    }
+
+    /// Case-insensitive names, bracketed IPv6, port-specific entries.
+    ///
+    /// Falsification: drop `.to_ascii_lowercase()` in `parse_authority`
+    /// (crates/js/src/host_guard.rs) -> the upper-case rows are 403 -> RED.
+    /// Compare `e.port == a.port` unconditionally in `HostAllowlist::admits`
+    /// (never treat a portless entry as any-port) -> the any-port rows -> RED.
+    #[tokio::test]
+    async fn host_matching_is_case_insensitive_port_aware_and_ipv6_safe() {
+        let a = host_app(&["Mesh.Test", "pinned.test:8901"]);
+        for ok in [
+            "MESH.test",
+            "mesh.test:1",
+            "mesh.test:8901",
+            "pinned.test:8901",
+            "PINNED.TEST:8901",
+            "[::1]:9",
+            "[0:0:0:0:0:0:0:1]",
+            "LOCALHOST:8901",
+        ] {
+            assert_eq!(
+                host_status(&a, "GET", "/health", Some(ok)).await,
+                200,
+                "{ok}"
+            );
+        }
+        for bad in [
+            "pinned.test:9999",
+            "pinned.test",
+            "::1",
+            "[::2]:8901",
+            "mesh.test:x",
+        ] {
+            assert_eq!(
+                host_status(&a, "GET", "/health", Some(bad)).await,
+                403,
+                "{bad}"
+            );
+        }
+    }
+
+    /// Absolute-form request line and `Host` disagree: both must be admitted.
+    #[tokio::test]
+    async fn host_header_and_uri_authority_must_both_be_admitted() {
+        let a = host_app(&[]);
+        let status = |uri: &'static str, host: &'static str| {
+            let a = a.clone();
+            async move {
+                let r = axum::http::Request::get(uri)
+                    .header("host", host)
+                    .body(axum::body::Body::empty())
+                    .unwrap();
+                a.oneshot(r).await.unwrap().status().as_u16()
+            }
+        };
+        assert_eq!(status("http://localhost/health", "localhost").await, 200);
+        assert_eq!(
+            status("http://attacker.test/health", "localhost").await,
+            403
+        );
+        assert_eq!(
+            status("http://localhost/health", "attacker.test").await,
+            403
+        );
+    }
+
+    /// A repeated `Host` header is refused (request-smuggling shape).
+    #[tokio::test]
+    async fn repeated_host_header_is_forbidden() {
+        let a = host_app(&[]);
+        let r = axum::http::Request::get("/health")
+            .header("host", "localhost")
+            .header("host", "localhost")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(a.oneshot(r).await.unwrap().status().as_u16(), 403);
+    }
+
+    /// A rejection is visible on `/metrics` as `oxbrowser_host_rejected_total`.
+    ///
+    /// Falsification: delete the `record_host_rejected(route)` call in
+    /// `host_guard::middleware` (crates/js/src/host_guard.rs) -> RED.
+    #[tokio::test]
+    async fn rejection_is_counted_by_route_class() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let a = host_app(&[]);
+        let mcp = ox_http::metrics::HOST_REJECTED_MCP.load(Relaxed);
+        let rest = ox_http::metrics::HOST_REJECTED_REST.load(Relaxed);
+        assert_eq!(
+            host_status(&a, "POST", "/mcp", Some("attacker.test")).await,
+            403
+        );
+        assert_eq!(
+            host_status(&a, "POST", "/read", Some("attacker.test")).await,
+            403
+        );
+        assert!(ox_http::metrics::HOST_REJECTED_MCP.load(Relaxed) > mcp);
+        assert!(ox_http::metrics::HOST_REJECTED_REST.load(Relaxed) > rest);
+        assert!(
+            ox_http::metrics::render().contains("oxbrowser_host_rejected_total{route=\"mcp\"}")
+        );
+    }
+
+    /// Paths the served router mounts, read from the router itself (axum
+    /// exposes no route list; its `Debug` output carries each route's path
+    /// template). Parameter segments are replaced by a literal.
+    fn mounted_paths(app: &axum::Router) -> std::collections::BTreeSet<String> {
+        let dump = format!("{app:?}");
+        let mut out = std::collections::BTreeSet::new();
+        let mut rest = dump.as_str();
+        while let Some(i) = rest.find("\"/") {
+            rest = &rest[i + 1..];
+            let Some(end) = rest.find('"') else { break };
+            let tmpl = &rest[..end];
+            rest = &rest[end..];
+            if tmpl.contains(char::is_whitespace) {
+                continue;
+            }
+            let mut path = String::new();
+            let mut chars = tmpl.chars();
+            while let Some(c) = chars.next() {
+                if c == '{' {
+                    for c in chars.by_ref() {
+                        if c == '}' {
+                            break;
+                        }
+                    }
+                    path.push('x');
+                } else {
+                    path.push(c);
+                }
+            }
+            out.insert(path);
+        }
+        out
+    }
+
+    /// `method path` with a valid credential and `host`; returns status and body.
+    async fn host_response(
+        a: &axum::Router,
+        method: &str,
+        path: &str,
+        host: &str,
+    ) -> (u16, String) {
+        let r = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("x-internal-secret", "s")
+            .header("host", host)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from("{}"))
+            .unwrap();
+        let resp = a.clone().oneshot(r).await.unwrap();
+        let status = resp.status().as_u16();
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// Path templates in the served router today: 17 declared routes plus 4
+    /// axum-internal ones (the fallback catch-all, `/`, `/mcp/` and the `/mcp`
+    /// nest tail). Pinned on purpose: adding a route fails this test until the
+    /// number is bumped, so the new route gets looked at against the guard. The
+    /// loop below, not this number, proves coverage.
+    const MOUNTED_ROUTE_COUNT: usize = 21;
+
+    /// Every route the served app mounts, plus an unmatched path, answers 403
+    /// FROM THE HOST GUARD (its own body, not a handler's or the auth gate's
+    /// 403) to a foreign `Host` for any method. The route list is read from the
+    /// router that `build_app` returns, so a route added outside the layer, or
+    /// a layer taken off, turns this RED without a list to update.
+    ///
+    /// Falsification: in `build_app` return `gated` instead of
+    /// `ox_js::host_guard::protect_hosts(gated, hosts)` -> every row -> RED.
+    #[tokio::test]
+    async fn every_mounted_route_is_behind_the_host_guard() {
+        let a = host_app(&[]);
+        let mut paths = mounted_paths(&a);
+        // The parse must have found the router, or the loop below is vacuous.
+        for must in ["/health", "/metrics", "/read", "/fetch", "/mcp"] {
+            assert!(paths.contains(must), "route dump lacks {must}: {paths:?}");
+        }
+        assert_eq!(
+            paths.len(),
+            MOUNTED_ROUTE_COUNT,
+            "mounted route count changed: check the new route is covered by the \
+             guard, then update MOUNTED_ROUTE_COUNT. Routes: {paths:?}"
+        );
+        paths.insert("/definitely-not-a-route".into());
+        for path in &paths {
+            for method in ["GET", "POST", "DELETE"] {
+                let (status, body) = host_response(&a, method, path, "attacker.test").await;
+                assert_eq!(
+                    (status, body.as_str()),
+                    (403, ox_js::host_guard::REJECTION_BODY),
+                    "{method} {path}"
+                );
+            }
+        }
+    }
+
+    /// Report mode lets a disallowed `Host` through (and counts it); enforce
+    /// mode, the default, blocks it.
+    ///
+    /// Falsification: in `host_guard::middleware` delete the
+    /// `if guard.allow.mode == Mode::Report { return next.run(req).await; }`
+    /// early return (crates/js/src/host_guard.rs) -> the report rows get 403 -> RED.
+    #[tokio::test]
+    async fn report_mode_admits_and_counts_enforce_mode_blocks() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let report = app_with_guard(
+            "http://127.0.0.1:1".into(),
+            "",
+            Mode::Enforce,
+            ox_http::HttpConfig::default(),
+            ox_js::host_guard::HostAllowlist::default().with_mode(ox_js::host_guard::Mode::Report),
+        );
+        let before = ox_http::metrics::HOST_REJECTED_HEALTH.load(Relaxed);
+        let (status, body) = host_response(&report, "GET", "/health", "attacker.test").await;
+        assert_eq!((status, body.as_str()), (200, "ok"));
+        assert!(ox_http::metrics::HOST_REJECTED_HEALTH.load(Relaxed) > before);
+        let (status, _) = host_response(&report, "POST", "/read", "attacker.test").await;
+        assert_ne!(status, 403, "report mode must not block /read");
+        let (status, _) = host_response(&report, "POST", "/mcp", "attacker.test").await;
+        assert_ne!(status, 403, "report mode must not block /mcp");
+
+        let enforce = host_app(&[]);
+        let (status, body) = host_response(&enforce, "GET", "/health", "attacker.test").await;
+        assert_eq!(
+            (status, body.as_str()),
+            (403, ox_js::host_guard::REJECTION_BODY)
+        );
     }
 
     async fn mcp_post(
@@ -588,7 +922,9 @@ mod tests {
             Mode::Soft,
             read_fallback_cfg(&wowa),
         );
-        let mut b = axum::http::Request::post("/read").header("content-type", "application/json");
+        let mut b = axum::http::Request::post("/read")
+            .header("host", "localhost")
+            .header("content-type", "application/json");
         if let Some(s) = inbound_secret {
             b = b.header("x-internal-secret", s);
         }
@@ -641,7 +977,7 @@ mod tests {
             ox_media::MediaConfig::default(),
             proxy,
             gate,
-            &[],
+            ox_js::host_guard::HostAllowlist::default(),
         )
     }
 
@@ -662,8 +998,9 @@ mod tests {
             )
             .await;
             let a = app_with_solver(&wowa);
-            let mut b =
-                axum::http::Request::post("/solve").header("content-type", "application/json");
+            let mut b = axum::http::Request::post("/solve")
+                .header("host", "localhost")
+                .header("content-type", "application/json");
             if let Some(s) = inbound {
                 b = b.header("x-internal-secret", s);
             }
