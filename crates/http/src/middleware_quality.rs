@@ -85,6 +85,27 @@ impl Handler for QualityCheckHandler {
             ));
         }
 
+        // Escalation stays status-driven: a 401/403/429/503 is handled by the
+        // inference below, as before. The one non-blocking exception is the
+        // AWS WAF token-wait stub (202 + inline token/reload script), which
+        // escalates exactly like an inferred challenge: same error variant, so
+        // the solver, its negative cache and cooldown, and the read pipeline's
+        // render fallback apply. Every other vendor page served with 200/202
+        // is only labelled in the `quality` report, never sent to the solver.
+        if resp.status == 202
+            && let Some(v) = crate::interstitial::classify_non_cloudflare(&resp)
+            && v.escalates_at(resp.status)
+        {
+            tracing::info!(
+                url = %resp.url,
+                status = resp.status,
+                interstitial = %v.label(),
+                signal = v.signal,
+                "quality: vendor interstitial (inferred), triggering solver"
+            );
+            return Err(HttpError::CloudflareInferred(resp.status, Box::new(resp)));
+        }
+
         // Non-200 fallback-worthy status → inferred challenge. The origin
         // MAY have processed the request — carry the response so a gate that
         // declines to re-send a non-idempotent method can return it intact.

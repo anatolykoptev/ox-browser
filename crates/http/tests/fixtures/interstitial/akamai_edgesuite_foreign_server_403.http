@@ -1,0 +1,14 @@
+HTTP 403
+content-type: text/html
+server: Tesco Web Server
+
+<HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;tesco&#46;com&#47;" on this server.<P>
+Reference&#32;&#35;REDACTED
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;REDACTED</P>
+</BODY>
+</HTML>

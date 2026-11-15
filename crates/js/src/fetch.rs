@@ -65,6 +65,10 @@ pub struct FetchResponse {
     pub elapsed_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Content-quality verdict for HTML responses (report-only; `body` is
+    /// never altered). Absent for non-HTML bodies and failed fetches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<ox_http::content_quality::ContentQuality>,
 }
 
 pub async fn fetch(
@@ -107,6 +111,7 @@ pub async fn fetch(
                 cf_type: None,
                 elapsed_ms: start.elapsed().as_millis() as u64,
                 error: Some("body is not allowed with method GET".into()),
+                quality: None,
             }),
         );
     }
@@ -172,6 +177,7 @@ pub async fn fetch(
             let cf = detect_cloudflare(&resp);
             let cf_detected = cf.is_some();
             let cf_type = cf.map(|c| c.challenge_type.to_string());
+            let (resp, quality) = ox_http::content_quality::assess_response_blocking(resp).await;
 
             let headers: HashMap<String, String> = resp
                 .headers
@@ -189,6 +195,7 @@ pub async fn fetch(
                     cf_type,
                     elapsed_ms: start.elapsed().as_millis() as u64,
                     error: None,
+                    quality,
                 }),
             )
         }
@@ -202,6 +209,7 @@ pub async fn fetch(
                 cf_type: None,
                 elapsed_ms: start.elapsed().as_millis() as u64,
                 error: Some(e.to_string()),
+                quality: None,
             }),
         ),
         // The per-call bound fired — distinct from an upstream failure
@@ -218,6 +226,7 @@ pub async fn fetch(
                 cf_type: None,
                 elapsed_ms: start.elapsed().as_millis() as u64,
                 error: Some(format!("deadline exceeded ({secs}s per-call bound)")),
+                quality: None,
             }),
         ),
     }
@@ -492,6 +501,51 @@ mod tests {
         assert!(json.body.is_empty(), "body must be empty for an error");
     }
 
+    /// The additive `quality` field: a login page answered with HTTP 200 is
+    /// labelled `login_required`, and the body the caller gets is untouched.
+    #[tokio::test]
+    async fn fetch_reports_quality_without_altering_body() {
+        const LOGIN: &str = "<html><head><title>Sign in</title></head><body><form><input name=u><input type=\"password\" name=p></form></body></html>";
+        struct LoginMock;
+        #[async_trait]
+        impl Handler for LoginMock {
+            async fn handle(&self, req: Request) -> ox_http::Result<HttpResponse> {
+                Ok(HttpResponse {
+                    status: 200,
+                    url: req.url,
+                    headers: Default::default(),
+                    body: LOGIN.into(),
+                })
+            }
+        }
+        let mut state = state_with_500_handler();
+        state.http_client = Arc::new(HttpClient::with_chain(
+            Arc::new(LoginMock),
+            HttpConfig {
+                quality_check: true,
+                cloudflare_detect: false,
+                ..HttpConfig::default()
+            },
+        ));
+        let req = FetchRequest {
+            url: "http://1.1.1.1".into(),
+            method: Some("GET".into()),
+            body: None,
+            content_type: None,
+            headers: std::collections::HashMap::new(),
+            timeout: None,
+        };
+        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            json.body, LOGIN,
+            "quality reporting must not alter the body"
+        );
+        let v = serde_json::to_value(&json.0).unwrap();
+        assert_eq!(v["quality"]["verdict"], "login_required", "{v}");
+        assert_eq!(v["cf_detected"], false, "existing fields unchanged");
+    }
+
     #[test]
     fn fetch_request_defaults() {
         let json = r#"{"url": "https://example.com"}"#;
@@ -572,6 +626,7 @@ mod tests {
             cf_type: None,
             elapsed_ms: 150,
             error: None,
+            quality: None,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["status"], 200);
@@ -590,6 +645,7 @@ mod tests {
             cf_type: Some("managed_challenge_200".into()),
             elapsed_ms: 300,
             error: None,
+            quality: None,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["cf_detected"], true);
