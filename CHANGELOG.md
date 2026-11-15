@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.1](https://github.com/anatolykoptev/ox-browser/compare/v0.9.0...v0.9.1) (2026-11-15)
+
+
+### Added
+
+* **http:** classify interstitial responses by vendor and report content quality ([#217](https://github.com/anatolykoptev/ox-browser/issues/217)) ([a47554f](https://github.com/anatolykoptev/ox-browser/commit/a47554f75fd9286225cfac95d76861d470b4bdce))
+
+
+### Fixed
+
+* **deps:** rmcp 1.8.0 and configurable /mcp Host allowlist (RUSTSEC-2026-0189) ([#221](https://github.com/anatolykoptev/ox-browser/issues/221)) ([7331f11](https://github.com/anatolykoptev/ox-browser/commit/7331f11cf1195e99a3ffd801e2837b52a254f30c))
+* **http:** canonical sec-ch-ua derived from the Chromium major ([#219](https://github.com/anatolykoptev/ox-browser/issues/219)) ([a8fc8c2](https://github.com/anatolykoptev/ox-browser/commit/a8fc8c289e6196d57c5f7172e20f04c794732b5f))
+
 ## [0.9.0](https://github.com/anatolykoptev/ox-browser/compare/v0.8.21...v0.9.0) (2026-11-14)
 
 
