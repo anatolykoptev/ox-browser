@@ -453,6 +453,37 @@ pub fn record_auth_result(result: &str) {
     }
 }
 
+/// Requests answered 403 by the inbound `Host` allowlist (ox-js `host_guard`),
+/// one counter per route class. A caller addressing ox-browser by a name or
+/// address missing from `OX_ALLOWED_HOSTS` shows up here.
+pub static HOST_REJECTED_REST: AtomicU64 = AtomicU64::new(0);
+/// See [`HOST_REJECTED_REST`].
+pub static HOST_REJECTED_MCP: AtomicU64 = AtomicU64::new(0);
+/// See [`HOST_REJECTED_REST`].
+pub static HOST_REJECTED_CHROME: AtomicU64 = AtomicU64::new(0);
+/// See [`HOST_REJECTED_REST`].
+pub static HOST_REJECTED_METRICS: AtomicU64 = AtomicU64::new(0);
+/// See [`HOST_REJECTED_REST`].
+pub static HOST_REJECTED_HEALTH: AtomicU64 = AtomicU64::new(0);
+
+static HOST_REJECTED_ROWS: &[(&str, &AtomicU64)] = &[
+    ("rest", &HOST_REJECTED_REST),
+    ("mcp", &HOST_REJECTED_MCP),
+    ("chrome", &HOST_REJECTED_CHROME),
+    ("metrics", &HOST_REJECTED_METRICS),
+    ("health", &HOST_REJECTED_HEALTH),
+];
+
+/// Count one `Host`-allowlist rejection for `route` (a fixed class, never a
+/// request-derived string); an unknown class counts as `rest`.
+pub fn record_host_rejected(route: &str) {
+    let counter = HOST_REJECTED_ROWS
+        .iter()
+        .find(|(r, _)| *r == route)
+        .map_or(&HOST_REJECTED_REST, |(_, c)| c);
+    counter.fetch_add(1, Ordering::Relaxed);
+}
+
 static SOLVER_OUTCOME_ROWS: &[(&str, &AtomicU64)] = &[
     ("cache_hit", &SOLVER_OUTCOME_CACHE_HIT),
     ("stale_evicted", &SOLVER_OUTCOME_STALE_EVICTED),
@@ -685,6 +716,12 @@ pub fn render() -> String {
             help: "Inbound requests seen by the auth gate (health excluded), by decision. ok_secret/ok_bearer = authenticated; missing/unverifiable = no usable credential (allowed only in soft mode); invalid = wrong or empty credential (always 401); unconfigured = no credential configured (fail closed); insecure = OX_AUTH_ALLOW_INSECURE.",
             label: "result",
             rows: AUTH_ROWS,
+        },
+        LabelledCounter {
+            name: "oxbrowser_host_rejected_total",
+            help: "Requests answered 403 by the inbound Host allowlist (DNS-rebinding guard), by route class (rest, mcp, chrome, metrics, health). Non-zero from a known caller means its Host is missing from OX_ALLOWED_HOSTS.",
+            label: "route",
+            rows: HOST_REJECTED_ROWS,
         },
     ];
 

@@ -53,6 +53,11 @@ merge.
   route, `/mcp` and `/metrics` included; only `GET`/`HEAD /health` is exempt. The internal secret it
   accepts is also forwarded to the Chrome service, so a new route must stay behind the middleware and
   nothing may print either credential.
+- **The `Host` allowlist guards every route.** One layer (`crates/js/src/host_guard.rs`, applied
+  outermost in `serve.rs` `build_app`) answers 403 to any `Host` that is not loopback or in
+  `OX_ALLOWED_HOSTS` (legacy `OX_MCP_ALLOWED_HOSTS` is merged), `/health` and `/metrics` included; the
+  `/mcp` transport's own check is off so there is one matcher. A new caller that reaches the service by
+  a name or address needs that entry, and `oxbrowser_host_rejected_total` shows the miss.
 - **Onion targets never leave through clearnet.** `.onion` goes only through `OX_TOR_PROXY`, is
   never resolved locally, and endpoints that would hand the URL to a third party refuse it. Keep
   that when adding an endpoint or a fallback.

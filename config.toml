@@ -5,9 +5,13 @@
 [server]
 # port = 8901
 # bind = "0.0.0.0"
-# Extra Host authorities admitted on /mcp (DNS-rebinding guard); loopback is
-# always admitted. Also settable via OX_MCP_ALLOWED_HOSTS (comma-separated).
-# mcp_allowed_hosts = ["private-addr:8901"]
+# Extra Host authorities admitted on every route (DNS-rebinding guard); loopback
+# is always admitted on any port, so an empty list means loopback only. An entry
+# is a name or address, optionally with a port ("name", "name:8901", "[::1]:8901");
+# a bare name admits any port, case-insensitive, no wildcards. Also settable via
+# OX_ALLOWED_HOSTS (comma-separated; the older OX_MCP_ALLOWED_HOSTS and the
+# mcp_allowed_hosts key are still read and merged).
+# allowed_hosts = ["private-addr:8901"]
 
 [http]
 # timeout_secs = 20
