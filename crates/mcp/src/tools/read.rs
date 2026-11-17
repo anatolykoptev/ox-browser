@@ -33,6 +33,12 @@ pub struct ReadInput {
     /// but is not the canonical name.
     #[serde(default, alias = "timeout_secs")]
     pub timeout: Option<u64>,
+    /// NOT SUPPORTED over MCP. Typed to accept any value so that a caller who
+    /// sends it gets an explicit invalid-arguments error instead of a silent
+    /// fetch of `url`. Supplied-HTML extraction is HTTP-only (`POST /read`):
+    /// the MCP transport buffers and can log whole requests.
+    #[serde(default)]
+    pub html: Option<serde_json::Value>,
 }
 
 fn default_format() -> String {
@@ -46,6 +52,7 @@ impl From<ReadInput> for ReadParams {
             format: i.format,
             max_length: i.max_length,
             timeout: i.timeout,
+            html: None,
         }
     }
 }
@@ -56,6 +63,14 @@ impl OxMcpServer {
         input: ReadInput,
         auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
+        if input.html.is_some() {
+            // Reject, never ignore: ignoring would FETCH `url` for a caller who
+            // asked for no-network extraction.
+            return Err(McpError::invalid_params(
+                "html is HTTP-only; use POST /read",
+                None,
+            ));
+        }
         let params: ReadParams = input.into();
         // The gate decision arrives stamped on the `client_for` client —
         // read_page reads it back for its chrome/negcache gates (SEC-CR-018).

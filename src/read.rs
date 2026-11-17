@@ -48,6 +48,7 @@ pub fn validate_format(s: &str) -> Result<(), String> {
 pub fn build_read_params(args: &ReadArgs) -> Result<ReadParams, String> {
     validate_format(&args.format)?;
     Ok(ReadParams {
+        html: None,
         url: args.url.clone(),
         format: args.format.clone(),
         max_length: args.max_length,

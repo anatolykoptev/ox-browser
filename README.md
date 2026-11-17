@@ -78,6 +78,8 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 | `WEBSHARE_API_KEY` | Webshare proxy pool API key |
 | `MEDIA_PROXY_URL` | Proxy for media downloads |
 | `OX_HTTP_PRIVATE_ALLOWLIST` | SSRF allowlist (e.g. `127.0.0.1:80,10.0.0.1:80`) |
+| `OX_READ_HTML_MAX_BYTES` | Cap on caller-supplied HTML for `/read` (bytes, default `2097152`). Over the cap -> `413`. |
+| `OX_READ_SUPPLIED_CONCURRENCY` | Concurrent supplied-HTML extractions (default `4`). No free slot -> `503` at once, nothing queued. |
 | `OX_TOR_PROXY` | HTTP proxy in front of Tor for `.onion` targets, `http://host:port` (explicit port; the one place a private address is accepted). Unset → `.onion` is refused with `onion_requires_tor`; fleet value `http://tor-privoxy:8118`. See [Onion services](#onion-services-via-tor) |
 
 ### Inbound authentication
@@ -108,12 +110,26 @@ a headless Chrome service, so keep both values out of logs and images.
 - Default call timeout for `.onion` is 60 s (circuit build) unless the caller sets `timeout`.
 - Metrics: `oxbrowser_tor_requests_total`, `oxbrowser_onion_refused_total`.
 
+### Reading HTML you already have
+
+`POST /read` accepts an optional `html` string. The page is then **not fetched**: `url` is required but is used only as the base URL and for metadata, and extraction runs on the supplied bytes through a code path that holds no HTTP client, site handler, Chrome renderer or solver. This is HTTP-only: the MCP `read` tool does not support `html` (the MCP transport buffers and can log whole requests), and a call that sends it is rejected with an invalid-arguments error (never ignored, which would fetch `url`).
+
+Extraction, formatting and the metadata available to both paths (`title`, `json_ld`, `og_image`, article meta, `quality` from the content) match a fetched page with the same bytes for every format (`text`, `markdown`, `llm`, `html`). Supplied mode has no HTTP response, so there is no interstitial/vendor verdict and no redirect-final URL; `url` is echoed as sent. `method` is `supplied`.
+
+```bash
+curl -s -X POST localhost:8901/read -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/about","format":"llm","html":"<html>…</html>"}'
+# {"title":"…","content":"…","json_ld":[…],"method":"supplied","quality":{…},…}
+```
+
+Errors: `400` when `url` is not an absolute URL; `413` when `html` is over `OX_READ_HTML_MAX_BYTES` (default 2 MiB, counted on the decoded string; JSON `\uXXXX` escaping can make the request body hit the route's wire limit, about twice the cap, first, which also answers `413`); `503` when `OX_READ_SUPPLIED_CONCURRENCY` extractions are already running (the limit bounds the blocking extraction jobs and their HTML copies; the request body is buffered before admission and is bounded per request by the route's body limit, about twice the cap); `504` when the call's `timeout` fires (the extraction keeps its slot until it really finishes); `500` when the extraction task fails to join.
+
 ### REST
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
-| `/read` | POST | Fetch + extract content (markdown/HTML/text) |
+| `/read` | POST | Fetch + extract content (markdown/HTML/text); with `html` set, extract the supplied HTML without fetching |
 | `/readability` | POST | **DEPRECATED** — use `/read` instead |
 | `/fetch` | POST | Raw HTTP fetch |
 | `/fetch-smart` | POST | Fetch with automatic Chrome fallback for JS-rendered pages |

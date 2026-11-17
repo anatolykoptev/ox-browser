@@ -71,3 +71,169 @@ async fn read_reports_quality_additively() {
         assert!(v.get(k).is_some(), "existing field {k} must stay");
     }
 }
+
+/// Supplied HTML through the REAL router: no transport call of any kind. The
+/// terminal handler, the site handlers and the CF provider all count their
+/// calls; a control request without `html` proves the counters are live.
+///
+/// Mutation: in `read.rs` route a supplied request through `read_page` (drop
+/// the `params.html.is_some()` branch and the read_page guard) -> the origin
+/// counter is nonzero -> RED.
+#[tokio::test]
+async fn supplied_html_makes_no_outbound_call_through_the_router() {
+    use async_trait::async_trait;
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use ox_http::{
+        ChallengeType, CookieCache, CookieProvider, Handler, HttpClient, HttpConfig, HttpResponse,
+        Request, SolvedChallenge,
+    };
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tower::ServiceExt;
+
+    static ORIGIN_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static SITE_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static SOLVER_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    struct Origin;
+    #[async_trait]
+    impl Handler for Origin {
+        async fn handle(&self, req: Request) -> ox_http::Result<HttpResponse> {
+            ORIGIN_CALLS.fetch_add(1, Ordering::SeqCst);
+            if req.url.contains("/cf") {
+                return Err(ox_http::HttpError::Cloudflare(
+                    ChallengeType::JsChallenge,
+                    403,
+                    "ray".into(),
+                ));
+            }
+            Ok(HttpResponse {
+                status: 200,
+                url: req.url,
+                headers: Default::default(),
+                body: "<html><head><title>Fetched</title></head><body><p>fetched body text that is long enough to count as content for the extractor</p></body></html>".into(),
+            })
+        }
+    }
+    struct Provider;
+    #[async_trait]
+    impl CookieProvider for Provider {
+        async fn solve(
+            &self,
+            _url: &str,
+            _ct: ChallengeType,
+            _authenticated: bool,
+        ) -> Result<SolvedChallenge, String> {
+            SOLVER_CALLS.fetch_add(1, Ordering::SeqCst);
+            Err("solver must not run".into())
+        }
+    }
+
+    // The counting provider is wired into the CLIENT's solver middleware (the
+    // only place a solve can originate), not just AppState, so a regression
+    // that sent supplied HTML through the solver would be counted.
+    let provider: Arc<dyn CookieProvider> = Arc::new(Provider);
+    let cookie_cache = Arc::new(CookieCache::new(std::time::Duration::from_secs(300)));
+    let client = HttpClient::with_chain(
+        Arc::new(Origin),
+        HttpConfig {
+            cloudflare_detect: true,
+            cookie_provider: Some(Arc::clone(&provider)),
+            cookie_cache: Some(Arc::clone(&cookie_cache)),
+            ..HttpConfig::default()
+        },
+    );
+    let proxy = Arc::new(crate::gobrowser_proxy::GoBrowserProxy::new(
+        "http://127.0.0.1:1".to_string(),
+        "",
+    ));
+    let mut state = crate::AppState::new(
+        provider,
+        cookie_cache,
+        Arc::new(client),
+        crate::EndpointDefaults::default(),
+        ox_media::MediaConfig::default(),
+        proxy,
+    );
+    let counting_site: ox_http::read_pipeline::SiteHandler = Arc::new(|_p, _f, _s| {
+        SITE_CALLS.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { None })
+    });
+    state.site_handlers = Arc::new(vec![counting_site]);
+    let app = crate::router(state);
+
+    let post = |body: serde_json::Value| {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/read")
+            .header("content-type", "application/json")
+            .header("host", "localhost")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+
+    // Supplied: served locally, nothing outbound.
+    let resp = app
+        .clone()
+        .oneshot(post(serde_json::json!({
+            "url": "http://1.1.1.1/biz",
+            "format": "markdown",
+            "html": "<html><head><title>Supplied</title></head><body><h1>Supplied page</h1><p>Supplied body text that is long enough to count as content for the extractor.</p></body></html>",
+        })))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let v: serde_json::Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(v["method"], "supplied", "{v}");
+    assert_eq!(v["title"], "Supplied", "{v}");
+    assert!(
+        v["content"]
+            .as_str()
+            .unwrap()
+            .contains("Supplied body text")
+    );
+    assert_eq!(ORIGIN_CALLS.load(Ordering::SeqCst), 0, "origin was fetched");
+    assert_eq!(SITE_CALLS.load(Ordering::SeqCst), 0, "site handler ran");
+    assert_eq!(SOLVER_CALLS.load(Ordering::SeqCst), 0, "solver ran");
+
+    // Over the cap: 413, still nothing outbound.
+    let big = "x".repeat(ox_http::read_pipeline::supplied_html_max_bytes() + 1);
+    let resp = app
+        .clone()
+        .oneshot(post(
+            serde_json::json!({"url": "http://1.1.1.1/biz", "html": big}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(ORIGIN_CALLS.load(Ordering::SeqCst), 0);
+
+    // Control: the same route WITHOUT html does reach the transport, so the
+    // zero counters above mean something.
+    let resp = app
+        .clone()
+        .oneshot(post(serde_json::json!({"url": "http://1.1.1.1/biz"})))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    assert_eq!(ORIGIN_CALLS.load(Ordering::SeqCst), 1, "control must fetch");
+    assert_eq!(
+        SITE_CALLS.load(Ordering::SeqCst),
+        1,
+        "control runs site handlers"
+    );
+
+    // Control for the solver counter: a CF-challenged origin does reach it,
+    // so the zeros above prove the supplied path never does.
+    let _ = app
+        .oneshot(post(serde_json::json!({"url": "http://1.1.1.1/cf"})))
+        .await
+        .unwrap();
+    assert_eq!(
+        SOLVER_CALLS.load(Ordering::SeqCst),
+        1,
+        "control must reach the solver exactly once"
+    );
+}
