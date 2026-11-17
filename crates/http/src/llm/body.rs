@@ -248,6 +248,7 @@ pub(crate) fn collapse_repeated_in_line(line: &str) -> String {
     }
 
     // Standard sliding window for shorter repeated phrases (2-20 words)
+    let mut changed = false;
     let mut result: Vec<&str> = Vec::with_capacity(words.len());
     let mut i = 0;
     let max_phrase = (words.len() / 2).min(20);
@@ -268,6 +269,7 @@ pub(crate) fn collapse_repeated_in_line(line: &str) -> String {
                 }
                 i = j;
                 found_repeat = true;
+                changed = true;
                 break;
             }
         }
@@ -277,7 +279,20 @@ pub(crate) fn collapse_repeated_in_line(line: &str) -> String {
         }
     }
 
-    result.join(" ")
+    // No repeat found: return the line untouched so list-marker padding
+    // (`*   item`) is not collapsed on some lines and not others.
+    if !changed {
+        return line.to_string();
+    }
+    let joined = result.join(" ");
+    // Re-attach the original marker padding when a repeat was collapsed.
+    if let Some(prefix) = list_marker_prefix(line) {
+        let marker = prefix.trim_end();
+        if let Some(rest) = joined.strip_prefix(marker) {
+            return format!("{prefix}{}", rest.trim_start());
+        }
+    }
+    joined
 }
 
 // ---------------------------------------------------------------------------
@@ -557,8 +572,10 @@ fn merge_stat_lines(input: &str) -> String {
             if j > i + 1 && j < lines.len() {
                 let next = lines[j].trim();
                 if !next.is_empty() && !is_structural_line(next) && len + 1 + next.len() <= 120 {
+                    // Never join two blocks with a space: keep the block
+                    // boundary (blank line) so the llm output matches markdown.
                     out.push_str(trimmed);
-                    out.push(' ');
+                    out.push_str("\n\n");
                     out.push_str(next);
                     out.push('\n');
                     i = j + 1;
@@ -578,10 +595,31 @@ fn merge_stat_lines(input: &str) -> String {
 /// Lines that should never be merged: headings, list items, code fences.
 fn is_structural_line(line: &str) -> bool {
     line.starts_with('#')
-        || line.starts_with("- ")
-        || line.starts_with("* ")
         || line.starts_with("```")
         || line.starts_with("> ")
+        || list_marker_prefix(line).is_some()
+}
+
+/// Leading list marker plus the whitespace after it: `- `, `* `, `+ `, `1. `,
+/// `12) `, or markdown-style padded `*   `. `None` when the line is not a list item.
+fn list_marker_prefix(line: &str) -> Option<&str> {
+    let marker_len = match line.as_bytes().first()? {
+        b'-' | b'*' | b'+' => 1,
+        b'0'..=b'9' => {
+            let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+            match line.as_bytes().get(digits) {
+                Some(b'.' | b')') => digits + 1,
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    let rest = &line[marker_len..];
+    let ws = rest.len() - rest.trim_start().len();
+    if ws == 0 || rest.trim().is_empty() {
+        return None;
+    }
+    Some(&line[..marker_len + ws])
 }
 
 // ---------------------------------------------------------------------------
@@ -911,6 +949,28 @@ mod tests {
         let input = "go home go home go home";
         let result = collapse_repeated_in_line(input);
         assert_eq!(result, "go home");
+    }
+
+    #[test]
+    fn collapse_no_repeat_keeps_marker_padding() {
+        let line = "*   Office hours are Monday to Friday";
+        assert_eq!(collapse_repeated_in_line(line), line);
+    }
+
+    #[test]
+    fn collapse_repeat_keeps_marker_padding() {
+        let result = collapse_repeated_in_line("*   go home go home go home");
+        assert_eq!(result, "*   go home");
+    }
+
+    #[test]
+    fn list_marker_prefix_cases() {
+        assert_eq!(list_marker_prefix("*   a"), Some("*   "));
+        assert_eq!(list_marker_prefix("+ a"), Some("+ "));
+        assert_eq!(list_marker_prefix("12. a"), Some("12. "));
+        assert_eq!(list_marker_prefix("2024 was"), None);
+        assert_eq!(list_marker_prefix("**bold** x"), None);
+        assert_eq!(list_marker_prefix("-5 degrees"), None);
     }
 
     // -- heading dedup --
