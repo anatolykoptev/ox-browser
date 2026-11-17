@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/anatolykoptev/ox-browser/compare/v0.9.2...v0.9.3) (2026-11-17)
+
+
+### Fixed
+
+* **read:** separate block elements in text output ([#226](https://github.com/anatolykoptev/ox-browser/issues/226)) ([ac817de](https://github.com/anatolykoptev/ox-browser/commit/ac817de97c3145c6139099006c074536f795d85d))
+
 ## [0.9.2](https://github.com/anatolykoptev/ox-browser/compare/v0.9.1...v0.9.2) (2026-11-15)
 
 
