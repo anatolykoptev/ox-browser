@@ -31,6 +31,7 @@ pub mod middleware_retry;
 pub mod middleware_solver;
 pub mod middleware_ssrf;
 pub mod noise;
+mod plain_text;
 pub mod profile;
 pub mod profile_hints;
 pub mod proxy_fallback;
