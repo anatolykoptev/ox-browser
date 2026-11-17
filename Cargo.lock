@@ -1999,7 +1999,7 @@ checksum = "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d"
 
 [[package]]
 name = "ox-browser"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2023,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "ox-core"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "dom_query 0.25.1",
  "ox-http",
@@ -2037,7 +2037,7 @@ dependencies = [
 
 [[package]]
 name = "ox-crawler"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2058,7 +2058,7 @@ dependencies = [
 
 [[package]]
 name = "ox-http"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "async-trait",
  "dom_query 0.27.0",
@@ -2083,7 +2083,7 @@ dependencies = [
 
 [[package]]
 name = "ox-imagesearch"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "async-trait",
  "dom_query 0.11.0",
@@ -2100,7 +2100,7 @@ dependencies = [
 
 [[package]]
 name = "ox-intelligence"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "dom_query 0.25.1",
  "ox-security",
@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "ox-js"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2144,7 +2144,7 @@ dependencies = [
 
 [[package]]
 name = "ox-mcp"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "async-trait",
  "axum",
@@ -2189,7 +2189,7 @@ dependencies = [
 
 [[package]]
 name = "ox-reverse"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "async-trait",
  "dom_query 0.11.0",
@@ -2206,7 +2206,7 @@ dependencies = [
 
 [[package]]
 name = "ox-security"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "ammonia",
  "content-security-policy",
@@ -2226,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "ox-twitter"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "base64",
  "once_cell",
