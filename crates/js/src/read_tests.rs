@@ -224,4 +224,16 @@ async fn supplied_html_makes_no_outbound_call_through_the_router() {
         1,
         "control runs site handlers"
     );
+
+    // Control for the solver counter: a CF-challenged origin does reach it,
+    // so the zeros above prove the supplied path never does.
+    let _ = app
+        .oneshot(post(serde_json::json!({"url": "http://1.1.1.1/cf"})))
+        .await
+        .unwrap();
+    assert_eq!(
+        SOLVER_CALLS.load(Ordering::SeqCst),
+        1,
+        "control must reach the solver exactly once"
+    );
 }

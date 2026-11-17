@@ -108,11 +108,70 @@ fn read_input_timeout_secs_alias_resolves() {
 }
 
 /// Supplied HTML is HTTP-only: rmcp buffers the whole request before any cap
-/// and logs full requests at debug level. The MCP input has no `html` field;
-/// one sent anyway is ignored and never reaches `read_supplied`.
-#[test]
-fn mcp_read_ignores_html_field() {
-    let input: ReadInput =
-        serde_json::from_str(r#"{"url":"https://example.com/a","html":"<p>hi</p>"}"#).unwrap();
-    assert!(ReadParams::from(input).html.is_none());
+/// and logs full requests at debug level. An MCP `read` that carries `html` is
+/// rejected up front, and the fetch path is never reached (counting handler);
+/// the same server fetches for a request without `html` (control).
+///
+/// Mutation: remove the `input.html.is_some()` rejection in `read.rs` -> the
+/// call fetches `url` -> RED.
+#[tokio::test]
+async fn mcp_read_rejects_html_and_never_fetches() {
+    use async_trait::async_trait;
+    use ox_http::{CookieCache, CookieProvider, Handler, HttpClient, HttpConfig};
+    use ox_http::{HttpResponse, Request};
+    use ox_js::gobrowser_proxy::GoBrowserProxy;
+    use ox_js::inbound_auth::InboundAuth;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static FETCHES: AtomicUsize = AtomicUsize::new(0);
+
+    struct Counting;
+    #[async_trait]
+    impl Handler for Counting {
+        async fn handle(&self, _req: Request) -> ox_http::Result<HttpResponse> {
+            FETCHES.fetch_add(1, Ordering::SeqCst);
+            Err(ox_http::HttpError::InvalidUrl("no network in tests".into()))
+        }
+    }
+    struct NoSolve;
+    #[async_trait]
+    impl CookieProvider for NoSolve {
+        async fn solve(
+            &self,
+            _url: &str,
+            _ct: ox_http::ChallengeType,
+            _authenticated: bool,
+        ) -> Result<ox_http::SolvedChallenge, String> {
+            Err("no solver in tests".into())
+        }
+    }
+
+    let server = super::OxMcpServer::new(
+        Arc::new(NoSolve),
+        Arc::new(CookieCache::new(Duration::from_secs(60))),
+        Arc::new(HttpClient::with_chain(
+            Arc::new(Counting),
+            HttpConfig::default(),
+        )),
+        ox_js::EndpointDefaults::default(),
+        ox_media::MediaConfig::default(),
+        Arc::new(GoBrowserProxy::new("http://127.0.0.1:1".to_owned(), "")),
+    );
+    let auth =
+        || -> InboundAuth { crate::tools::chrome_interact::inbound_auth(&Default::default()) };
+
+    let with_html: ReadInput =
+        serde_json::from_str(r#"{"url":"http://1.1.1.1/p","html":"<p>hi</p>"}"#).unwrap();
+    let err = server.do_read(with_html, auth()).await.unwrap_err();
+    assert!(
+        err.message.contains("HTTP-only"),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(FETCHES.load(Ordering::SeqCst), 0, "html request fetched");
+
+    // Control: without html the same server does reach the transport.
+    let plain: ReadInput = serde_json::from_str(r#"{"url":"http://1.1.1.1/p"}"#).unwrap();
+    let _ = server.do_read(plain, auth()).await;
+    assert_eq!(FETCHES.load(Ordering::SeqCst), 1, "control must fetch");
 }

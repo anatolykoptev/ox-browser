@@ -355,7 +355,7 @@ pub const SUPPLIED_CONCURRENCY_ENV: &str = "OX_READ_SUPPLIED_CONCURRENCY";
 pub const DEFAULT_SUPPLIED_CONCURRENCY: usize = 4;
 
 /// Process-wide admission limiter for supplied extraction. A permit is taken
-/// BEFORE the HTML is copied and the blocking task is spawned, and is moved
+/// before the HTML is cloned and the blocking task is spawned, and is moved
 /// into that task, so it is held until the work really finishes: a deadline
 /// that fires does not stop a running or queued blocking task, so without this
 /// the pool and the HTML copies would grow with every timed-out request.
@@ -366,7 +366,9 @@ pub fn supplied_limiter() -> &'static Arc<tokio::sync::Semaphore> {
             .ok()
             .and_then(|v| v.trim().parse::<usize>().ok())
             .filter(|n| *n > 0)
-            .unwrap_or(DEFAULT_SUPPLIED_CONCURRENCY);
+            .unwrap_or(DEFAULT_SUPPLIED_CONCURRENCY)
+            // `Semaphore::new` panics above MAX_PERMITS: clamp, never panic.
+            .min(tokio::sync::Semaphore::MAX_PERMITS);
         Arc::new(tokio::sync::Semaphore::new(n))
     })
 }
@@ -408,7 +410,10 @@ pub async fn read_supplied_with(
         });
     }
 
-    // Admission before ANY copy of the HTML or blocking task exists.
+    // Admission before the clone and the blocking task are created. The permit
+    // bounds blocking jobs and their HTML copies; the request body itself was
+    // already buffered and deserialized by the route (bounded per request by
+    // its body limit), which admission cannot undo.
     let permit = Arc::clone(limiter)
         .try_acquire_owned()
         .map_err(|_| SuppliedError::Busy)?;
