@@ -48,7 +48,10 @@ pub fn try_extract(
     }
 
     let mut all_chunks: Vec<TextChunk> = Vec::new();
-    let existing_lower = existing_markdown.to_lowercase();
+    // Whitespace-normalised on BOTH sides of the dedup comparison: the DOM text
+    // carries line breaks at block boundaries ("A.\n\nB.") while a JSON island
+    // holds the same prose with plain spaces ("A. B.").
+    let existing_lower = normalize_ws_lower(existing_markdown);
 
     // 1. Standard JSON data islands (application/json script tags)
     for node in doc.select("script[type='application/json']").nodes() {
@@ -109,7 +112,7 @@ pub fn try_extract(
             return false;
         }
         // Skip if the text already exists in the DOM-extracted content
-        !existing_lower.contains(&key.to_lowercase())
+        !existing_lower.contains(&normalize_ws_lower(&key))
     });
 
     if all_chunks.is_empty() {
@@ -132,6 +135,14 @@ pub fn try_extract(
         debug!(chars = md.len(), "data island content recovered");
         Some(md)
     }
+}
+
+/// Lowercase and collapse every whitespace run (newlines included) to one space.
+fn normalize_ws_lower(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// Recursively walk a JSON value and extract text content.

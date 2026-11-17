@@ -49,8 +49,9 @@ fn read_text_format_separates_blocks_end_to_end() {
     // Same fixture through the real /read path (extractor + gate + text).
     let out = extract_content(FIXTURE, "https://example.com/", ContentFormat::Text);
     assert!(
-        !out.content.contains("Welcome, we are:Example"),
-        "heading glued to next block: {:?}",
+        out.content
+            .starts_with("Example Church in Springfield\n\nFirst paragraph with a link"),
+        "extracted <main> must start with its first block, separated from the next: {:?}",
         out.content
     );
     assert!(
@@ -58,16 +59,14 @@ fn read_text_format_separates_blocks_end_to_end() {
         "paragraph/list boundary lost: {:?}",
         out.content
     );
-    assert!(
-        !out.content.contains("leaked"),
-        "script leaked: {:?}",
-        out.content
-    );
-    assert!(
-        !out.content.contains("enable js"),
-        "noscript leaked: {:?}",
-        out.content
-    );
+    // Scripts/styles inside the extracted body, plus <noscript>, must not leak.
+    for leaked in ["bodyleak", "color:blue", "enable js"] {
+        assert!(
+            !out.content.contains(leaked),
+            "{leaked} leaked: {:?}",
+            out.content
+        );
+    }
 }
 
 #[test]
@@ -85,4 +84,59 @@ fn json_ld_and_metadata_unchanged_by_text_rendering() {
     assert_eq!(text.json_ld.len(), 1);
     assert_eq!(text.og_image, "https://example.com/i.png");
     assert_eq!(text.title, md.title);
+}
+
+#[test]
+fn pre_keeps_edge_newlines_and_br_and_drops_whitespace_only() {
+    assert_eq!(
+        html_to_plain("<p>x</p><pre>code\n\n</pre><p>y</p>"),
+        "x\n\ncode\n\n\n\ny"
+    );
+    assert_eq!(
+        html_to_plain("<p>x</p><pre>\n\ncode</pre><p>y</p>"),
+        "x\n\n\ncode\n\ny"
+    );
+    assert_eq!(
+        html_to_plain("<ul><li><pre>a\n\n</pre></li><li>b</li></ul>"),
+        "a\n\n\n\nb"
+    );
+    assert_eq!(html_to_plain("<pre>a<br>b</pre>"), "a\nb");
+    assert_eq!(html_to_plain("<p>x</p><pre> \t\n </pre><p>y</p>"), "x\n\ny");
+    assert_eq!(html_to_plain("<pre> \t </pre>"), "");
+}
+
+#[test]
+fn block_boundary_is_not_one_of_two_breaks() {
+    assert_eq!(html_to_plain("<div>a</div><br><div>b</div>"), "a\nb");
+    assert_eq!(html_to_plain("<div>a<br></div><div><br>b</div>"), "a\nb");
+    // Two explicit breaks in a row are still a blank line.
+    assert_eq!(html_to_plain("<div>a<br><br>b</div>"), "a\n\nb");
+    assert_eq!(html_to_plain("a<br>\n<br>b"), "a\n\nb");
+}
+
+#[test]
+fn bodyless_frameset_document_renders_empty() {
+    let html = "<html><head><title>T</title></head><frameset><frame src=\"about:blank\"></frameset></html>";
+    assert_eq!(html_to_plain(html), "");
+}
+
+#[test]
+fn spa_recovery_does_not_duplicate_prose_split_by_block_separators() {
+    // The DOM renders the two sentences as adjacent paragraphs ("...\n\n..."); the
+    // JSON island holds the same prose on one line. It must dedupe, while the
+    // genuinely new island paragraph is still recovered (guards a vacuous pass).
+    let html = r#"<html><head><title>T</title><script type="application/json" id="d">{"items":[{"nodeType":"paragraph","content":[{"nodeType":"text","value":"The first sentence. The second sentence."}]},{"nodeType":"paragraph","content":[{"nodeType":"text","value":"Only the island carries this fresh sentence."}]}]}</script></head><body><p>The first sentence.</p><p>The second sentence.</p></body></html>"#;
+    let out = extract_content(html, "https://example.com/", ContentFormat::Text);
+    assert!(
+        out.content
+            .contains("Only the island carries this fresh sentence."),
+        "island content not recovered at all: {:?}",
+        out.content
+    );
+    assert_eq!(
+        out.content.matches("first sentence").count(),
+        1,
+        "island prose duplicated: {:?}",
+        out.content
+    );
 }
