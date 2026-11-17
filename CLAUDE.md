@@ -78,6 +78,10 @@ merge.
 
 - Cookie cache is in-memory — restarts clear CF sessions
 - `/media/download` writes to `/tmp/ox-browser/media/` (tmpfs in Docker)
-- MCP registration: `claude mcp add -s user -t http ox-browser http://127.0.0.1:8901/mcp`
+- MCP registration: `/mcp` takes the bearer token (`OX_MCP_TOKEN`). Register it with a `headersHelper`
+  that supplies the header at connect time, never `--header` and never a static token in the client
+  config: `claude mcp add-json ox-browser '{"type":"http","url":"http://127.0.0.1:8901/mcp","headersHelper":"<your auth helper>"}' -s user`.
+  Auth is in soft mode now; enforce is coming, so register with the token (a request with no
+  credential is only let through, and logged, while `OX_AUTH_MODE=soft`).
 - Docker build uses cargo-chef — `--no-cache` recompiles ALL deps. Omit it for code-only changes
 - Chromium solver: `chromium_enabled=true` in config.toml, needs `shm_size:256m` and no `cap_drop:ALL` in compose
