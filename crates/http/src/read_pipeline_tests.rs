@@ -17,6 +17,7 @@ use crate::{HttpResponse, Result};
 
 fn params(url: &str) -> ReadParams {
     ReadParams {
+        html: None,
         url: url.to_owned(),
         format: "text".into(),
         max_length: 0,
@@ -100,6 +101,7 @@ fn truncation_applied_when_max_length_set() {
         extraction_note: None,
     };
     let p = ReadParams {
+        html: None,
         url: "https://x.com".into(),
         format: "text".into(),
         max_length: 50,
@@ -459,6 +461,7 @@ async fn cli_and_api_paths_produce_same_read_output() {
     // CLI construction: build ReadParams from a validated format string
     // (exactly what src/read.rs::build_read_params does).
     let cli_params = ReadParams {
+        html: None,
         url: "https://example.com/article".into(),
         format: "markdown".into(),
         max_length: 0,
@@ -492,6 +495,7 @@ async fn read_format_mapping_is_discriminating() {
     let url = "https://example.com/article";
 
     let mk = |fmt: &str| ReadParams {
+        html: None,
         url: url.into(),
         format: fmt.into(),
         max_length: 0,
@@ -598,6 +602,7 @@ async fn read_page_deadline_fires_within_bound() {
     let http = HttpClient::with_handler(handler, config_with(None, None));
 
     let p = ReadParams {
+        html: None,
         url: "https://slow.test/page".into(),
         format: "text".into(),
         max_length: 0,
@@ -637,6 +642,7 @@ async fn read_page_default_timeout_does_not_fire_on_fast_response() {
     let http = HttpClient::with_handler(handler, config_with(None, None));
 
     let p = ReadParams {
+        html: None,
         url: "https://fast.test/page".into(),
         format: "text".into(),
         max_length: 0,
@@ -666,6 +672,7 @@ async fn read_page_timeout_zero_clamps_to_one_sec() {
     let http = HttpClient::with_handler(handler, config_with(None, None));
 
     let p = ReadParams {
+        html: None,
         url: "https://zero.test/page".into(),
         format: "text".into(),
         max_length: 0,
@@ -698,6 +705,7 @@ async fn read_page_timeout_above_ceiling_clamps_down() {
     let http = HttpClient::with_handler(handler, config_with(None, None));
 
     let p = ReadParams {
+        html: None,
         url: "https://ceiling.test/page".into(),
         format: "text".into(),
         max_length: 0,

@@ -33,6 +33,11 @@ pub struct ReadInput {
     /// but is not the canonical name.
     #[serde(default, alias = "timeout_secs")]
     pub timeout: Option<u64>,
+    /// Optional HTML to extract instead of fetching `url`. When set, `url`
+    /// is only the base URL / metadata source and NO network request is made
+    /// (method = "supplied"). Capped at 2 MiB by default.
+    #[serde(default)]
+    pub html: Option<String>,
 }
 
 fn default_format() -> String {
@@ -46,6 +51,7 @@ impl From<ReadInput> for ReadParams {
             format: i.format,
             max_length: i.max_length,
             timeout: i.timeout,
+            html: i.html,
         }
     }
 }
@@ -57,6 +63,19 @@ impl OxMcpServer {
         auth: InboundAuth,
     ) -> Result<CallToolResult, McpError> {
         let params: ReadParams = input.into();
+        if params.html.is_some() {
+            // No client, no handlers: supplied HTML never touches the network.
+            let output = match read_pipeline::read_supplied(&params).await {
+                Ok(o) => o,
+                Err(e) => read_pipeline::build_error_output(&params, "supplied", 0, &e.to_string()),
+            };
+            let json = serde_json::to_string(&output).unwrap_or_default();
+            return Ok(if output.error.is_some() {
+                CallToolResult::error(vec![Content::text(json)])
+            } else {
+                CallToolResult::success(vec![Content::text(json)])
+            });
+        }
         // The gate decision arrives stamped on the `client_for` client —
         // read_page reads it back for its chrome/negcache gates (SEC-CR-018).
         let http = self.client_for(auth);

@@ -18,6 +18,29 @@ pub async fn read(
     // chrome fallback (see read_pipeline). SEC-CR-018: the decision arrives
     // stamped on the `client_for` client — there is no separate flag here
     // for a caller to force `true`.
+    // Supplied HTML: no client is built, no handler runs — the entry point
+    // takes no transport at all (structural "no network").
+    if params.html.is_some() {
+        return match read_pipeline::read_supplied(&params).await {
+            Ok(output) => {
+                let status = if output.error.is_some() {
+                    StatusCode::GATEWAY_TIMEOUT
+                } else {
+                    StatusCode::OK
+                };
+                (status, Json(output))
+            }
+            Err(e) => (
+                StatusCode::from_u16(e.status_code()).unwrap_or(StatusCode::BAD_REQUEST),
+                Json(read_pipeline::build_error_output(
+                    &params,
+                    "supplied",
+                    0,
+                    &e.to_string(),
+                )),
+            ),
+        };
+    }
     let http = state.client_for(auth);
     let output = read_pipeline::read_page(&http, &params, &state.site_handlers).await;
 

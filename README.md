@@ -78,6 +78,7 @@ See [`config.toml`](config.toml) for all options. Secrets are passed via environ
 | `WEBSHARE_API_KEY` | Webshare proxy pool API key |
 | `MEDIA_PROXY_URL` | Proxy for media downloads |
 | `OX_HTTP_PRIVATE_ALLOWLIST` | SSRF allowlist (e.g. `127.0.0.1:80,10.0.0.1:80`) |
+| `OX_READ_HTML_MAX_BYTES` | Cap on caller-supplied HTML for `/read` and the MCP `read` tool (bytes, default `2097152`). Over the cap -> `413`. |
 | `OX_TOR_PROXY` | HTTP proxy in front of Tor for `.onion` targets, `http://host:port` (explicit port; the one place a private address is accepted). Unset → `.onion` is refused with `onion_requires_tor`; fleet value `http://tor-privoxy:8118`. See [Onion services](#onion-services-via-tor) |
 
 ### Inbound authentication
@@ -108,12 +109,24 @@ a headless Chrome service, so keep both values out of logs and images.
 - Default call timeout for `.onion` is 60 s (circuit build) unless the caller sets `timeout`.
 - Metrics: `oxbrowser_tor_requests_total`, `oxbrowser_onion_refused_total`.
 
+### Reading HTML you already have
+
+`POST /read` (and the MCP `read` tool) accept an optional `html` string. The page is then **not fetched**: `url` is required but is used only as the base URL and for metadata, and extraction runs on the supplied bytes through a code path that holds no HTTP client, site handler, Chrome renderer or solver. Every format (`text`, `markdown`, `llm`, `html`), `json_ld`, `title`, `og_image`, `quality` and the other fields match what a fetched page with the same bytes returns; `method` is `supplied`.
+
+```bash
+curl -s -X POST localhost:8901/read -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/about","format":"llm","html":"<html>…</html>"}'
+# {"title":"…","content":"…","json_ld":[…],"method":"supplied","quality":{…},…}
+```
+
+Errors: `413` when `html` is over `OX_READ_HTML_MAX_BYTES` (default 2 MiB), `400` when `url` is not an absolute URL. `timeout` keeps its meaning (a deadline on the call, `504` when it fires).
+
 ### REST
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
-| `/read` | POST | Fetch + extract content (markdown/HTML/text) |
+| `/read` | POST | Fetch + extract content (markdown/HTML/text); with `html` set, extract the supplied HTML without fetching |
 | `/readability` | POST | **DEPRECATED** — use `/read` instead |
 | `/fetch` | POST | Raw HTTP fetch |
 | `/fetch-smart` | POST | Fetch with automatic Chrome fallback for JS-rendered pages |

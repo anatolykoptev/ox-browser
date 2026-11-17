@@ -145,7 +145,17 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .route("/fetch", post(fetch::fetch))
-        .route("/read", post(read::read))
+        // `/read` may carry caller-supplied HTML (JSON-escaped, so up to ~2x
+        // the cap plus the envelope): lift axum's 2 MiB default for this route
+        // only. The handler enforces the exact byte cap and answers 413.
+        .route(
+            "/read",
+            post(read::read).layer(axum::extract::DefaultBodyLimit::max(
+                ox_http::read_pipeline::supplied_html_max_bytes()
+                    .saturating_mul(2)
+                    .saturating_add(64 * 1024),
+            )),
+        )
         // /crawl answers SSE — the request resolves when the stream is
         // produced, so a request-level bound would cover only discovery
         // while looking like it covers the crawl. The discovery await is

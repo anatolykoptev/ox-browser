@@ -46,6 +46,13 @@ pub struct ReadParams {
     /// via a serde alias but is not the canonical name.
     #[serde(default, alias = "timeout_secs")]
     pub timeout: Option<u64>,
+    /// Caller-supplied HTML. When present, `url` is only the base URL and
+    /// metadata source and NOTHING is fetched: the request is served by
+    /// [`crate::read_pipeline::read_supplied`], an entry point that has no
+    /// HTTP client, so a network call is structurally impossible. Size-capped
+    /// (`OX_READ_HTML_MAX_BYTES`, default 2 MiB).
+    #[serde(default)]
+    pub html: Option<String>,
 }
 
 fn default_format() -> String {
