@@ -107,12 +107,12 @@ fn read_input_timeout_secs_alias_resolves() {
     );
 }
 
+/// Supplied HTML is HTTP-only: rmcp buffers the whole request before any cap
+/// and logs full requests at debug level. The MCP input has no `html` field;
+/// one sent anyway is ignored and never reaches `read_supplied`.
 #[test]
-fn read_input_carries_supplied_html_into_params() {
+fn mcp_read_ignores_html_field() {
     let input: ReadInput =
         serde_json::from_str(r#"{"url":"https://example.com/a","html":"<p>hi</p>"}"#).unwrap();
-    let p: ReadParams = input.into();
-    assert_eq!(p.html.as_deref(), Some("<p>hi</p>"));
-    let none: ReadInput = serde_json::from_str(r#"{"url":"https://example.com/a"}"#).unwrap();
-    assert!(ReadParams::from(none).html.is_none());
+    assert!(ReadParams::from(input).html.is_none());
 }

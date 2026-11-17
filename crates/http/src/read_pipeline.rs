@@ -310,6 +310,12 @@ pub enum SuppliedError {
     InvalidUrl,
     /// The HTML is over the cap.
     TooLarge { len: usize, cap: usize },
+    /// Every extraction permit is taken: shed load instead of queueing.
+    Busy,
+    /// The per-call deadline fired.
+    DeadlineExceeded { secs: u64 },
+    /// The extraction task failed to join (panic or cancellation).
+    Internal,
 }
 
 impl SuppliedError {
@@ -318,6 +324,9 @@ impl SuppliedError {
         match self {
             Self::MissingHtml | Self::InvalidUrl => 400,
             Self::TooLarge { .. } => 413,
+            Self::Busy => 503,
+            Self::DeadlineExceeded { .. } => 504,
+            Self::Internal => 500,
         }
     }
 }
@@ -330,8 +339,36 @@ impl std::fmt::Display for SuppliedError {
             Self::TooLarge { len, cap } => {
                 write!(f, "supplied html is {len} bytes, over the {cap}-byte cap")
             }
+            Self::Busy => f.write_str("supplied-html extraction is at capacity, retry later"),
+            Self::DeadlineExceeded { secs } => {
+                write!(f, "read deadline exceeded ({secs}s per-call bound)")
+            }
+            Self::Internal => f.write_str("extraction task failed"),
         }
     }
+}
+
+/// Env var for the number of supplied-HTML extractions allowed at once.
+pub const SUPPLIED_CONCURRENCY_ENV: &str = "OX_READ_SUPPLIED_CONCURRENCY";
+
+/// Default concurrent supplied-HTML extractions.
+pub const DEFAULT_SUPPLIED_CONCURRENCY: usize = 4;
+
+/// Process-wide admission limiter for supplied extraction. A permit is taken
+/// BEFORE the HTML is copied and the blocking task is spawned, and is moved
+/// into that task, so it is held until the work really finishes: a deadline
+/// that fires does not stop a running or queued blocking task, so without this
+/// the pool and the HTML copies would grow with every timed-out request.
+pub fn supplied_limiter() -> &'static Arc<tokio::sync::Semaphore> {
+    static LIMITER: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    LIMITER.get_or_init(|| {
+        let n = std::env::var(SUPPLIED_CONCURRENCY_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT_SUPPLIED_CONCURRENCY);
+        Arc::new(tokio::sync::Semaphore::new(n))
+    })
 }
 
 /// Read caller-supplied HTML: the same extraction, formatting, metadata,
@@ -343,14 +380,22 @@ impl std::fmt::Display for SuppliedError {
 /// `timeout` semantics as [`read_page`]; extraction runs on the blocking pool
 /// so the deadline can fire on a pathological document.
 pub async fn read_supplied(params: &ReadParams) -> Result<ReadOutput, SuppliedError> {
-    read_supplied_capped(params, supplied_html_max_bytes()).await
+    read_supplied_with(params, supplied_html_max_bytes(), supplied_limiter()).await
 }
 
-/// [`read_supplied`] with an explicit byte cap (tests, and the env-resolved
-/// wrapper above).
+/// [`read_supplied`] with an explicit byte cap and the process limiter.
 pub async fn read_supplied_capped(
     params: &ReadParams,
     cap: usize,
+) -> Result<ReadOutput, SuppliedError> {
+    read_supplied_with(params, cap, supplied_limiter()).await
+}
+
+/// [`read_supplied`] with an explicit byte cap and admission limiter.
+pub async fn read_supplied_with(
+    params: &ReadParams,
+    cap: usize,
+    limiter: &Arc<tokio::sync::Semaphore>,
 ) -> Result<ReadOutput, SuppliedError> {
     let html = params.html.as_deref().ok_or(SuppliedError::MissingHtml)?;
     if url::Url::parse(&params.url).is_err() {
@@ -363,6 +408,11 @@ pub async fn read_supplied_capped(
         });
     }
 
+    // Admission before ANY copy of the HTML or blocking task exists.
+    let permit = Arc::clone(limiter)
+        .try_acquire_owned()
+        .map_err(|_| SuppliedError::Busy)?;
+
     let start = Instant::now();
     crate::metrics::record_read();
     let deadline = resolve_timeout(params.timeout);
@@ -370,6 +420,7 @@ pub async fn read_supplied_capped(
     let mut owned = params.clone();
     let html = owned.html.take().unwrap_or_default();
     let work = tokio::task::spawn_blocking(move || {
+        let _permit = permit; // released only when the extraction finishes
         let format = ContentFormat::from_param(&owned.format);
         let extracted = content::extract_content(&html, &owned.url, format);
         let quality = quality_of(
@@ -386,21 +437,11 @@ pub async fn read_supplied_capped(
         output.quality = Some(quality);
         output
     });
-    Ok(match tokio::time::timeout(deadline, work).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(e)) => build_error_output(
-            params,
-            "supplied",
-            elapsed(start),
-            &format!("extraction failed: {e}"),
-        ),
-        Err(_) => build_error_output(
-            params,
-            "supplied",
-            secs * 1000,
-            &format!("read deadline exceeded ({secs}s per-call bound)"),
-        ),
-    })
+    match tokio::time::timeout(deadline, work).await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(_)) => Err(SuppliedError::Internal),
+        Err(_) => Err(SuppliedError::DeadlineExceeded { secs }),
+    }
 }
 
 /// What the quality verdict needs to know about the fetched page.

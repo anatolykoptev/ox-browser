@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use ox_http::content::ReadParams;
-use ox_http::read_pipeline::{SuppliedError, read_page, read_supplied, read_supplied_capped};
+use ox_http::read_pipeline::{
+    SuppliedError, read_page, read_supplied, read_supplied_capped, read_supplied_with,
+};
 use ox_http::{Handler, HttpClient, HttpConfig, HttpResponse, Request};
 
 const FIXTURE: &str = include_str!("fixtures/supplied_page.html");
@@ -133,4 +135,42 @@ async fn read_page_refuses_supplied_html() {
     let http = HttpClient::with_chain(Arc::new(Boom), HttpConfig::default());
     let out = read_page(&http, &params("text", Some(FIXTURE)), &[]).await;
     assert!(out.error.is_some());
+}
+
+/// Admission bound: with every permit held the next request is shed with 503
+/// before a copy of the HTML or a blocking task exists; permits come back when
+/// work finishes.
+#[tokio::test]
+async fn supplied_extraction_sheds_load_when_permits_are_exhausted() {
+    use tokio::sync::Semaphore;
+    let limiter = Arc::new(Semaphore::new(2));
+    let held = Arc::clone(&limiter).try_acquire_many_owned(2).unwrap();
+    let p = params("text", Some(FIXTURE));
+
+    let err = read_supplied_with(&p, 1 << 20, &limiter).await.unwrap_err();
+    assert_eq!(err, SuppliedError::Busy);
+    assert_eq!(err.status_code(), 503);
+    assert_eq!(
+        limiter.available_permits(),
+        0,
+        "rejected request took a permit"
+    );
+
+    drop(held);
+    let out = read_supplied_with(&p, 1 << 20, &limiter).await.unwrap();
+    assert_eq!(out.method, "supplied");
+    assert_eq!(
+        limiter.available_permits(),
+        2,
+        "permit leaked after the work"
+    );
+}
+
+#[test]
+fn supplied_error_statuses() {
+    assert_eq!(
+        SuppliedError::DeadlineExceeded { secs: 8 }.status_code(),
+        504
+    );
+    assert_eq!(SuppliedError::Internal.status_code(), 500);
 }

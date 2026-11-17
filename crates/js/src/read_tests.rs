@@ -101,6 +101,13 @@ async fn supplied_html_makes_no_outbound_call_through_the_router() {
     impl Handler for Origin {
         async fn handle(&self, req: Request) -> ox_http::Result<HttpResponse> {
             ORIGIN_CALLS.fetch_add(1, Ordering::SeqCst);
+            if req.url.contains("/cf") {
+                return Err(ox_http::HttpError::Cloudflare(
+                    ChallengeType::JsChallenge,
+                    403,
+                    "ray".into(),
+                ));
+            }
             Ok(HttpResponse {
                 status: 200,
                 url: req.url,
@@ -123,10 +130,17 @@ async fn supplied_html_makes_no_outbound_call_through_the_router() {
         }
     }
 
+    // The counting provider is wired into the CLIENT's solver middleware (the
+    // only place a solve can originate), not just AppState, so a regression
+    // that sent supplied HTML through the solver would be counted.
+    let provider: Arc<dyn CookieProvider> = Arc::new(Provider);
+    let cookie_cache = Arc::new(CookieCache::new(std::time::Duration::from_secs(300)));
     let client = HttpClient::with_chain(
         Arc::new(Origin),
         HttpConfig {
-            cloudflare_detect: false,
+            cloudflare_detect: true,
+            cookie_provider: Some(Arc::clone(&provider)),
+            cookie_cache: Some(Arc::clone(&cookie_cache)),
             ..HttpConfig::default()
         },
     );
@@ -135,8 +149,8 @@ async fn supplied_html_makes_no_outbound_call_through_the_router() {
         "",
     ));
     let mut state = crate::AppState::new(
-        Arc::new(Provider),
-        Arc::new(CookieCache::new(std::time::Duration::from_secs(300))),
+        provider,
+        cookie_cache,
         Arc::new(client),
         crate::EndpointDefaults::default(),
         ox_media::MediaConfig::default(),
@@ -199,6 +213,7 @@ async fn supplied_html_makes_no_outbound_call_through_the_router() {
     // Control: the same route WITHOUT html does reach the transport, so the
     // zero counters above mean something.
     let resp = app
+        .clone()
         .oneshot(post(serde_json::json!({"url": "http://1.1.1.1/biz"})))
         .await
         .unwrap();

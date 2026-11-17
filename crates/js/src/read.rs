@@ -22,14 +22,7 @@ pub async fn read(
     // takes no transport at all (structural "no network").
     if params.html.is_some() {
         return match read_pipeline::read_supplied(&params).await {
-            Ok(output) => {
-                let status = if output.error.is_some() {
-                    StatusCode::GATEWAY_TIMEOUT
-                } else {
-                    StatusCode::OK
-                };
-                (status, Json(output))
-            }
+            Ok(output) => (StatusCode::OK, Json(output)),
             Err(e) => (
                 StatusCode::from_u16(e.status_code()).unwrap_or(StatusCode::BAD_REQUEST),
                 Json(read_pipeline::build_error_output(
