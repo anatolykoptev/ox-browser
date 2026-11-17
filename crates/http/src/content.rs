@@ -478,8 +478,10 @@ pub fn html_to_plain(html: &str) -> String {
     for sel in INVISIBLE_TAG_SELECTORS {
         doc.select(sel).remove();
     }
-    let text = doc.select("body").text().to_string();
-    collapse_whitespace(&text)
+    // Block-aware walk, not `body.text()`: that concatenates text nodes with
+    // no separator, gluing `<div>a</div><div>b</div>` into `ab` on minified
+    // markup. Line structure is kept; inline runs collapse to single spaces.
+    crate::plain_text::render(&doc)
 }
 
 pub fn html_to_fit_markdown(html: &str) -> String {
@@ -505,23 +507,6 @@ pub fn html_to_fit_markdown(html: &str) -> String {
 /// `html_to_plain` and `html_to_fit_markdown` so the two formats cannot drift
 /// on which invisible tags they strip.
 const INVISIBLE_TAG_SELECTORS: &[&str] = &["script", "style", "noscript"];
-
-fn collapse_whitespace(s: &str) -> String {
-    let mut r = String::with_capacity(s.len());
-    let mut prev = true;
-    for ch in s.chars() {
-        if ch.is_whitespace() {
-            if !prev {
-                r.push(' ');
-                prev = true;
-            }
-        } else {
-            r.push(ch);
-            prev = false;
-        }
-    }
-    r.trim().to_string()
-}
 
 /// Boilerplate/chrome selectors stripped by `html_to_fit_markdown` (in
 /// addition to [`INVISIBLE_TAG_SELECTORS`]). Not applied to plain-text output
