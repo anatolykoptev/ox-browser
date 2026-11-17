@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.5](https://github.com/anatolykoptev/ox-browser/compare/v0.9.4...v0.9.5) (2026-11-17)
+
+
+### Fixed
+
+* **read:** keep block boundaries in llm format ([#234](https://github.com/anatolykoptev/ox-browser/issues/234)) ([4585266](https://github.com/anatolykoptev/ox-browser/commit/4585266fbbbdb27de70565bc6a6593f1eaea3e72))
+
+
+### Documentation
+
+* **claude-md:** register the ox-browser MCP with headersHelper ([#231](https://github.com/anatolykoptev/ox-browser/issues/231)) ([aeb90b7](https://github.com/anatolykoptev/ox-browser/commit/aeb90b74c187d21bcf677c8cffa4260c97fc556b))
+
 ## [0.9.4](https://github.com/anatolykoptev/ox-browser/compare/v0.9.3...v0.9.4) (2026-11-17)
 
 
