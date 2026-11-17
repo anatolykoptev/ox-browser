@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.4](https://github.com/anatolykoptev/ox-browser/compare/v0.9.3...v0.9.4) (2026-11-17)
+
+
+### Added
+
+* **read:** extract caller-supplied HTML without any network access ([#229](https://github.com/anatolykoptev/ox-browser/issues/229)) ([a031afb](https://github.com/anatolykoptev/ox-browser/commit/a031afb9e1500d182aebf4a2314e53835975cbea))
+
 ## [0.9.3](https://github.com/anatolykoptev/ox-browser/compare/v0.9.2...v0.9.3) (2026-11-17)
 
 
