@@ -146,8 +146,9 @@ pub(crate) fn render(doc: &Document) -> String {
             }
         }
     }
-    // Edge newlines inside <pre> are kept mid-document; none at the ends.
-    out.trim_matches('\n').to_string()
+    // The pending separator is never flushed at the ends, so any newline here
+    // is literal <pre> text and stays.
+    out
 }
 
 fn enter_element<'a>(

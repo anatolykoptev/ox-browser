@@ -48,10 +48,11 @@ pub fn try_extract(
     }
 
     let mut all_chunks: Vec<TextChunk> = Vec::new();
-    // Whitespace-normalised on BOTH sides of the dedup comparison: the DOM text
-    // carries line breaks at block boundaries ("A.\n\nB.") while a JSON island
-    // holds the same prose with plain spaces ("A. B.").
-    let existing_lower = normalize_ws_lower(existing_markdown);
+    // Dedup compares word-token sequences on BOTH sides: the DOM text carries
+    // line breaks at block boundaries ("A.\n\nB.") while a JSON island holds
+    // the same prose with plain spaces ("A. B."), and a match must be on whole
+    // words, not inside one ("Rainwater" must not contain "Water").
+    let existing_tokens = word_tokens(existing_markdown);
 
     // 1. Standard JSON data islands (application/json script tags)
     for node in doc.select("script[type='application/json']").nodes() {
@@ -97,9 +98,11 @@ pub fn try_extract(
     // Enforce limit after collecting from all scripts
     all_chunks.truncate(MAX_CHUNKS);
 
-    // Dedup: remove chunks whose text already appears in DOM markdown
+    // Dedup at the granularity of the parts: a body or heading already present
+    // in the DOM text is dropped on its own, so a heading that exists only in
+    // the island survives even when its body is a duplicate.
     let mut seen = std::collections::HashSet::new();
-    all_chunks.retain(|c| {
+    all_chunks.retain_mut(|c| {
         // Must have heading or body
         let key = if !c.body.is_empty() {
             c.body.clone()
@@ -108,11 +111,19 @@ pub fn try_extract(
         } else {
             return false;
         };
-        if !seen.insert(key.clone()) {
+        if !seen.insert(key) {
             return false;
         }
-        // Skip if the text already exists in the DOM-extracted content
-        !existing_lower.contains(&normalize_ws_lower(&key))
+        if !c.body.is_empty() && in_dom(&existing_tokens, &c.body) {
+            c.body.clear();
+        }
+        if c.heading
+            .as_deref()
+            .is_some_and(|h| in_dom(&existing_tokens, h))
+        {
+            c.heading = None;
+        }
+        !c.body.is_empty() || c.heading.is_some()
     });
 
     if all_chunks.is_empty() {
@@ -137,12 +148,25 @@ pub fn try_extract(
     }
 }
 
-/// Lowercase and collapse every whitespace run (newlines included) to one space.
-fn normalize_ws_lower(s: &str) -> String {
-    s.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+/// Lowercased alphanumeric words joined by single spaces and padded with a
+/// space on each side, so `contains` matches whole-word sequences only.
+fn word_tokens(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(' ');
+    for w in s
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+    {
+        out.push_str(&w.to_lowercase());
+        out.push(' ');
+    }
+    out
+}
+
+/// True when `text` (with at least one word) appears in the DOM word sequence.
+fn in_dom(existing_tokens: &str, text: &str) -> bool {
+    let t = word_tokens(text);
+    t.len() > 1 && existing_tokens.contains(&t)
 }
 
 /// Recursively walk a JSON value and extract text content.

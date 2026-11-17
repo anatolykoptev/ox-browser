@@ -101,6 +101,9 @@ fn pre_keeps_edge_newlines_and_br_and_drops_whitespace_only() {
         "a\n\n\n\nb"
     );
     assert_eq!(html_to_plain("<pre>a<br>b</pre>"), "a\nb");
+    // Literal <pre> newlines at the very edges of the output are not trimmed.
+    assert_eq!(html_to_plain("<pre>\n\ncode\n\n</pre>"), "\ncode\n\n");
+    assert_eq!(html_to_plain("<pre><br>code<br></pre>"), "\ncode\n");
     assert_eq!(html_to_plain("<p>x</p><pre> \t\n </pre><p>y</p>"), "x\n\ny");
     assert_eq!(html_to_plain("<pre> \t </pre>"), "");
 }
@@ -137,6 +140,54 @@ fn spa_recovery_does_not_duplicate_prose_split_by_block_separators() {
         out.content.matches("first sentence").count(),
         1,
         "island prose duplicated: {:?}",
+        out.content
+    );
+}
+
+fn island(json: &str) -> String {
+    format!(
+        r#"<html><head><title>T</title><script type="application/json" id="d">{json}</script></head><body><p>The first sentence.</p><p>The second sentence.</p></body></html>"#
+    )
+}
+
+#[test]
+fn spa_recovery_keeps_island_only_heading_when_body_is_duplicate() {
+    let html = island(
+        r#"{"heading":"Important eligibility conditions","description":"The first sentence. The second sentence."}"#,
+    );
+    let out = extract_content(&html, "https://example.com/", ContentFormat::Text);
+    assert!(
+        out.content
+            .starts_with("The first sentence.\n\nThe second sentence."),
+        "DOM copy missing: {:?}",
+        out.content
+    );
+    assert!(
+        out.content.contains("Important eligibility conditions"),
+        "island-only heading dropped with its duplicate body: {:?}",
+        out.content
+    );
+    assert_eq!(
+        out.content.matches("first sentence").count(),
+        1,
+        "duplicate body re-appended: {:?}",
+        out.content
+    );
+}
+
+#[test]
+fn spa_dedup_matches_whole_words_only() {
+    let html = r#"<html><head><title>T</title><script type="application/json" id="d">{"heading":"Water treatment","description":"Filtration steps explained for every household."}</script></head><body><div>Rainwater</div><div>treatment options</div></body></html>"#;
+    let out = extract_content(html, "https://example.com/", ContentFormat::Text);
+    assert!(
+        out.content.contains("Water treatment"),
+        "heading suppressed by a mid-word match across blocks: {:?}",
+        out.content
+    );
+    assert!(
+        out.content.starts_with("Rainwater\n\ntreatment options")
+            || out.content.starts_with("Rainwater\ntreatment options"),
+        "DOM copy missing: {:?}",
         out.content
     );
 }
