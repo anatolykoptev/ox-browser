@@ -191,3 +191,41 @@ fn spa_dedup_matches_whole_words_only() {
         out.content
     );
 }
+
+#[test]
+fn spa_dedup_keeps_signed_figures_distinct() {
+    let html = r#"<html><head><title>T</title><script type="application/json" id="d">{"heading":"Quarterly results overview","description":"Operating margin was -10% this quarter."}</script></head><body><p>Operating margin was +10% this quarter.</p></body></html>"#;
+    let out = extract_content(html, "https://example.com/", ContentFormat::Text);
+    assert!(
+        out.content
+            .starts_with("Operating margin was +10% this quarter."),
+        "DOM copy missing: {:?}",
+        out.content
+    );
+    assert!(
+        out.content
+            .contains("Operating margin was -10% this quarter."),
+        "negative figure dropped as a duplicate of the positive one: {:?}",
+        out.content
+    );
+}
+
+#[test]
+fn spa_dedup_is_case_insensitive_for_cyrillic() {
+    let html = r#"<html><head><title>T</title><script type="application/json" id="d">{"heading":"Eligibility conditions","description":"СЛУЖЕНИЕ КАЖДОЕ ВОСКРЕСЕНЬЕ в церкви."}</script></head><body><p>Служение каждое</p><p>воскресенье в церкви.</p></body></html>"#;
+    let out = extract_content(html, "https://example.com/", ContentFormat::Text);
+    assert!(
+        out.content.contains("Eligibility conditions"),
+        "{:?}",
+        out.content
+    );
+    assert_eq!(
+        out.content
+            .to_lowercase()
+            .matches("служение каждое")
+            .count(),
+        1,
+        "Cyrillic body not deduped (case-insensitively): {:?}",
+        out.content
+    );
+}

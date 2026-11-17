@@ -48,11 +48,11 @@ pub fn try_extract(
     }
 
     let mut all_chunks: Vec<TextChunk> = Vec::new();
-    // Dedup compares word-token sequences on BOTH sides: the DOM text carries
-    // line breaks at block boundaries ("A.\n\nB.") while a JSON island holds
-    // the same prose with plain spaces ("A. B."), and a match must be on whole
-    // words, not inside one ("Rainwater" must not contain "Water").
-    let existing_tokens = word_tokens(existing_markdown);
+    // Dedup compares whitespace-normalised text on BOTH sides: the DOM text
+    // carries line breaks at block boundaries ("A.\n\nB.") while a JSON island
+    // holds the same prose with plain spaces ("A. B."). A match must also sit
+    // on word boundaries ("Rainwater" must not contain "Water").
+    let existing_norm = normalize_ws_lower(existing_markdown);
 
     // 1. Standard JSON data islands (application/json script tags)
     for node in doc.select("script[type='application/json']").nodes() {
@@ -114,12 +114,12 @@ pub fn try_extract(
         if !seen.insert(key) {
             return false;
         }
-        if !c.body.is_empty() && in_dom(&existing_tokens, &c.body) {
+        if !c.body.is_empty() && in_dom(&existing_norm, &c.body) {
             c.body.clear();
         }
         if c.heading
             .as_deref()
-            .is_some_and(|h| in_dom(&existing_tokens, h))
+            .is_some_and(|h| in_dom(&existing_norm, h))
         {
             c.heading = None;
         }
@@ -148,25 +148,28 @@ pub fn try_extract(
     }
 }
 
-/// Lowercased alphanumeric words joined by single spaces and padded with a
-/// space on each side, so `contains` matches whole-word sequences only.
-fn word_tokens(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push(' ');
-    for w in s
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-    {
-        out.push_str(&w.to_lowercase());
-        out.push(' ');
-    }
-    out
+/// Lowercase and collapse every whitespace run (newlines, tabs, nbsp included)
+/// to one space. Punctuation and signs are kept: `+10%` and `-10%` differ.
+fn normalize_ws_lower(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
-/// True when `text` (with at least one word) appears in the DOM word sequence.
-fn in_dom(existing_tokens: &str, text: &str) -> bool {
-    let t = word_tokens(text);
-    t.len() > 1 && existing_tokens.contains(&t)
+/// True when `text` appears in the normalised DOM text as a whole-word match:
+/// the characters just before and after the match are absent or not
+/// alphanumeric (Unicode-aware), so "water" does not match inside "rainwater".
+fn in_dom(existing_norm: &str, text: &str) -> bool {
+    let needle = normalize_ws_lower(text);
+    if needle.is_empty() {
+        return false;
+    }
+    existing_norm.match_indices(&needle).any(|(start, m)| {
+        let before = existing_norm[..start].chars().next_back();
+        let after = existing_norm[start + m.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
 }
 
 /// Recursively walk a JSON value and extract text content.
