@@ -284,6 +284,8 @@ pub fn record_fetch_outcome(o: FetchOutcome) {
 /// - `Ok(resp)` otherwise → `Ok`.
 /// - `Err(Cloudflare | CloudflareInferred)` → `Challenge`.
 /// - `Err(RetryableStatus(429))` → `RateLimited` (idempotent retry exhaust).
+/// - `Err(RateLimited)` → `RateLimited` (the local limiter refused: the wait
+///   would have outlived the call's deadline).
 /// - `Err(_)` otherwise → `UpstreamError`.
 pub fn classify_fetch_outcome(outcome: &CallOutcome<Result<HttpResponse>>) -> FetchOutcome {
     match outcome {
@@ -301,7 +303,9 @@ pub fn classify_fetch_outcome(outcome: &CallOutcome<Result<HttpResponse>>) -> Fe
             HttpError::Cloudflare(_, _, _) | HttpError::CloudflareInferred(_, _) => {
                 FetchOutcome::Challenge
             }
-            HttpError::RetryableStatus(429) => FetchOutcome::RateLimited,
+            HttpError::RetryableStatus(429) | HttpError::RateLimited { .. } => {
+                FetchOutcome::RateLimited
+            }
             _ => FetchOutcome::UpstreamError,
         },
     }
@@ -833,27 +837,32 @@ pub fn render() -> String {
         out.push_str(&g.value.to_string());
         out.push('\n');
     }
+    crate::metrics_ratelimit::render_into(&mut out);
     out
 }
+
+/// Gauge-publishing tests read/write the shared process-global `PROXY_DISABLED`
+/// static. When run in parallel they race on that atomic, producing flaky
+/// assertions. This mutex serializes them so the gauge value is deterministic
+/// within each test — mirrors the T2 render_cache gauge test pattern.
+///
+/// It also guards the in-flight gauge: any test that calls
+/// `deadline::bounded` moves it, so such tests take this lock too (the
+/// rate-limit tests do) or the gauge tests read a baseline mid-flight.
+///
+/// `tokio::sync::Mutex` (not `std::sync`): the two `bounded` gauge tests
+/// hold the guard across an `.await` on the in-flight gauge, and a
+/// `std::sync::MutexGuard` is not `Send` — clippy `await_holding_lock`
+/// flags it, and on a single-threaded runtime a second task blocking on
+/// the same lock would deadlock rather than yield. The sync tests use
+/// `blocking_lock()` (the documented way to acquire a tokio mutex from
+/// non-async code).
+#[cfg(test)]
+pub(crate) static GAUGE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::Mutex;
-
-    /// Gauge-publishing tests read/write the shared process-global `PROXY_DISABLED`
-    /// static. When run in parallel they race on that atomic, producing flaky
-    /// assertions. This mutex serializes them so the gauge value is deterministic
-    /// within each test — mirrors the T2 render_cache gauge test pattern.
-    ///
-    /// `tokio::sync::Mutex` (not `std::sync`): the two `bounded` gauge tests
-    /// hold the guard across an `.await` on the in-flight gauge, and a
-    /// `std::sync::MutexGuard` is not `Send` — clippy `await_holding_lock`
-    /// flags it, and on a single-threaded runtime a second task blocking on
-    /// the same lock would deadlock rather than yield. The sync tests use
-    /// `blocking_lock()` (the documented way to acquire a tokio mutex from
-    /// non-async code).
-    static GAUGE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
     #[test]
     fn render_emits_gauge_series_in_prometheus_format() {
@@ -1152,6 +1161,23 @@ mod tests {
         let outcome: CallOutcome<Result<HttpResponse>> =
             CallOutcome::Ok(Err(HttpError::RetryableStatus(429)));
         assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::RateLimited);
+    }
+
+    #[test]
+    fn classify_local_limiter_refusal_as_rate_limited() {
+        let outcome: CallOutcome<Result<HttpResponse>> =
+            CallOutcome::Ok(Err(HttpError::RateLimited {
+                retry_after: std::time::Duration::from_secs(30),
+                rule: "catch_all".into(),
+            }));
+        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::RateLimited);
+    }
+
+    #[test]
+    fn render_includes_ratelimit_series() {
+        let body = render();
+        assert!(body.contains("# TYPE oxbrowser_ratelimit_wait_seconds histogram"));
+        assert!(body.contains("# TYPE oxbrowser_ratelimit_deadline_refusals_total counter"));
     }
 
     #[test]

@@ -106,6 +106,12 @@ pub struct ReadOutput {
     /// never altered by it. Absent on site-handler results and error outputs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<crate::content_quality::ContentQuality>,
+    /// Set when the local per-host rate limiter refused the fetch because the
+    /// next permit would have arrived after the call's deadline. Nothing was
+    /// sent upstream. REST answers 429 + `Retry-After`; MCP returns this typed
+    /// field next to `error`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limited: Option<crate::error::RateLimitRefusal>,
 }
 
 /// Article metadata extracted from HTML meta tags and JSON-LD.

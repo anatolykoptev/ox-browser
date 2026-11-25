@@ -198,6 +198,7 @@ mod tests {
             error: None,
             extraction_note: None,
             quality: None,
+            rate_limited: None,
         }
     }
 
@@ -329,6 +330,7 @@ mod tests {
             error: None,
             extraction_note: None,
             quality: None,
+            rate_limited: None,
         };
 
         let out = to_llm_text(&result);

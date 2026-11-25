@@ -2,14 +2,29 @@
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use ox_http::content::ReadParams;
 use ox_http::read_pipeline;
 
 use super::AppState;
 use crate::inbound_auth::InboundAuth;
 
+/// `POST /read`. A local rate-limit refusal answers 429 with a real
+/// `Retry-After` header; the body carries the typed `rate_limited` field.
 pub async fn read(
+    state: State<AppState>,
+    auth: InboundAuth,
+    params: Json<ReadParams>,
+) -> (StatusCode, HeaderMap, Json<ox_http::content::ReadOutput>) {
+    let (status, Json(output)) = read_inner(state, auth, params).await;
+    let headers = match &output.rate_limited {
+        Some(r) => crate::rate_limited::retry_after_headers(r.retry_after_s),
+        None => HeaderMap::new(),
+    };
+    (status, headers, Json(output))
+}
+
+async fn read_inner(
     State(state): State<AppState>,
     auth: InboundAuth,
     Json(params): Json<ReadParams>,
@@ -37,7 +52,9 @@ pub async fn read(
     let http = state.client_for(auth);
     let output = read_pipeline::read_page(&http, &params, &state.site_handlers).await;
 
-    let status = if output.error.is_some() {
+    let status = if output.rate_limited.is_some() {
+        crate::rate_limited::STATUS
+    } else if output.error.is_some() {
         StatusCode::BAD_GATEWAY
     } else {
         StatusCode::OK

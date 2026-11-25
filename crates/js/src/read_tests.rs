@@ -237,3 +237,90 @@ async fn supplied_html_makes_no_outbound_call_through_the_router() {
         "control must reach the solver exactly once"
     );
 }
+
+/// A local limiter refusal on `/read` answers 429 + a real `Retry-After`
+/// header with the typed `rate_limited` field, not the generic 502. Dropping
+/// the typed field in `read_page` (or the 429 mapping in `read`) goes RED.
+#[tokio::test(start_paused = true)]
+async fn read_answers_429_with_retry_after_on_a_limiter_refusal() {
+    use async_trait::async_trait;
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use ox_http::{
+        CookieCache, DomainConfig, DomainLimiter, Handler, HttpClient, HttpConfig, HttpResponse,
+        Request,
+    };
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tower::ServiceExt;
+
+    struct Origin;
+    #[async_trait]
+    impl Handler for Origin {
+        async fn handle(&self, req: Request) -> ox_http::Result<HttpResponse> {
+            Ok(HttpResponse {
+                status: 200,
+                url: req.url,
+                headers: Default::default(),
+                body: "<html><head><title>T</title></head><body><p>body text long enough to count as content for the extractor</p></body></html>".into(),
+            })
+        }
+    }
+    let limiter = Arc::new(DomainLimiter::new(vec![DomainConfig {
+        domain: String::new(),
+        requests_per_window: 1,
+        window_duration: Duration::from_secs(600),
+        min_delay: Duration::ZERO,
+        random_delay: Duration::ZERO,
+    }]));
+    let client = HttpClient::with_chain(
+        Arc::new(Origin),
+        HttpConfig {
+            retry: None,
+            cloudflare_detect: false,
+            quality_check: false,
+            rate_limiter: Some(limiter),
+            ..HttpConfig::default()
+        },
+    );
+    let provider: Arc<dyn ox_http::CookieProvider> = Arc::new(crate::tests::MockProvider);
+    let state = crate::AppState::new(
+        provider,
+        Arc::new(CookieCache::new(Duration::from_secs(60))),
+        Arc::new(client),
+        crate::EndpointDefaults::default(),
+        ox_media::MediaConfig::default(),
+        Arc::new(crate::gobrowser_proxy::GoBrowserProxy::new(
+            "http://127.0.0.1:1".to_string(),
+            "",
+        )),
+    );
+    let app = crate::router(state);
+    let post = || {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/read")
+            .header("content-type", "application/json")
+            .header("host", "localhost")
+            .body(Body::from(
+                serde_json::json!({"url": "http://1.1.1.1/a", "timeout": 2}).to_string(),
+            ))
+            .unwrap()
+    };
+
+    let first = app.clone().oneshot(post()).await.unwrap();
+    assert_eq!(first.status(), axum::http::StatusCode::OK);
+
+    let resp = app.oneshot(post()).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        resp.headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok()),
+        Some("600")
+    );
+    let v: serde_json::Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(v["rate_limited"]["retry_after_s"], 600, "{v}");
+    assert_eq!(v["rate_limited"]["rule"], "catch_all", "{v}");
+}

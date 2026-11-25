@@ -78,6 +78,10 @@ struct FetchResult {
     /// Content-quality verdict for HTML responses (report-only).
     #[serde(skip_serializing_if = "Option::is_none")]
     quality: Option<ox_http::content_quality::ContentQuality>,
+    /// Set when the local rate limiter refused the call (nothing was sent):
+    /// `retry_after_s` is when a permit is expected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rate_limited: Option<ox_http::RateLimitRefusal>,
 }
 
 #[derive(Serialize)]
@@ -92,6 +96,8 @@ struct FetchSmartResult {
     elapsed_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rate_limited: Option<ox_http::RateLimitRefusal>,
 }
 
 impl OxMcpServer {
@@ -137,6 +143,7 @@ impl OxMcpServer {
                 elapsed_ms: elapsed(),
                 error: Some("body is not allowed with method GET".into()),
                 quality: None,
+                rate_limited: None,
             };
             let json =
                 serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
@@ -200,12 +207,16 @@ impl OxMcpServer {
                     elapsed_ms: elapsed(),
                     error: None,
                     quality,
+                    rate_limited: None,
                 };
                 let json = serde_json::to_string(&result)
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
                 Ok(CallToolResult::success(vec![Content::text(json)]))
             }
             CallOutcome::Ok(Err(e)) => {
+                // A local limiter refusal is a typed result (`rate_limited`
+                // with `retry_after_s`), not a bare error string.
+                let refusal = e.rate_limit_refusal();
                 let result = FetchResult {
                     status: 0,
                     headers: HashMap::new(),
@@ -213,8 +224,13 @@ impl OxMcpServer {
                     cf_detected: false,
                     cf_type: None,
                     elapsed_ms: elapsed(),
-                    error: Some(e.to_string()),
+                    error: Some(
+                        refusal
+                            .as_ref()
+                            .map_or_else(|| e.to_string(), |r| r.message()),
+                    ),
                     quality: None,
+                    rate_limited: refusal,
                 };
                 let json = serde_json::to_string(&result)
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
@@ -232,6 +248,7 @@ impl OxMcpServer {
                     elapsed_ms: elapsed(),
                     error: Some(format!("deadline exceeded ({secs}s per-call bound)")),
                     quality: None,
+                    rate_limited: None,
                 };
                 let json = serde_json::to_string(&result)
                     .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
@@ -265,7 +282,7 @@ impl OxMcpServer {
                 save,
                 &url,
             )),
-            Err(e) => Ok(smart_error(start, &e.to_string())),
+            Err(e) => Ok(smart_error(start, &e)),
         }
     }
 }
@@ -298,12 +315,17 @@ fn smart_ok(
         cf_detected: cf,
         elapsed_ms: start.elapsed().as_millis() as u64,
         error: None,
+        rate_limited: None,
     };
     let json = serde_json::to_string(&r).unwrap_or_default();
     CallToolResult::success(vec![Content::text(json)])
 }
 
-fn smart_error(start: Instant, msg: &str) -> CallToolResult {
+fn smart_error(start: Instant, e: &ox_http::HttpError) -> CallToolResult {
+    let refusal = e.rate_limit_refusal();
+    let msg = refusal
+        .as_ref()
+        .map_or_else(|| e.to_string(), |r| r.message());
     let r = FetchSmartResult {
         status: 0,
         body: None,
@@ -311,7 +333,8 @@ fn smart_error(start: Instant, msg: &str) -> CallToolResult {
         method: "direct".into(),
         cf_detected: false,
         elapsed_ms: start.elapsed().as_millis() as u64,
-        error: Some(msg.to_string()),
+        error: Some(msg),
+        rate_limited: refusal,
     };
     let json = serde_json::to_string(&r).unwrap_or_default();
     CallToolResult::error(vec![Content::text(json)])

@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
@@ -34,9 +34,30 @@ pub struct FetchSmartResponse {
     pub elapsed_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Seconds until the local rate limiter expects a permit; set only on a
+    /// 429 refusal (mirrors the `Retry-After` header).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_s: Option<u64>,
 }
 
+/// `POST /fetch-smart`. A local rate-limit refusal answers 429 with a real
+/// `Retry-After` header (and `retry_after_s` in the body).
 pub async fn fetch_smart(
+    state: State<AppState>,
+    auth: InboundAuth,
+    req: Json<FetchSmartRequest>,
+) -> (StatusCode, HeaderMap, Json<FetchSmartResponse>) {
+    let (status, Json(body)) = fetch_smart_inner(state, auth, req).await;
+    let headers = match body.retry_after_s {
+        Some(secs) if status == crate::rate_limited::STATUS => {
+            crate::rate_limited::retry_after_headers(secs)
+        }
+        _ => HeaderMap::new(),
+    };
+    (status, headers, Json(body))
+}
+
+async fn fetch_smart_inner(
     State(state): State<AppState>,
     auth: InboundAuth,
     Json(req): Json<FetchSmartRequest>,
@@ -60,7 +81,25 @@ pub async fn fetch_smart(
     // ox-browser#177 / SEC-CR-018: `client_for` is the one stamp site — it
     // carries the gate's `ok_secret` decision (see `fetch`).
     let http = state.client_for(auth);
-    match bounded(deadline, http.get(&req.url)).await {
+    let outcome = bounded(deadline, http.get(&req.url)).await;
+    // A local rate-limit refusal: 429 + Retry-After instead of a generic 502.
+    if let CallOutcome::Ok(Err(e)) = &outcome
+        && let Some(refusal) = e.rate_limit_refusal()
+    {
+        let mut resp = make_response(
+            0,
+            String::new(),
+            "auto",
+            false,
+            start,
+            save,
+            &url,
+            Some(refusal.message()),
+        );
+        resp.retry_after_s = Some(refusal.retry_after_s);
+        return (crate::rate_limited::STATUS, Json(resp));
+    }
+    match outcome {
         CallOutcome::Ok(Ok(resp)) => (
             StatusCode::OK,
             Json(make_response(
@@ -134,6 +173,7 @@ fn make_response(
         cf_detected: cf,
         elapsed_ms: start.elapsed().as_millis() as u64,
         error,
+        retry_after_s: None,
     }
 }
 
@@ -190,7 +230,7 @@ mod tests {
             timeout: None,
             save_to_file: None,
         };
-        let (status, json) =
+        let (status, _, json) =
             fetch_smart(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
         assert_eq!(
@@ -217,6 +257,7 @@ mod tests {
             cf_detected: false,
             elapsed_ms: 100,
             error: None,
+            retry_after_s: None,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["method"], "direct");
@@ -234,9 +275,76 @@ mod tests {
             cf_detected: false,
             elapsed_ms: 100,
             error: None,
+            retry_after_s: None,
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert!(json.get("body").is_none());
         assert_eq!(json["file_path"], "/tmp/ox-browser/example.com_abc.html");
+    }
+
+    /// A local limiter refusal answers 429 + a real `Retry-After` header, not
+    /// the generic 502. Dropping the refusal branch in `fetch_smart_inner`
+    /// turns this RED (502, no header).
+    #[tokio::test(start_paused = true)]
+    async fn fetch_smart_answers_429_with_retry_after_on_a_limiter_refusal() {
+        use ox_http::{DomainConfig, DomainLimiter, HttpResponse, Request};
+
+        struct Ok200;
+        #[async_trait]
+        impl ox_http::Handler for Ok200 {
+            async fn handle(&self, req: Request) -> ox_http::Result<HttpResponse> {
+                Ok(HttpResponse {
+                    status: 200,
+                    url: req.url,
+                    headers: Default::default(),
+                    body: "ok".into(),
+                })
+            }
+        }
+        let limiter = Arc::new(DomainLimiter::new(vec![DomainConfig {
+            domain: String::new(),
+            requests_per_window: 1,
+            window_duration: Duration::from_secs(600),
+            min_delay: Duration::ZERO,
+            random_delay: Duration::ZERO,
+        }]));
+        let mut state = test_state();
+        state.http_client = Arc::new(HttpClient::with_chain(
+            Arc::new(Ok200),
+            HttpConfig {
+                retry: None,
+                cloudflare_detect: false,
+                quality_check: false,
+                rate_limiter: Some(limiter),
+                ..HttpConfig::default()
+            },
+        ));
+        let req = || FetchSmartRequest {
+            url: "http://1.1.1.1/a".into(),
+            timeout: Some(2),
+            save_to_file: Some(false),
+        };
+        let (first, _, _) = fetch_smart(
+            State(state.clone()),
+            InboundAuth::from_marker(None),
+            Json(req()),
+        )
+        .await;
+        assert_eq!(first, StatusCode::OK);
+
+        let (status, headers, json) =
+            fetch_smart(State(state), InboundAuth::from_marker(None), Json(req())).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            headers.get("retry-after").and_then(|v| v.to_str().ok()),
+            Some("600")
+        );
+        assert_eq!(json.retry_after_s, Some(600));
+        assert!(
+            json.error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("limiter")
+        );
     }
 }
