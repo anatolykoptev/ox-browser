@@ -20,6 +20,15 @@ pub enum HttpError {
     #[error("retryable HTTP status: {0}")]
     RetryableStatus(u16),
 
+    /// The per-domain limiter refused the call because the permit would arrive
+    /// after the call's deadline. Nothing was sent. `retry_after` is when a
+    /// permit is expected; `rule` names the matching rate-limit rule.
+    #[error("rate limited by rule {rule:?}: retry after {retry_after:?}")]
+    RateLimited {
+        retry_after: std::time::Duration,
+        rule: String,
+    },
+
     #[error("proxy pool error: {0}")]
     ProxyPool(String),
 
@@ -83,6 +92,9 @@ impl HttpError {
             Self::InvalidUrl(_)
             | Self::InvalidMethod(_)
             | Self::ProxyPool(_)
+            // Retrying inside the same call cannot help: the wait already
+            // exceeds the call's budget.
+            | Self::RateLimited { .. }
             | Self::BodyTooLarge { .. }
             | Self::BodyDecodeError(_)
             | Self::OnionRequiresTor

@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::{Json, extract::State};
-use ox_http::deadline::{CallOutcome, bounded, resolve_timeout};
+use ox_http::deadline::{CallOutcome, bounded_phased, resolve_timeout};
 use ox_http::detect_cloudflare;
 use ox_http::metrics::{classify_fetch_outcome, record_fetch_outcome};
 use serde::{Deserialize, Serialize};
@@ -71,7 +71,27 @@ pub struct FetchResponse {
     pub quality: Option<ox_http::content_quality::ContentQuality>,
 }
 
+/// `POST /fetch`. A local rate-limit refusal answers 429 with a real
+/// `Retry-After` header; every other outcome carries no extra headers.
 pub async fn fetch(
+    state: State<AppState>,
+    auth: InboundAuth,
+    req: Json<FetchRequest>,
+) -> (StatusCode, HeaderMap, Json<FetchResponse>) {
+    let (status, Json(body)) = fetch_inner(state, auth, req).await;
+    let mut headers = HeaderMap::new();
+    if status == StatusCode::TOO_MANY_REQUESTS
+        && let Some(v) = body
+            .headers
+            .get("retry-after")
+            .and_then(|v| HeaderValue::from_str(v).ok())
+    {
+        headers.insert(header::RETRY_AFTER, v);
+    }
+    (status, headers, Json(body))
+}
+
+async fn fetch_inner(
     State(state): State<AppState>,
     auth: InboundAuth,
     Json(req): Json<FetchRequest>,
@@ -155,7 +175,7 @@ pub async fn fetch(
         &req.url,
         Some(state.defaults.fetch_timeout_secs),
     )));
-    let outcome = bounded(
+    let (outcome, phase) = bounded_phased(
         deadline,
         http.request(
             &method,
@@ -199,6 +219,28 @@ pub async fn fetch(
                 }),
             )
         }
+        // The local rate limiter refused: the permit would have arrived after
+        // this call's deadline. Nothing was sent upstream. Answer 429 at once
+        // with `Retry-After` (also mirrored into `headers` here; `fetch` lifts
+        // it to a real HTTP header) instead of sleeping into a 504.
+        CallOutcome::Ok(Err(ox_http::HttpError::RateLimited { retry_after, rule })) => {
+            let secs = retry_after.as_secs_f64().ceil().max(1.0) as u64;
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(FetchResponse {
+                    status: 0,
+                    headers: HashMap::from([("retry-after".to_string(), secs.to_string())]),
+                    body: String::new(),
+                    cf_detected: false,
+                    cf_type: None,
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    error: Some(format!(
+                        "rate limited (phase: limiter, rule: {rule}): retry after {secs}s"
+                    )),
+                    quality: None,
+                }),
+            )
+        }
         CallOutcome::Ok(Err(e)) => (
             StatusCode::BAD_GATEWAY,
             Json(FetchResponse {
@@ -225,7 +267,10 @@ pub async fn fetch(
                 cf_detected: false,
                 cf_type: None,
                 elapsed_ms: start.elapsed().as_millis() as u64,
-                error: Some(format!("deadline exceeded ({secs}s per-call bound)")),
+                error: Some(format!(
+                    "deadline exceeded ({secs}s per-call bound, phase: {})",
+                    phase.as_str()
+                )),
                 quality: None,
             }),
         ),
@@ -425,11 +470,12 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
+        let (status, _, json) =
+            fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
         assert_eq!(
             json.error.as_deref(),
-            Some("deadline exceeded (1s per-call bound)"),
+            Some("deadline exceeded (1s per-call bound, phase: upstream)"),
             "configured default bound, not the 8s seam default"
         );
     }
@@ -448,9 +494,74 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: Some(120),
         };
-        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
+        let (status, _, json) =
+            fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::OK, "caller timeout → no 1s bound");
         assert_eq!(json.status, 500);
+    }
+
+    /// The 504 incident end to end: the limiter's next permit is 60 s away
+    /// and the call has 2 s. `/fetch` must answer 429 with a real
+    /// `Retry-After` header at once, not hold the call to its deadline and
+    /// answer 504. Reverting the middleware to a blind wait (or dropping the
+    /// `RateLimited` arm) turns the 429 into a 504 / 502 and this goes RED.
+    #[tokio::test(start_paused = true)]
+    async fn fetch_answers_429_with_retry_after_when_limiter_wait_exceeds_deadline() {
+        use ox_http::{DomainConfig, DomainLimiter};
+        let limiter = Arc::new(DomainLimiter::new(vec![DomainConfig {
+            domain: String::new(),
+            requests_per_window: 1,
+            window_duration: Duration::from_secs(60),
+            min_delay: Duration::ZERO,
+            random_delay: Duration::ZERO,
+        }]));
+        let config = HttpConfig {
+            retry: None,
+            cloudflare_detect: false,
+            quality_check: false,
+            rate_limiter: Some(limiter),
+            ..HttpConfig::default()
+        };
+        let mut state = state_with_500_handler();
+        state.http_client = Arc::new(HttpClient::with_chain(Arc::new(ServerErrorMock), config));
+        let req = || FetchRequest {
+            url: "http://1.1.1.1/x".into(),
+            method: Some("POST".into()), // non-idempotent: no retry noise
+            body: Some("{}".into()),
+            content_type: None,
+            headers: std::collections::HashMap::new(),
+            timeout: Some(2),
+        };
+
+        let (first, _, _) = fetch(
+            State(state.clone()),
+            InboundAuth::from_marker(None),
+            Json(req()),
+        )
+        .await;
+        assert_eq!(first, StatusCode::OK, "first call takes the only permit");
+
+        let started = tokio::time::Instant::now();
+        let (status, headers, json) =
+            fetch(State(state), InboundAuth::from_marker(None), Json(req())).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "refusal must be immediate, took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(
+            headers.get("retry-after").and_then(|v| v.to_str().ok()),
+            Some("60")
+        );
+        assert!(
+            json.error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("limiter"),
+            "body names the phase: {:?}",
+            json.error
+        );
     }
 
     /// POST on 500 → HTTP 200, `status: 500`, `error: None`, body present.
@@ -468,7 +579,8 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
+        let (status, _, json) =
+            fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::OK, "POST on 500 → HTTP 200");
         assert_eq!(json.status, 500, "status field carries the origin 500");
         assert!(json.error.is_none(), "error must be None for POST on 500");
@@ -494,7 +606,8 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
+        let (status, _, json) =
+            fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY, "GET on 500 → HTTP 502");
         assert_eq!(json.status, 0, "status field is 0 for an error");
         assert!(json.error.is_some(), "error must be set for GET on 500");
@@ -535,7 +648,8 @@ mod tests {
             headers: std::collections::HashMap::new(),
             timeout: None,
         };
-        let (status, json) = fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
+        let (status, _, json) =
+            fetch(State(state), InboundAuth::from_marker(None), Json(req)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             json.body, LOGIN,

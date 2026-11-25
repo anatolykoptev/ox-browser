@@ -3,11 +3,16 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use rand::Rng;
 
+use crate::deadline::{self, MAX_CALL_TIMEOUT_SECS};
+use crate::error::HttpError;
 use crate::metrics;
+use crate::metrics_ratelimit;
 use crate::ratelimit::Limiter;
 use crate::url_util::extract_domain;
 
@@ -50,62 +55,115 @@ impl DomainLimiter {
         }
     }
 
-    /// Returns `true` if the request is allowed (no matching rule, or within limits).
+    /// Try to admit one request for `raw_url`, drawing a fresh jitter.
+    /// Returns `true` if allowed (no matching rule, or within limits).
     pub fn allow(&self, raw_url: &str) -> bool {
-        let domain = match extract_domain(raw_url) {
-            Some(d) => d,
-            None => return true,
+        self.check(raw_url, self.draw_jitter(raw_url)).is_ok()
+    }
+
+    /// Admit one request for `raw_url` or report how long until it could be.
+    ///
+    /// `Ok(())` consumes a permit (and stamps the min-delay clock). `Err(wait)`
+    /// consumes nothing. Both limits are checked under one lock, so concurrent
+    /// callers cannot both pass the same min-delay gap.
+    pub fn check(&self, raw_url: &str, jitter: Duration) -> Result<(), Duration> {
+        let Some(domain) = extract_domain(raw_url) else {
+            return Ok(());
         };
-        let rule = match self.match_rule(&domain) {
-            Some(r) => r,
-            None => return true,
+        let Some(rule) = self.match_rule(&domain) else {
+            return Ok(());
         };
 
         let now = Instant::now();
+        let mut last = lock_or_recover(&self.last_req);
 
-        // Enforce min_delay + random jitter.
-        if !rule.min_delay.is_zero() || !rule.random_delay.is_zero() {
-            let last = lock_or_recover(&self.last_req);
-            if let Some(&prev) = last.get(&domain) {
-                let jitter = if rule.random_delay.is_zero() {
-                    Duration::ZERO
-                } else {
-                    let ms = rand::thread_rng().gen_range(0..rule.random_delay.as_millis() as u64);
-                    Duration::from_millis(ms)
-                };
-                let required = rule.min_delay + jitter;
-                if now.duration_since(prev) < required {
-                    return false;
-                }
+        // Min-delay + jitter gap since the previous admitted request.
+        if let Some(&prev) = last.get(&domain) {
+            let required = rule.min_delay + jitter;
+            let since = now.duration_since(prev);
+            if since < required {
+                return Err(required - since);
             }
         }
 
-        let allowed = {
+        {
             let mut lims = lock_or_recover(&self.limiters);
             let lim = lims.entry(domain.clone()).or_insert_with(|| {
                 Limiter::with_window(rule.requests_per_window, rule.window_duration)
             });
-            lim.allow(&domain)
-        };
-        if allowed {
-            lock_or_recover(&self.last_req).insert(domain, now);
-            self.publish_gauge();
+            lim.check(&domain)?;
         }
-        allowed
+
+        last.insert(domain, now);
+        metrics::set_gauge(&metrics::RATELIMIT_DOMAINS, last.len() as u64);
+        Ok(())
     }
 
-    /// Wait (async, polling every 50 ms) until the request is allowed.
-    pub async fn wait(&self, raw_url: &str) {
+    /// Name of the rule matching `raw_url` (its domain pattern; `catch_all`
+    /// for the empty pattern), or `None` when no rule applies.
+    pub fn rule_name(&self, raw_url: &str) -> Option<&str> {
+        let domain = extract_domain(raw_url)?;
+        self.match_rule(&domain)
+            .map(|r| metrics_ratelimit::rule_label(&r.domain))
+    }
+
+    /// Wait until a permit is available, sleeping exactly as long as the
+    /// limiter says (no polling), but never past `deadline`.
+    ///
+    /// If the next permit would arrive after `deadline` (or, with no deadline
+    /// known, after the global call ceiling), nothing is slept and
+    /// [`HttpError::RateLimited`] carries the expected wait so the caller can
+    /// answer 429 + `Retry-After` instead of burning its whole budget and
+    /// timing out. Returns the time spent waiting on success.
+    pub async fn acquire(
+        &self,
+        raw_url: &str,
+        deadline: Option<Instant>,
+    ) -> Result<Duration, HttpError> {
+        let start = Instant::now();
+        let deadline = deadline.unwrap_or(start + Duration::from_secs(MAX_CALL_TIMEOUT_SECS));
+        // One jitter draw per call: re-drawing after each sleep could demand
+        // a further wait for the difference.
+        let jitter = self.draw_jitter(raw_url);
         loop {
-            if self.allow(raw_url) {
-                return;
+            let wait = match self.check(raw_url, jitter) {
+                Ok(()) => {
+                    deadline::set_in_limiter(false);
+                    let waited = start.elapsed();
+                    if let Some(rule) = self.rule_name(raw_url) {
+                        metrics_ratelimit::record_wait(rule, waited);
+                    }
+                    return Ok(waited);
+                }
+                Err(wait) => wait,
+            };
+            if Instant::now() + wait > deadline {
+                let rule = self.rule_name(raw_url).unwrap_or_default().to_string();
+                metrics_ratelimit::record_deadline_refusal(&rule);
+                return Err(HttpError::RateLimited {
+                    retry_after: wait,
+                    rule,
+                });
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            deadline::set_in_limiter(true);
+            tokio::time::sleep(wait).await;
         }
+    }
+
+    /// Random extra gap for this URL's rule, `0..random_delay`.
+    fn draw_jitter(&self, raw_url: &str) -> Duration {
+        let Some(rule) = extract_domain(raw_url).and_then(|d| self.match_rule(&d)) else {
+            return Duration::ZERO;
+        };
+        let ms = rule.random_delay.as_millis() as u64;
+        if ms == 0 {
+            return Duration::ZERO;
+        }
+        Duration::from_millis(rand::thread_rng().gen_range(0..ms))
     }
 
     /// Mark a domain as rate-limited until `until` (e.g. after a 429).
-    pub fn mark_rate_limited(&self, raw_url: &str, until: Instant) {
+    pub fn mark_rate_limited(&self, raw_url: &str, until: impl Into<Instant>) {
         let domain = match extract_domain(raw_url) {
             Some(d) => d,
             None => return,
@@ -326,5 +384,101 @@ mod tests {
 
         limiter.evict_expired();
         assert_eq!(limiter.len(), 1, "only the fresh entry should remain");
+    }
+
+    fn rule(domain: &str, n: usize, window_secs: u64, min_delay_ms: u64) -> DomainConfig {
+        DomainConfig {
+            domain: domain.into(),
+            requests_per_window: n,
+            window_duration: Duration::from_secs(window_secs),
+            min_delay: Duration::from_millis(min_delay_ms),
+            random_delay: Duration::ZERO,
+        }
+    }
+
+    /// The incident replayed on the real limiter: catch-all 30/60 s with a
+    /// 200 ms min gap, one serial 1 rps client for 80 requests. The old fixed
+    /// window stalled request 31 for ~30 s; here no request ever waits.
+    #[tokio::test(start_paused = true)]
+    async fn serial_one_rps_client_is_never_stalled_a_half_window_on_30_per_60() {
+        let limiter = DomainLimiter::new(vec![rule("", 30, 60, 200)]);
+        let url = "https://query1.finance.yahoo.com/v8/chart/AAPL";
+        let mut max_wait = Duration::ZERO;
+        for i in 0..80 {
+            // Bursts through the first 30, then the bucket slows the client
+            // to its refill rate one emission interval at a time.
+            let before = Instant::now();
+            let res = limiter
+                .acquire(url, Some(before + Duration::from_secs(120)))
+                .await;
+            let waited = res.unwrap_or_else(|e| panic!("request {i}: {e}"));
+            max_wait = max_wait.max(waited);
+            tokio::time::sleep(Duration::from_secs(1) - waited.min(Duration::from_secs(1))).await;
+        }
+        // 80 requests at 1 rps against 30/60 s: the limiter must throttle to
+        // 0.5 rps once drained, never stall for half a window.
+        assert!(
+            max_wait <= Duration::from_secs(2),
+            "a single wait was {max_wait:?}"
+        );
+    }
+
+    /// `acquire` sleeps once for the computed wait, not in 50 ms polls, and
+    /// does not spend quota while waiting.
+    #[tokio::test(start_paused = true)]
+    async fn acquire_sleeps_computed_wait_and_denied_checks_cost_nothing() {
+        let limiter = DomainLimiter::new(vec![rule("example.com", 1, 10, 0)]);
+        let url = "https://example.com/a";
+        assert!(limiter.allow(url));
+        for _ in 0..500 {
+            assert!(limiter.check(url, Duration::ZERO).is_err());
+        }
+        let start = Instant::now();
+        let waited = limiter
+            .acquire(url, Some(start + Duration::from_secs(60)))
+            .await
+            .unwrap();
+        assert_eq!(waited, Duration::from_secs(10));
+        assert_eq!(start.elapsed(), Duration::from_secs(10));
+    }
+
+    /// No wait may run past the deadline: the permit is 10 s away, the budget
+    /// 3 s, so the call is refused with the expected wait and zero sleeping.
+    #[tokio::test(start_paused = true)]
+    async fn acquire_refuses_when_wait_exceeds_budget() {
+        let limiter = DomainLimiter::new(vec![rule("example.com", 1, 10, 0)]);
+        let url = "https://example.com/a";
+        assert!(limiter.allow(url));
+        let start = Instant::now();
+        let err = limiter
+            .acquire(url, Some(start + Duration::from_secs(3)))
+            .await
+            .unwrap_err();
+        assert_eq!(start.elapsed(), Duration::ZERO);
+        match err {
+            HttpError::RateLimited { retry_after, rule } => {
+                assert_eq!(retry_after, Duration::from_secs(10));
+                assert_eq!(rule, "example.com");
+            }
+            other => panic!("expected RateLimited, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn min_delay_wait_is_computed_not_polled() {
+        let limiter = DomainLimiter::new(vec![rule("example.com", 100, 60, 400)]);
+        let url = "https://example.com/a";
+        assert!(limiter.allow(url));
+        let start = Instant::now();
+        limiter.acquire(url, None).await.unwrap();
+        assert_eq!(start.elapsed(), Duration::from_millis(400));
+    }
+
+    #[test]
+    fn rule_name_labels_by_pattern_not_host() {
+        let limiter = DomainLimiter::new(vec![rule("*.x.com", 1, 60, 0), rule("", 1, 60, 0)]);
+        assert_eq!(limiter.rule_name("https://a.x.com/p"), Some("*.x.com"));
+        assert_eq!(limiter.rule_name("https://b.x.com/p"), Some("*.x.com"));
+        assert_eq!(limiter.rule_name("https://other.org/p"), Some("catch_all"));
     }
 }

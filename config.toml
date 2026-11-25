@@ -51,8 +51,37 @@ chromium_timeout_secs = 30
 [cloudflare]
 # detect = true
 
+[ratelimit]
+# Per-host rate limits, first matching rule wins. A `[[ratelimit.rules]]` list
+# REPLACES the built-in defaults (reddit, x.com, finance.yahoo.com, catch-all),
+# so copy every rule you want to keep. Keys per rule:
+#   domain              "api.x.com" exact, "*.x.com" any subdomain (not the apex),
+#                       "" catch-all (keep it last)
+#   requests_per_window burst size, and the refill per window_secs
+#   window_secs         the bucket refills requests_per_window permits over this long
+#   min_delay_ms        minimum gap between two requests to the same host (default 0)
+#   random_delay_ms     extra random gap, 0..random_delay_ms (default 0)
+# Token bucket: requests_per_window may go out at once, then permits return at
+# requests_per_window / window_secs. A call whose permit is due after its own
+# `timeout` is refused at once with 429 + Retry-After instead of timing out.
+# Metrics: oxbrowser_ratelimit_wait_seconds{rule}, oxbrowser_ratelimit_deadline_refusals_total{rule}.
+#
+# [[ratelimit.rules]]
+# domain = "*.finance.yahoo.com"   # JSON finance APIs: burst 120, then 2 req/s
+# requests_per_window = 120
+# window_secs = 60
+# min_delay_ms = 0
+# random_delay_ms = 50
+#
+# [[ratelimit.rules]]
+# domain = ""                      # catch-all
+# requests_per_window = 30
+# window_secs = 60
+# min_delay_ms = 200
+# random_delay_ms = 100
+
 [fetch]
-# default_timeout_secs = 15        # /fetch endpoint default
+# default_timeout_secs = 15       # /fetch endpoint default
 # smart_timeout_secs = 30          # /fetch-smart endpoint default
 
 [images]

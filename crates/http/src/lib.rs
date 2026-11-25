@@ -20,6 +20,7 @@ pub mod js_eval;
 pub mod json_ld;
 pub mod llm;
 pub mod metrics;
+pub mod metrics_ratelimit;
 pub mod middleware;
 pub mod middleware_cloudflare;
 pub mod middleware_hints;

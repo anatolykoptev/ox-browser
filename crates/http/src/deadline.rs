@@ -21,7 +21,11 @@
 //! (`read_pipeline::chrome_fallback`). No surface introduces milliseconds.
 
 use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
+
+use tokio::time::Instant;
 
 use crate::metrics::{dec_outbound_inflight, inc_outbound_inflight};
 
@@ -139,12 +143,107 @@ pub async fn bounded<T, F>(deadline: Duration, fut: F) -> CallOutcome<T>
 where
     F: Future<Output = T>,
 {
+    bounded_phased(deadline, fut).await.0
+}
+
+/// Which stage of a bounded call was running when the bound fired. Lets a
+/// 504 body say "the limiter held the call" instead of blaming the site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Anything that is not a rate-limit wait: connect, upstream, solver, retry.
+    Upstream,
+    /// The per-domain rate limiter was sleeping for a permit.
+    RateLimit,
+}
+
+impl Phase {
+    /// Stable label for error bodies.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Upstream => "upstream",
+            Self::RateLimit => "limiter",
+        }
+    }
+}
+
+const PHASE_UPSTREAM: u8 = 0;
+const PHASE_RATELIMIT: u8 = 1;
+
+/// Per-call context: the absolute deadline and the sticky phase marker.
+/// Scoped as a task-local by [`bounded_phased`], so every layer beneath it
+/// (the rate-limit middleware in particular) can see the remaining budget
+/// without a signature change. A `tokio::spawn`ed child does not inherit it;
+/// consumers treat "no context" as "no known budget".
+#[derive(Clone)]
+struct CallCtx {
+    deadline: Instant,
+    phase: Arc<AtomicU8>,
+}
+
+tokio::task_local! {
+    static CALL_CTX: CallCtx;
+}
+
+/// Absolute deadline of the enclosing [`bounded`] call, if any.
+pub fn call_deadline() -> Option<Instant> {
+    CALL_CTX.try_with(|c| c.deadline).ok()
+}
+
+/// Mark the enclosing call as sitting in the rate limiter (`true`) or past
+/// it (`false`). The marker is sticky on purpose: when the bound fires the
+/// limiter future is dropped, so a guard-style reset would erase the very
+/// evidence [`bounded_phased`] reads.
+pub fn set_in_limiter(in_limiter: bool) {
+    let _ = CALL_CTX.try_with(|c| {
+        c.phase.store(
+            if in_limiter {
+                PHASE_RATELIMIT
+            } else {
+                PHASE_UPSTREAM
+            },
+            Ordering::Relaxed,
+        );
+    });
+}
+
+/// [`bounded`] that also reports the [`Phase`] the call was in when the
+/// bound fired (always [`Phase::Upstream`] when it completed in time).
+/// Nested calls share the outer phase marker and take the earlier deadline.
+pub async fn bounded_phased<T, F>(deadline: Duration, fut: F) -> (CallOutcome<T>, Phase)
+where
+    F: Future<Output = T>,
+{
     let _guard = OutboundGuard::new();
-    match tokio::time::timeout(deadline, fut).await {
-        Ok(v) => CallOutcome::Ok(v),
-        Err(_) => CallOutcome::DeadlineExceeded {
-            secs: deadline.as_secs(),
+    let mine = Instant::now() + deadline;
+    let ctx = match CALL_CTX.try_with(Clone::clone) {
+        Ok(outer) => CallCtx {
+            deadline: outer.deadline.min(mine),
+            phase: outer.phase,
         },
+        Err(_) => CallCtx {
+            deadline: mine,
+            phase: Arc::new(AtomicU8::new(PHASE_UPSTREAM)),
+        },
+    };
+    let marker = Arc::clone(&ctx.phase);
+    let res = CALL_CTX
+        .scope(ctx, tokio::time::timeout(deadline, fut))
+        .await;
+    match res {
+        Ok(v) => (CallOutcome::Ok(v), Phase::Upstream),
+        Err(_) => {
+            let phase = if marker.load(Ordering::Relaxed) == PHASE_RATELIMIT {
+                Phase::RateLimit
+            } else {
+                Phase::Upstream
+            };
+            (
+                CallOutcome::DeadlineExceeded {
+                    secs: deadline.as_secs(),
+                },
+                phase,
+            )
+        }
     }
 }
 
@@ -201,6 +300,45 @@ mod tests {
     fn resolve_timeout_clamps_zero_up_to_one() {
         // A 0 s deadline would reject every request including a fast one.
         assert_eq!(resolve_timeout(Some(0)), Duration::from_secs(1));
+    }
+
+    /// The 504 body names where the time went: a call that dies while the
+    /// limiter holds it reports `limiter`, one that dies elsewhere `upstream`.
+    #[tokio::test(start_paused = true)]
+    async fn bounded_phased_reports_limiter_phase_when_bound_fires_in_limiter() {
+        let (outcome, phase) = bounded_phased(Duration::from_secs(1), async {
+            set_in_limiter(true);
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        })
+        .await;
+        assert!(matches!(outcome, CallOutcome::DeadlineExceeded { .. }));
+        assert_eq!(phase, Phase::RateLimit);
+
+        let (outcome, phase) = bounded_phased(Duration::from_secs(1), async {
+            set_in_limiter(true);
+            set_in_limiter(false); // permit granted, now upstream
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        })
+        .await;
+        assert!(matches!(outcome, CallOutcome::DeadlineExceeded { .. }));
+        assert_eq!(phase, Phase::Upstream);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn call_deadline_is_visible_inside_bounded_and_nested_takes_earlier() {
+        assert!(call_deadline().is_none());
+        let t0 = Instant::now();
+        let outer = bounded(Duration::from_secs(10), async {
+            let d = call_deadline().expect("deadline inside bounded");
+            let nested = bounded(Duration::from_secs(60), async { call_deadline() }).await;
+            (d, nested)
+        })
+        .await;
+        let CallOutcome::Ok((d, CallOutcome::Ok(Some(inner)))) = outer else {
+            panic!("unexpected outcome");
+        };
+        assert_eq!(d, t0 + Duration::from_secs(10));
+        assert_eq!(inner, d, "nested bound must not extend the outer deadline");
     }
 
     #[tokio::test]

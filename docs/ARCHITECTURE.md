@@ -122,8 +122,8 @@ Client Hints (`sec-ch-ua-*`) auto-injected for Chromium UAs; Firefox/Safari omit
 ### Rate Limiting
 
 Two-level system:
-- `Limiter` — sliding-window counter per key with block-until support
-- `DomainLimiter` — matches URLs against domain rules (exact, wildcard, catch-all)
+- `Limiter` — token bucket (GCRA) per key with block-until support; a refused check consumes nothing and reports when a permit is due
+- `DomainLimiter` — matches URLs against domain rules (exact, wildcard, catch-all); `acquire` sleeps exactly until the permit is due and refuses (`HttpError::RateLimited`, surfaced as 429 + `Retry-After`) when that is past the call's deadline (`deadline::call_deadline`)
 
 ### Retry
 

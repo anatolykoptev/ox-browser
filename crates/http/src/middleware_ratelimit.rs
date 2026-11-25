@@ -6,7 +6,7 @@
 //! responses with a `Retry-After` header.
 
 use std::sync::Arc;
-use std::time::Instant;
+use tokio::time::Instant;
 
 use async_trait::async_trait;
 
@@ -17,8 +17,9 @@ use crate::{HttpResponse, Result};
 
 /// Returns a middleware that enforces per-domain rate limits.
 ///
-/// Before each request, calls `limiter.wait(url)` to block until the
-/// request is permitted. After receiving a 429, parses `Retry-After`
+/// Before each request, calls `limiter.acquire(url, deadline)` to sleep until the
+/// permit is due (or refuses with `RateLimited` when that is past the call's
+/// deadline). After receiving a 429, parses `Retry-After`
 /// and marks the domain as blocked for the specified duration.
 pub fn rate_limit_middleware(limiter: Arc<DomainLimiter>) -> MiddlewareFn {
     Arc::new(move |next: Arc<dyn Handler>| -> Arc<dyn Handler> {
@@ -37,8 +38,12 @@ struct RateLimitHandler {
 #[async_trait]
 impl Handler for RateLimitHandler {
     async fn handle(&self, req: Request) -> Result<HttpResponse> {
-        // Wait until rate limit allows this request.
-        self.limiter.wait(&req.url).await;
+        // Sleep until a permit is due, but never past the call's deadline:
+        // a wait that cannot fit comes back as `RateLimited` (429 upstream of
+        // here) instead of a 504 after the whole budget is burned.
+        self.limiter
+            .acquire(&req.url, crate::deadline::call_deadline())
+            .await?;
 
         let resp = self.next.handle(req.clone()).await?;
 
@@ -129,5 +134,68 @@ mod tests {
 
         // The domain should now be marked as blocked in the limiter.
         assert!(!limiter.allow("https://example.com/other"));
+    }
+
+    fn slow_limiter(window_secs: u64) -> Arc<DomainLimiter> {
+        use crate::ratelimit_domain::DomainConfig;
+        use std::time::Duration;
+        Arc::new(DomainLimiter::new(vec![DomainConfig {
+            domain: String::new(),
+            requests_per_window: 1,
+            window_duration: Duration::from_secs(window_secs),
+            min_delay: Duration::ZERO,
+            random_delay: Duration::ZERO,
+        }]))
+    }
+
+    fn ok_handler() -> Arc<dyn Handler> {
+        Arc::new(FixedHandler {
+            status: 200,
+            headers: HeaderMap::new(),
+        })
+    }
+
+    /// The 504 incident: the permit is 60 s away and the call has 10 s. The
+    /// middleware must refuse at once with `RateLimited` instead of sleeping
+    /// into the deadline. Reverting the middleware to a blind wait turns this
+    /// into `DeadlineExceeded` after 10 virtual seconds.
+    #[tokio::test(start_paused = true)]
+    async fn refuses_immediately_when_wait_exceeds_remaining_budget() {
+        use crate::deadline::{CallOutcome, bounded};
+        use std::time::Duration;
+
+        let handler = chain(vec![rate_limit_middleware(slow_limiter(60))], ok_handler());
+        handler.handle(test_req()).await.unwrap(); // takes the only slot
+
+        let started = tokio::time::Instant::now();
+        let outcome = bounded(Duration::from_secs(10), handler.handle(test_req())).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "refusal must not sleep, slept {:?}",
+            started.elapsed()
+        );
+        match outcome {
+            CallOutcome::Ok(Err(crate::HttpError::RateLimited { retry_after, rule })) => {
+                assert_eq!(retry_after, Duration::from_secs(60));
+                assert_eq!(rule, "catch_all");
+            }
+            other => panic!("expected RateLimited, got {other:?}"),
+        }
+    }
+
+    /// A wait that fits the budget is slept in one computed step, then the
+    /// request goes through.
+    #[tokio::test(start_paused = true)]
+    async fn sleeps_when_wait_fits_budget() {
+        use crate::deadline::{CallOutcome, bounded};
+        use std::time::Duration;
+
+        let handler = chain(vec![rate_limit_middleware(slow_limiter(5))], ok_handler());
+        handler.handle(test_req()).await.unwrap();
+
+        let started = tokio::time::Instant::now();
+        let outcome = bounded(Duration::from_secs(30), handler.handle(test_req())).await;
+        assert!(matches!(outcome, CallOutcome::Ok(Ok(_))), "{outcome:?}");
+        assert_eq!(started.elapsed(), Duration::from_secs(5));
     }
 }

@@ -284,6 +284,8 @@ pub fn record_fetch_outcome(o: FetchOutcome) {
 /// - `Ok(resp)` otherwise → `Ok`.
 /// - `Err(Cloudflare | CloudflareInferred)` → `Challenge`.
 /// - `Err(RetryableStatus(429))` → `RateLimited` (idempotent retry exhaust).
+/// - `Err(RateLimited)` → `RateLimited` (the local limiter refused: the wait
+///   would have outlived the call's deadline).
 /// - `Err(_)` otherwise → `UpstreamError`.
 pub fn classify_fetch_outcome(outcome: &CallOutcome<Result<HttpResponse>>) -> FetchOutcome {
     match outcome {
@@ -301,7 +303,9 @@ pub fn classify_fetch_outcome(outcome: &CallOutcome<Result<HttpResponse>>) -> Fe
             HttpError::Cloudflare(_, _, _) | HttpError::CloudflareInferred(_, _) => {
                 FetchOutcome::Challenge
             }
-            HttpError::RetryableStatus(429) => FetchOutcome::RateLimited,
+            HttpError::RetryableStatus(429) | HttpError::RateLimited { .. } => {
+                FetchOutcome::RateLimited
+            }
             _ => FetchOutcome::UpstreamError,
         },
     }
@@ -833,6 +837,7 @@ pub fn render() -> String {
         out.push_str(&g.value.to_string());
         out.push('\n');
     }
+    crate::metrics_ratelimit::render_into(&mut out);
     out
 }
 
@@ -1152,6 +1157,23 @@ mod tests {
         let outcome: CallOutcome<Result<HttpResponse>> =
             CallOutcome::Ok(Err(HttpError::RetryableStatus(429)));
         assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::RateLimited);
+    }
+
+    #[test]
+    fn classify_local_limiter_refusal_as_rate_limited() {
+        let outcome: CallOutcome<Result<HttpResponse>> =
+            CallOutcome::Ok(Err(HttpError::RateLimited {
+                retry_after: std::time::Duration::from_secs(30),
+                rule: "catch_all".into(),
+            }));
+        assert_eq!(classify_fetch_outcome(&outcome), FetchOutcome::RateLimited);
+    }
+
+    #[test]
+    fn render_includes_ratelimit_series() {
+        let body = render();
+        assert!(body.contains("# TYPE oxbrowser_ratelimit_wait_seconds histogram"));
+        assert!(body.contains("# TYPE oxbrowser_ratelimit_deadline_refusals_total counter"));
     }
 
     #[test]
