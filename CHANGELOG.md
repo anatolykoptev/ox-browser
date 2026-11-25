@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.6](https://github.com/anatolykoptev/ox-browser/compare/v0.9.5...v0.9.6) (2026-11-25)
+
+
+### Fixed
+
+* **ratelimit:** deadline-aware token bucket; 429 + Retry-After instead of a 504 hang ([#236](https://github.com/anatolykoptev/ox-browser/issues/236)) ([dd2db2e](https://github.com/anatolykoptev/ox-browser/commit/dd2db2e87a35a5fd40a580824a5765883b1ae8f1))
+
 ## [0.9.5](https://github.com/anatolykoptev/ox-browser/compare/v0.9.4...v0.9.5) (2026-11-17)
 
 
