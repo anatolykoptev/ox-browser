@@ -63,7 +63,7 @@ pub use cloudflare::{ChallengeType, CloudflareChallenge, detect_cloudflare};
 pub use config::HttpConfig;
 pub use cookie_cache::CookieCache;
 pub use cookie_provider::{CookieProvider, SolvedChallenge};
-pub use error::{HttpError, Result};
+pub use error::{HttpError, RateLimitRefusal, Result};
 pub use handler_reqwest::WreqHandler;
 pub use metrics::render as render_metrics;
 pub use middleware::{Handler, MiddlewareFn, Request, chain};

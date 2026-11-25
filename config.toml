@@ -61,6 +61,8 @@ chromium_timeout_secs = 30
 #   window_secs         the bucket refills requests_per_window permits over this long
 #   min_delay_ms        minimum gap between two requests to the same host (default 0)
 #   random_delay_ms     extra random gap, 0..random_delay_ms (default 0)
+# Bounds (rejected at startup otherwise): requests_per_window 1..=100000, window_secs 1..=86400,
+# delays <= 3600000 ms, domain in [a-z0-9.-] (optionally "*." prefixed), unknown keys refused.
 # Token bucket: requests_per_window may go out at once, then permits return at
 # requests_per_window / window_secs. A call whose permit is due after its own
 # `timeout` is refused at once with 429 + Retry-After instead of timing out.

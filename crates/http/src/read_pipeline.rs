@@ -242,7 +242,14 @@ async fn read_page_inner(
                     }
                 }
             }
-            return build_error_output(params, "direct", elapsed(start), &e.to_string());
+            let mut output = build_error_output(params, "direct", elapsed(start), &e.to_string());
+            // A local limiter refusal stays typed so every surface can answer
+            // 429 + Retry-After instead of a generic upstream failure.
+            if let Some(refusal) = e.rate_limit_refusal() {
+                output.error = Some(refusal.message());
+                output.rate_limited = Some(refusal);
+            }
+            return output;
         }
     };
 
@@ -597,6 +604,7 @@ pub fn build_output(
             error: None,
             extraction_note: ext.extraction_note.clone(),
             quality: None,
+            rate_limited: None,
         };
         c = crate::llm::to_llm_text(&raw_output);
     }
@@ -626,6 +634,7 @@ pub fn build_output(
         error: None,
         extraction_note: ext.extraction_note,
         quality: None,
+        rate_limited: None,
     }
 }
 
@@ -651,6 +660,7 @@ pub fn build_error_output(params: &ReadParams, method: &str, ms: u64, msg: &str)
         error: Some(msg.into()),
         extraction_note: None,
         quality: None,
+        rate_limited: None,
     }
 }
 

@@ -93,6 +93,10 @@ mod auth_relay_tests;
 #[path = "onion_refusal_tests.rs"]
 mod onion_refusal_tests;
 
+#[cfg(test)]
+#[path = "rate_limited_tests.rs"]
+mod rate_limited_tests;
+
 #[tool_router]
 impl OxMcpServer {
     #[tool(

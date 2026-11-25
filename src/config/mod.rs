@@ -85,6 +85,10 @@ impl ServerConfig {
         }
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
+        config
+            .ratelimit
+            .validate()
+            .map_err(|e| anyhow::anyhow!("invalid config {}: {e}", path.display()))?;
         tracing::info!("loaded config from {}", path.display());
         Ok(config)
     }

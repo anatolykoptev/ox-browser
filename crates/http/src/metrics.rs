@@ -841,24 +841,28 @@ pub fn render() -> String {
     out
 }
 
+/// Gauge-publishing tests read/write the shared process-global `PROXY_DISABLED`
+/// static. When run in parallel they race on that atomic, producing flaky
+/// assertions. This mutex serializes them so the gauge value is deterministic
+/// within each test — mirrors the T2 render_cache gauge test pattern.
+///
+/// It also guards the in-flight gauge: any test that calls
+/// `deadline::bounded` moves it, so such tests take this lock too (the
+/// rate-limit tests do) or the gauge tests read a baseline mid-flight.
+///
+/// `tokio::sync::Mutex` (not `std::sync`): the two `bounded` gauge tests
+/// hold the guard across an `.await` on the in-flight gauge, and a
+/// `std::sync::MutexGuard` is not `Send` — clippy `await_holding_lock`
+/// flags it, and on a single-threaded runtime a second task blocking on
+/// the same lock would deadlock rather than yield. The sync tests use
+/// `blocking_lock()` (the documented way to acquire a tokio mutex from
+/// non-async code).
+#[cfg(test)]
+pub(crate) static GAUGE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::Mutex;
-
-    /// Gauge-publishing tests read/write the shared process-global `PROXY_DISABLED`
-    /// static. When run in parallel they race on that atomic, producing flaky
-    /// assertions. This mutex serializes them so the gauge value is deterministic
-    /// within each test — mirrors the T2 render_cache gauge test pattern.
-    ///
-    /// `tokio::sync::Mutex` (not `std::sync`): the two `bounded` gauge tests
-    /// hold the guard across an `.await` on the in-flight gauge, and a
-    /// `std::sync::MutexGuard` is not `Send` — clippy `await_holding_lock`
-    /// flags it, and on a single-threaded runtime a second task blocking on
-    /// the same lock would deadlock rather than yield. The sync tests use
-    /// `blocking_lock()` (the documented way to acquire a tokio mutex from
-    /// non-async code).
-    static GAUGE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
     #[test]
     fn render_emits_gauge_series_in_prometheus_format() {

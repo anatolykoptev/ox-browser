@@ -306,6 +306,7 @@ mod tests {
     /// limiter holds it reports `limiter`, one that dies elsewhere `upstream`.
     #[tokio::test(start_paused = true)]
     async fn bounded_phased_reports_limiter_phase_when_bound_fires_in_limiter() {
+        let _gauge = crate::metrics::GAUGE_TEST_LOCK.lock().await;
         let (outcome, phase) = bounded_phased(Duration::from_secs(1), async {
             set_in_limiter(true);
             tokio::time::sleep(Duration::from_secs(60)).await;
@@ -326,6 +327,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn call_deadline_is_visible_inside_bounded_and_nested_takes_earlier() {
+        let _gauge = crate::metrics::GAUGE_TEST_LOCK.lock().await;
         assert!(call_deadline().is_none());
         let t0 = Instant::now();
         let outer = bounded(Duration::from_secs(10), async {
@@ -343,12 +345,14 @@ mod tests {
 
     #[tokio::test]
     async fn bounded_returns_ok_when_future_completes() {
+        let _gauge = crate::metrics::GAUGE_TEST_LOCK.lock().await;
         let outcome: CallOutcome<u32> = bounded(Duration::from_secs(5), async { 42 }).await;
         assert!(matches!(outcome, CallOutcome::Ok(42)));
     }
 
     #[tokio::test]
     async fn bounded_returns_deadline_exceeded_when_future_slow() {
+        let _gauge = crate::metrics::GAUGE_TEST_LOCK.lock().await;
         let outcome: CallOutcome<()> = bounded(Duration::from_millis(10), async {
             tokio::time::sleep(Duration::from_secs(2)).await;
         })

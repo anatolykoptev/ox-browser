@@ -35,6 +35,7 @@ fn read_output_skips_none_error() {
         error: None,
         extraction_note: None,
         quality: None,
+        rate_limited: None,
     };
     let json = serde_json::to_value(&out).unwrap();
     assert!(!json.as_object().unwrap().contains_key("error"));
@@ -64,6 +65,7 @@ fn read_output_includes_error() {
         error: Some("fail".into()),
         extraction_note: None,
         quality: None,
+        rate_limited: None,
     };
     let json = serde_json::to_value(&out).unwrap();
     assert_eq!(json["error"], "fail");

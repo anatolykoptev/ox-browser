@@ -192,6 +192,30 @@ async fn fetch_inner(
     // truth for which label fires on which branch.
     record_fetch_outcome(classify_fetch_outcome(&outcome));
 
+    // A local rate-limit refusal (the permit would arrive after this call's
+    // deadline; nothing was sent): 429 at once, with `Retry-After` mirrored
+    // into `headers` (`fetch` lifts it to a real HTTP header).
+    if let CallOutcome::Ok(Err(e)) = &outcome
+        && let Some(refusal) = e.rate_limit_refusal()
+    {
+        return (
+            crate::rate_limited::STATUS,
+            Json(FetchResponse {
+                status: 0,
+                headers: HashMap::from([(
+                    "retry-after".to_string(),
+                    refusal.retry_after_s.to_string(),
+                )]),
+                body: String::new(),
+                cf_detected: false,
+                cf_type: None,
+                elapsed_ms: start.elapsed().as_millis() as u64,
+                error: Some(refusal.message()),
+                quality: None,
+            }),
+        );
+    }
+
     match outcome {
         CallOutcome::Ok(Ok(resp)) => {
             let cf = detect_cloudflare(&resp);
@@ -223,24 +247,6 @@ async fn fetch_inner(
         // this call's deadline. Nothing was sent upstream. Answer 429 at once
         // with `Retry-After` (also mirrored into `headers` here; `fetch` lifts
         // it to a real HTTP header) instead of sleeping into a 504.
-        CallOutcome::Ok(Err(ox_http::HttpError::RateLimited { retry_after, rule })) => {
-            let secs = retry_after.as_secs_f64().ceil().max(1.0) as u64;
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(FetchResponse {
-                    status: 0,
-                    headers: HashMap::from([("retry-after".to_string(), secs.to_string())]),
-                    body: String::new(),
-                    cf_detected: false,
-                    cf_type: None,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                    error: Some(format!(
-                        "rate limited (phase: limiter, rule: {rule}): retry after {secs}s"
-                    )),
-                    quality: None,
-                }),
-            )
-        }
         CallOutcome::Ok(Err(e)) => (
             StatusCode::BAD_GATEWAY,
             Json(FetchResponse {

@@ -104,3 +104,41 @@ impl HttpError {
 }
 
 pub type Result<T> = std::result::Result<T, HttpError>;
+
+/// The structured form of a local rate-limit refusal, shared by every
+/// caller surface (REST status + `Retry-After`, MCP and `/read` typed field).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RateLimitRefusal {
+    /// Whole seconds until a permit is expected (rounded up, at least 1).
+    pub retry_after_s: u64,
+    /// The rule that refused (its domain pattern; `catch_all` for the default).
+    pub rule: String,
+}
+
+impl RateLimitRefusal {
+    /// The `error` text every surface shows for a refusal.
+    pub fn message(&self) -> String {
+        format!(
+            "rate limited (phase: limiter, rule: {}): retry after {}s",
+            self.rule, self.retry_after_s
+        )
+    }
+
+    /// Round a wait up to the whole seconds a `Retry-After` header carries.
+    pub fn secs(wait: std::time::Duration) -> u64 {
+        (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1)
+    }
+}
+
+impl HttpError {
+    /// `Some` when this error is a local rate-limit refusal.
+    pub fn rate_limit_refusal(&self) -> Option<RateLimitRefusal> {
+        match self {
+            Self::RateLimited { retry_after, rule } => Some(RateLimitRefusal {
+                retry_after_s: RateLimitRefusal::secs(*retry_after),
+                rule: rule.clone(),
+            }),
+            _ => None,
+        }
+    }
+}

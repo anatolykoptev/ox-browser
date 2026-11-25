@@ -161,6 +161,7 @@ mod tests {
     /// into `DeadlineExceeded` after 10 virtual seconds.
     #[tokio::test(start_paused = true)]
     async fn refuses_immediately_when_wait_exceeds_remaining_budget() {
+        let _gauge = crate::metrics::GAUGE_TEST_LOCK.lock().await;
         use crate::deadline::{CallOutcome, bounded};
         use std::time::Duration;
 
@@ -187,6 +188,7 @@ mod tests {
     /// request goes through.
     #[tokio::test(start_paused = true)]
     async fn sleeps_when_wait_fits_budget() {
+        let _gauge = crate::metrics::GAUGE_TEST_LOCK.lock().await;
         use crate::deadline::{CallOutcome, bounded};
         use std::time::Duration;
 

@@ -13,6 +13,7 @@ pub mod host_guard;
 mod image_search;
 pub mod inbound_auth;
 mod media_download;
+mod rate_limited;
 mod read;
 mod readability;
 mod reverse_search;
